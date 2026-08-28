@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>ตั้งค่า - TRISAK</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+(async () => {
+  const me = await renderLayout('ตั้งค่า');
+  if (!me) return;
+  document.getElementById('content').innerHTML = `
+    <div class="grid-3">
+      <a class="card" style="padding:20px;display:block;" href="/profile.html">
+        <div style="font-size:22px;">&#128100;</div>
+        <div style="font-weight:700;margin-top:8px;">โปรไฟล์ของฉัน</div>
+        <div class="muted" style="font-size:12.5px;margin-top:4px;">แก้ไขข้อมูลส่วนตัวและรหัสผ่าน</div>
+      </a>
+      ${me.role === 'Admin' ? `
+      <a class="card" style="padding:20px;display:block;" href="/admin-users.html">
+        <div style="font-size:22px;">&#128737;</div>
+        <div style="font-weight:700;margin-top:8px;">จัดการผู้ใช้งาน</div>
+        <div class="muted" style="font-size:12.5px;margin-top:4px;">เพิ่ม/แก้ไข/ลบผู้ใช้ และกำหนดสิทธิ์</div>
+      </a>` : ''}
+      <a class="card" style="padding:20px;display:block;" href="/customers.html">
+        <div style="font-size:22px;">&#127970;</div>
+        <div style="font-weight:700;margin-top:8px;">ข้อมูลลูกค้า</div>
+        <div class="muted" style="font-size:12.5px;margin-top:4px;">จัดการรายชื่อลูกค้า/บริษัท</div>
+      </a>
+    </div>
+  `;
+})();
+</script>
+</body>
+</html>

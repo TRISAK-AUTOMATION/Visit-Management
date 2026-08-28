@@ -1,0 +1,114 @@
+// client/src/components/Layout.jsx - เทียบเท่า public/js/layout.js (renderLayout)
+import React, { useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../lib/AuthContext';
+import { ROLE_TH } from '../lib/api';
+
+const MENU = {
+  common: [{ href: '/dashboard', icon: '\u2302', label: 'Dashboard' }],
+  Employee: [
+    { href: '/visit-request', icon: '\uD83D\uDCDD', label: 'สร้างคำขอ Visit' },
+    { href: '/my-requests', icon: '\uD83D\uDCCB', label: 'My Requests' },
+  ],
+  ApproverAdmin: [
+    { href: '/visit-request', icon: '\uD83D\uDCDD', label: 'สร้างคำขอ Visit' },
+    { href: '/my-requests', icon: '\uD83D\uDCCB', label: 'My Requests' },
+    { href: '/approve-requests', icon: '\u2705', label: 'Approve Requests', badgeKey: 'pending' },
+  ],
+  tail: [
+    { href: '/calendar', icon: '\uD83D\uDCC5', label: 'ปฏิทิน' },
+    { href: '/customers', icon: '\uD83D\uDC65', label: 'Customer' },
+    { href: '/report', icon: '\uD83D\uDCCA', label: 'Report' },
+    { href: '/notifications', icon: '\uD83D\uDD14', label: 'Notifications', badgeKey: 'unread' },
+    { href: '/settings', icon: '\u2699', label: 'ตั้งค่า' },
+  ],
+  admin: [
+    { href: '/admin-users', icon: '\uD83D\uDEE1', label: 'จัดการผู้ใช้งาน' },
+    { href: '/admin-form-builder', icon: '\uD83E\uDDF1', label: 'Form Builder' },
+    { href: '/admin-system-logs', icon: '\uD83D\uDCDC', label: 'System Logs' }
+  ]
+};
+
+function buildMenu(role) {
+  let items = [...MENU.common];
+  items = items.concat(role === 'Employee' ? MENU.Employee : MENU.ApproverAdmin);
+  items = items.concat(MENU.tail);
+  if (role === 'Admin') items = items.concat(MENU.admin);
+  return items;
+}
+
+export default function Layout({ title, children }) {
+  const { me, badgeCounts, logout } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  if (!me) return null; // ProtectedRoute จัดการ redirect ให้แล้ว
+
+  const items = buildMenu(me.role);
+  const closeSidebar = () => setSidebarOpen(false);
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
+
+  return (
+    <div className="app">
+      <div className={`sidebar-backdrop ${sidebarOpen ? 'open' : ''}`} onClick={closeSidebar} />
+      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+        <div className="brand">
+          <div className="brand-mark">T</div>
+          <div className="brand-text"><b>TRISAK</b><span>VISIT MANAGEMENT</span></div>
+        </div>
+        <ul className="nav">
+          {items.map(it => {
+            const active = location.pathname === it.href ? 'active' : '';
+            const badge = it.badgeKey && badgeCounts[it.badgeKey] > 0;
+            return (
+              <li key={it.href}>
+                <Link to={it.href} className={active} onClick={closeSidebar}>
+                  <span className="icon" dangerouslySetInnerHTML={{ __html: it.icon }} />
+                  {it.label}
+                  {badge && <span className="badge" style={{ background: 'var(--red-600)', color: '#fff' }}>{badgeCounts[it.badgeKey]}</span>}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="side-user">
+          <img src={me.avatar_url || '/img/avatar1.png'} onError={(e) => { e.target.style.display = 'none'; }} />
+          <div>
+            <b>{me.full_name}</b>
+            <span>{me.position || ROLE_TH[me.role]}</span>
+          </div>
+        </div>
+      </aside>
+      <div className="main">
+        <div className="topbar">
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <button className="hamburger-btn" onClick={() => setSidebarOpen(o => !o)} title="เมนู">
+              {'\u2630'}
+            </button>
+            <h1>{title}</h1>
+          </div>
+          <div className="topbar-right">
+            <button className="icon-btn" onClick={() => navigate('/notifications')} title="การแจ้งเตือน">
+              {'\uD83D\uDD14'}
+              {badgeCounts.unread > 0 && <span className="dot">{badgeCounts.unread}</span>}
+            </button>
+            <div className="topbar-user" style={{ cursor: 'pointer' }} onClick={() => navigate('/profile')}>
+              <img src={me.avatar_url || '/img/avatar1.png'} onError={(e) => { e.target.style.display = 'none'; }} />
+              <div>
+                <b>{me.full_name}</b>
+                <span>{me.position || ROLE_TH[me.role]}</span>
+              </div>
+            </div>
+            <button className="btn btn-outline btn-sm" onClick={handleLogout}>ออกจากระบบ</button>
+          </div>
+        </div>
+        <div className="content">{children}</div>
+      </div>
+    </div>
+  );
+}

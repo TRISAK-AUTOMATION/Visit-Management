@@ -1,0 +1,106 @@
+// routes/users.js
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const db = require('../db/database');
+const { requireAuth, requireRole } = require('./middleware');
+const { logAction } = require('../utils/systemLog');
+
+const router = express.Router();
+
+function sanitize(u) {
+  const { password_hash, ...rest } = u;
+  return rest;
+}
+
+// โปรไฟล์ของตัวเอง
+router.put('/me', requireAuth, (req, res) => {
+  const { full_name, email, phone, position, department, email_notify } = req.body;
+  db.prepare(`
+    UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, department = ?, email_notify = ?
+    WHERE id = ?
+  `).run(full_name, email, phone, position, department, email_notify ? 1 : 0, req.session.userId);
+  res.json({ ok: true });
+});
+
+router.put('/me/password', requireAuth, (req, res) => {
+  const { current_password, new_password } = req.body;
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
+  if (!bcrypt.compareSync(current_password, user.password_hash)) {
+    return res.status(400).json({ error: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' });
+  }
+  const newHash = bcrypt.hashSync(new_password, 10);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, req.session.userId);
+  res.json({ ok: true });
+});
+
+// ---------- ADMIN: จัดการผู้ใช้ ----------
+router.get('/', requireAuth, requireRole('Admin'), (req, res) => {
+  const rows = db.prepare('SELECT * FROM users ORDER BY id').all();
+  res.json({ users: rows.map(sanitize) });
+});
+
+router.post('/', requireAuth, requireRole('Admin'), (req, res) => {
+  const { username, password, full_name, email, phone, position, department, role } = req.body;
+  if (!username || !password || !full_name) {
+    return res.status(400).json({ error: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
+  }
+  const dup = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+  if (dup) return res.status(400).json({ error: 'ชื่อผู้ใช้นี้มีอยู่แล้ว' });
+
+  const info = db.prepare(`
+    INSERT INTO users (username, password_hash, full_name, email, phone, position, department, role)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(username, bcrypt.hashSync(password, 10), full_name, email || '', phone || '', position || '', department || '', role || 'Employee');
+  logAction(req.session.userId, 'create_user', `สร้างผู้ใช้ใหม่ ${username} (${full_name})`);
+  res.status(201).json({ id: info.lastInsertRowid });
+});
+
+router.put('/:id', requireAuth, requireRole('Admin'), (req, res) => {
+  const { full_name, email, phone, position, department, role } = req.body;
+  const exists = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
+  if (!exists) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+  db.prepare(`
+    UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, department = ?, role = ?
+    WHERE id = ?
+  `).run(full_name, email || '', phone || '', position || '', department || '', role, req.params.id);
+  logAction(req.session.userId, 'update_user', `แก้ไขข้อมูลผู้ใช้ #${req.params.id} (${full_name})`);
+  res.json({ ok: true });
+});
+
+// เปิด/ปิดการใช้งานบัญชี
+router.patch('/:id/active', requireAuth, requireRole('Admin'), (req, res) => {
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+  if (Number(req.params.id) === req.session.userId) {
+    return res.status(400).json({ error: 'ไม่สามารถระงับบัญชีของตัวเองได้' });
+  }
+  const isActive = req.body.is_active ? 1 : 0;
+  db.prepare('UPDATE users SET is_active = ? WHERE id = ?').run(isActive, req.params.id);
+  logAction(req.session.userId, isActive ? 'enable_user' : 'disable_user',
+    `${isActive ? 'เปิดใช้งาน' : 'ระงับการใช้งาน'}บัญชี ${target.username} (${target.full_name})`);
+  res.json({ ok: true, is_active: !!isActive });
+});
+
+router.delete('/:id', requireAuth, requireRole('Admin'), (req, res) => {
+  if (Number(req.params.id) === req.session.userId) {
+    return res.status(400).json({ error: 'ไม่สามารถลบบัญชีของตัวเองได้' });
+  }
+  const target = db.prepare('SELECT username, full_name FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+  try {
+    db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  } catch (err) {
+    // ผู้ใช้รายนี้มีข้อมูลเชื่อมโยงอยู่ในระบบ (เคยส่งคำขอ Visit, อนุมัติ, มี log ฯลฯ)
+    // ลบไม่ได้เพราะจะทำให้ข้อมูลเก่าเสียหาย (ประวัติ Visit ไม่รู้ว่าใครเป็นคนขอ) — ให้ระงับการใช้งานแทน
+    if (err.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' || err.code === 'SQLITE_CONSTRAINT') {
+      return res.status(400).json({
+        error: `ไม่สามารถลบผู้ใช้ "${target.full_name}" ได้ เนื่องจากมีข้อมูลเชื่อมโยงอยู่ในระบบ (เคยส่งคำขอ Visit / อนุมัติ / มีประวัติการใช้งาน) กรุณากด "ระงับการใช้งาน" แทนการลบ เพื่อไม่ให้ข้อมูลเก่าเสียหาย`
+      });
+    }
+    throw err;
+  }
+  logAction(req.session.userId, 'delete_user', `ลบผู้ใช้ ${target.username} (${target.full_name})`);
+  res.json({ ok: true });
+});
+
+module.exports = router;

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>ปฏิทิน - TRISAK</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+const THAI_MONTHS = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+const DOW = ['อา','จ','อ','พ','พฤ','ศ','ส'];
+let viewDate = new Date();
+let EVENTS = [];
+
+(async () => {
+  const me = await renderLayout('ปฏิทิน');
+  if (!me) return;
+  const scope = me.role === 'Employee' ? 'mine' : 'pending';
+  const { requests } = await api.get(`/api/visit-requests?scope=${scope}`);
+  EVENTS = requests.filter(r => r.status !== 'cancelled');
+  document.getElementById('content').innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <button class="btn btn-outline btn-sm" onclick="changeMonth(-1)">&larr;</button>
+        <h3 id="calTitle"></h3>
+        <button class="btn btn-outline btn-sm" onclick="changeMonth(1)">&rarr;</button>
+      </div>
+      <div class="card-body">
+        <div class="cal-grid" id="calGrid"></div>
+      </div>
+    </div>
+  `;
+  renderCalendar();
+})();
+
+function changeMonth(delta) {
+  viewDate.setMonth(viewDate.getMonth() + delta);
+  renderCalendar();
+}
+
+function renderCalendar() {
+  const y = viewDate.getFullYear();
+  const m = viewDate.getMonth();
+  document.getElementById('calTitle').textContent = `${THAI_MONTHS[m]} ${y}`;
+
+  const grid = document.getElementById('calGrid');
+  let html = DOW.map(d => `<div class="cal-head">${d}</div>`).join('');
+
+  const firstDay = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const prevDays = new Date(y, m, 0).getDate();
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const cells = [];
+  for (let i = firstDay - 1; i >= 0; i--) cells.push({ day: prevDays - i, other: true });
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, other: false });
+  while (cells.length % 7 !== 0) cells.push({ day: cells.length, other: true });
+
+  cells.forEach(c => {
+    const dateStr = c.other ? null : `${y}-${String(m + 1).padStart(2, '0')}-${String(c.day).padStart(2, '0')}`;
+    const isToday = dateStr === todayStr;
+    const evts = dateStr ? EVENTS.filter(e => e.visit_date === dateStr) : [];
+    html += `
+      <div class="cal-cell ${c.other ? 'other' : ''} ${isToday ? 'today' : ''}">
+        <div class="d">${c.day}</div>
+        ${evts.slice(0, 3).map(e => `<div class="cal-evt" title="${e.customer_name} ${e.time_from}-${e.time_to}">${e.customer_name}</div>`).join('')}
+        ${evts.length > 3 ? `<div class="muted" style="font-size:10px;">+${evts.length - 3} เพิ่มเติม</div>` : ''}
+      </div>
+    `;
+  });
+  grid.innerHTML = html;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,95 @@
+// client/src/components/RequestModal.jsx - เทียบเท่า viewRequest() modal เดิมในหน้า my-requests.html / approve-requests.html
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
+import { fmtDate, statusLabel, channelLabel } from '../lib/api';
+
+// mode: 'mine' (แสดงประวัติ+ปุ่มพิมพ์) หรือ 'approve' (แสดงข้อมูลผู้ขอ+ปุ่มอนุมัติ/ไม่อนุมัติ/ส่งกลับแก้ไข)
+// หรือ 'calendar' (แสดงข้อมูลผู้ขอ+ผู้อนุมัติ แบบอ่านอย่างเดียว - ใช้จากหน้าปฏิทิน)
+export default function RequestModal({ request, history, customFields, mode, onClose, onDecide, onRequestRevision }) {
+  const navigate = useNavigate();
+  const canPrint = !['draft', 'revision'].includes(request.status);
+
+  return (
+    <div className="modal-bg" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal">
+        <div className="modal-head">
+          <h3>{mode === 'mine' ? `รายละเอียดคำขอ #${request.code}` : `คำขอ #${request.code}`}</h3>
+          <button className="modal-close" onClick={onClose}>&times;</button>
+        </div>
+        <div className="modal-body">
+          <div className="form-actions" style={{ justifyContent: 'flex-start', marginBottom: 12 }}>
+            {canPrint && (
+              <a className="btn btn-outline btn-sm" href={`/api/visit-requests/${request.id}/pdf`} target="_blank" rel="noreferrer">
+                &#128196; พิมพ์ / ดูตัวอย่าง PDF
+              </a>
+            )}
+            {mode === 'mine' && ['draft', 'revision'].includes(request.status) && (
+              <button className="btn btn-outline btn-sm" onClick={() => { onClose(); navigate(`/visit-request?id=${request.id}`); }}>
+                &#9998; แก้ไขคำขอ
+              </button>
+            )}
+          </div>
+          {(mode === 'approve' || mode === 'calendar') && (
+            <p><b>ผู้ขอ:</b> {request.requester_name} ({request.requester_position || '-'}) {request.requester_department ? `· แผนก ${request.requester_department}` : ''}</p>
+          )}
+          <p><b>ลูกค้า/บริษัท:</b> {request.customer_name || '-'}</p>
+          <p><b>วันที่:</b> {fmtDate(request.visit_date)} &nbsp; <b>เวลา:</b> {request.time_from} - {request.time_to}</p>
+          <p><b>วัตถุประสงค์:</b> {request.purpose || '-'}</p>
+          <p><b>สถานที่:</b> {request.location || '-'}</p>
+          <p><b>ผู้ติดต่อ:</b> {request.contact_person || '-'} {request.contact_phone ? `(${request.contact_phone})` : ''}</p>
+          {mode === 'mine' && (
+            <p><b>ยานพาหนะ:</b> {request.transport || '-'} {request.license_plate ? `· ${request.license_plate}` : ''}</p>
+          )}
+          <p><b>สถานะ:</b> <span className={`badge ${request.status}`}>{statusLabel(request.status)}</span></p>
+          {mode === 'calendar' && request.approver_name && (
+            <p><b>ผู้อนุมัติ:</b> {request.approver_name}</p>
+          )}
+          {customFields && customFields.length > 0 && (
+            <>
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '10px 0' }} />
+              {customFields.filter(f => f.value).map(f => {
+                let display = f.value;
+                if (f.field_type === 'multiselect') {
+                  try { display = JSON.parse(f.value).join(', '); } catch (e) { /* keep raw */ }
+                } else if (f.field_type === 'checkbox') {
+                  display = f.value === 'true' ? 'ใช่' : 'ไม่ใช่';
+                } else if (f.field_type === 'file') {
+                  display = <a href={f.value} download>ดาวน์โหลดไฟล์แนบ</a>;
+                }
+                return <p key={f.field_key}><b>{f.label}:</b> {display}</p>;
+              })}
+            </>
+          )}
+          {request.approval_note && (
+            <p><b>{request.status === 'revision' ? 'สิ่งที่ต้องแก้ไข' : 'ความคิดเห็นผู้อนุมัติ'}:</b> {request.approval_note}</p>
+          )}
+
+          {mode === 'approve' && request.status === 'pending' && (
+            <div className="form-actions" style={{ justifyContent: 'flex-start', marginTop: 12 }}>
+              <button className="btn btn-success" onClick={() => { onDecide(request.id, 'approve'); onClose(); }}>อนุมัติ</button>
+              <button className="btn btn-danger" onClick={() => { onDecide(request.id, 'reject'); onClose(); }}>ไม่อนุมัติ</button>
+              {onRequestRevision && (
+                <button className="btn btn-outline" onClick={() => { onRequestRevision(request.id); onClose(); }}>ส่งกลับแก้ไข</button>
+              )}
+            </div>
+          )}
+
+          {mode === 'mine' && history && (
+            <>
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '14px 0' }} />
+              <b>ประวัติการดำเนินการ</b>
+              <div style={{ marginTop: 8 }}>
+                {history.map(h => (
+                  <div key={h.id} style={{ fontSize: 12.5, padding: '6px 0', borderBottom: '1px dashed var(--border)' }}>
+                    <b>{h.action}</b> โดย {h.actor_name || 'ระบบ'} {h.channel ? `· ผ่าน${channelLabel(h.channel)}` : ''} · {h.created_at}
+                    {h.note && <div className="muted">{h.note}</div>}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

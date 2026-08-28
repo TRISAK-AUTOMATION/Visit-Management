@@ -1,0 +1,6 @@
+node_modules/
+client/node_modules/
+db/trisak.db
+db/trisak.db-shm
+db/trisak.db-wal
+.env

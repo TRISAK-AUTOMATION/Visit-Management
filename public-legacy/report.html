@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Report - TRISAK</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+(async () => {
+  const me = await renderLayout('Report');
+  if (!me) return;
+  const scope = me.role === 'Employee' ? 'mine' : 'pending';
+  const { requests } = await api.get(`/api/visit-requests?scope=${scope}`);
+
+  const total = requests.length;
+  const approved = requests.filter(r => r.status === 'approved').length;
+  const pending = requests.filter(r => r.status === 'pending').length;
+  const rejected = requests.filter(r => r.status === 'rejected').length;
+  const cancelled = requests.filter(r => r.status === 'cancelled').length;
+
+  const byCustomer = {};
+  requests.forEach(r => { byCustomer[r.customer_name] = (byCustomer[r.customer_name] || 0) + 1; });
+  const custEntries = Object.entries(byCustomer).sort((a,b) => b[1]-a[1]).slice(0,6);
+  const maxCount = Math.max(1, ...custEntries.map(e => e[1]));
+
+  document.getElementById('content').innerHTML = `
+    <div class="stat-grid">
+      <div class="stat-card blue"><div class="label">คำขอทั้งหมด</div><div class="value">${total}<span class="unit">คำขอ</span></div></div>
+      <div class="stat-card green"><div class="label">อนุมัติแล้ว</div><div class="value">${approved}<span class="unit">${pct(approved,total)}%</span></div></div>
+      <div class="stat-card orange"><div class="label">รออนุมัติ</div><div class="value">${pending}<span class="unit">${pct(pending,total)}%</span></div></div>
+      <div class="stat-card red"><div class="label">ไม่อนุมัติ</div><div class="value">${rejected}<span class="unit">${pct(rejected,total)}%</span></div></div>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><h3>จำนวนคำขอแยกตามลูกค้า</h3></div>
+        <div class="card-body">
+          ${custEntries.length ? custEntries.map(([name, count]) => `
+            <div style="margin-bottom:10px;">
+              <div class="flex between" style="font-size:12.5px;margin-bottom:4px;"><span>${name}</span><b>${count}</b></div>
+              <div style="background:var(--bg);border-radius:6px;height:10px;overflow:hidden;">
+                <div style="width:${(count/maxCount)*100}%;background:var(--blue-600);height:100%;border-radius:6px;"></div>
+              </div>
+            </div>
+          `).join('') : `<div class="empty">ไม่มีข้อมูล</div>`}
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>สัดส่วนสถานะ</h3></div>
+        <div class="card-body">
+          ${donutSVG([
+            { label: 'อนุมัติแล้ว', value: approved, color: '#1fae62' },
+            { label: 'รออนุมัติ', value: pending, color: '#f5a524' },
+            { label: 'ไม่อนุมัติ', value: rejected, color: '#f0483e' },
+            { label: 'ยกเลิก', value: cancelled, color: '#9aa2b4' },
+          ])}
+        </div>
+      </div>
+    </div>
+  `;
+})();
+
+function pct(v, total) { return total ? Math.round((v/total)*100) : 0; }
+
+function donutSVG(data) {
+  const total = data.reduce((a,b) => a+b.value, 0) || 1;
+  let cum = 0;
+  const r = 60, cx = 80, cy = 80, sw = 22;
+  const circumference = 2 * Math.PI * r;
+  const segs = data.map(d => {
+    const frac = d.value / total;
+    const dash = frac * circumference;
+    const seg = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${d.color}" stroke-width="${sw}"
+      stroke-dasharray="${dash} ${circumference-dash}" stroke-dashoffset="${-cum*circumference}" transform="rotate(-90 ${cx} ${cy})"/>`;
+    cum += frac;
+    return seg;
+  }).join('');
+  return `
+    <div class="flex gap-12" style="align-items:center;">
+      <svg width="160" height="160" viewBox="0 0 160 160">${segs}<circle cx="${cx}" cy="${cy}" r="${r-sw/2-2}" fill="#fff"/></svg>
+      <div>
+        ${data.map(d => `
+          <div class="flex gap-8" style="margin-bottom:6px;font-size:12.5px;">
+            <span style="width:10px;height:10px;border-radius:3px;background:${d.color};display:inline-block;"></span>
+            ${d.label} <b style="margin-left:auto;">${d.value}</b>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+</script>
+</body>
+</html>

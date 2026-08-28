@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Approve Requests - TRISAK</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+let ALL_REQUESTS = [];
+let CURRENT_FILTER = 'pending';
+
+(async () => {
+  const me = await renderLayout('Approve Requests');
+  if (!me) return;
+  if (!['Approver', 'Admin'].includes(me.role)) {
+    document.getElementById('content').innerHTML = `<div class="empty">คุณไม่มีสิทธิ์เข้าถึงหน้านี้</div>`;
+    return;
+  }
+  const content = document.getElementById('content');
+
+  content.innerHTML = `
+    <div class="tabs" id="tabs">
+      <div class="tab active" data-f="pending">รออนุมัติ</div>
+      <div class="tab" data-f="approved">อนุมัติแล้ว</div>
+      <div class="tab" data-f="rejected">ไม่อนุมัติ</div>
+    </div>
+    <div class="card">
+      <div class="card-body" style="padding:0;">
+        <table>
+          <thead>
+            <tr><th>วันที่ยื่น</th><th>ผู้ขอ</th><th>ลูกค้า / บริษัท</th><th>เวลา</th><th>วัตถุประสงค์</th><th>จัดการ</th></tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="modalRoot"></div>
+  `;
+
+  document.getElementById('tabs').addEventListener('click', (e) => {
+    const tab = e.target.closest('.tab');
+    if (!tab) return;
+    document.querySelectorAll('#tabs .tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    CURRENT_FILTER = tab.dataset.f;
+    loadRequests();
+  });
+
+  await loadRequests();
+})();
+
+async function loadRequests() {
+  const { requests } = await api.get(`/api/visit-requests?scope=pending&status=${CURRENT_FILTER}`);
+  ALL_REQUESTS = requests;
+  renderTable();
+}
+
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = ALL_REQUESTS.length ? ALL_REQUESTS.map(v => `
+    <tr>
+      <td>${fmtDate(v.visit_date)}</td>
+      <td>${v.requester_name}</td>
+      <td>${v.customer_name}</td>
+      <td>${v.time_from} - ${v.time_to}</td>
+      <td>${v.purpose}</td>
+      <td>
+        <button class="btn btn-outline btn-sm" onclick="viewRequest(${v.id})">ดู</button>
+        ${v.status === 'pending' ? `
+          <button class="btn btn-success btn-sm" onclick="decide(${v.id}, 'approve')">อนุมัติ</button>
+          <button class="btn btn-danger btn-sm" onclick="decide(${v.id}, 'reject')">ไม่อนุมัติ</button>
+        ` : ''}
+      </td>
+    </tr>
+  `).join('') : `<tr><td colspan="6" class="empty">ไม่มีรายการในหมวดนี้</td></tr>`;
+}
+
+async function decide(id, action) {
+  const note = prompt(action === 'approve' ? 'ความคิดเห็น (ถ้ามี) ก่อนอนุมัติ:' : 'เหตุผลที่ไม่อนุมัติ:', '') || '';
+  try {
+    await api.post(`/api/visit-requests/${id}/${action}`, { note });
+    toast(action === 'approve' ? 'อนุมัติคำขอสำเร็จ' : 'บันทึกการไม่อนุมัติแล้ว', 'success');
+    loadRequests();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function viewRequest(id) {
+  const { request, history } = await api.get(`/api/visit-requests/${id}`);
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="modal-bg" onclick="if(event.target===this) this.remove()">
+      <div class="modal">
+        <div class="modal-head">
+          <h3>คำขอ #${request.code}</h3>
+          <button class="modal-close" onclick="document.querySelector('.modal-bg').remove()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-actions" style="justify-content:flex-start;margin-bottom:12px;">
+            <a class="btn btn-outline btn-sm" href="/api/visit-requests/${request.id}/pdf" target="_blank">&#128196; พิมพ์ / ดูตัวอย่าง PDF</a>
+          </div>
+          <p><b>ผู้ขอ:</b> ${request.requester_name} (${request.requester_position || '-'})</p>
+          <p><b>ลูกค้า/บริษัท:</b> ${request.customer_name}</p>
+          <p><b>วันที่:</b> ${fmtDate(request.visit_date)} &nbsp; <b>เวลา:</b> ${request.time_from} - ${request.time_to}</p>
+          <p><b>วัตถุประสงค์:</b> ${request.purpose}</p>
+          <p><b>สถานที่:</b> ${request.location || '-'}</p>
+          <p><b>ผู้ติดต่อ:</b> ${request.contact_person || '-'} ${request.contact_phone ? '(' + request.contact_phone + ')' : ''}</p>
+          <p><b>สถานะ:</b> <span class="badge ${request.status}">${statusLabel(request.status)}</span></p>
+          ${request.status === 'pending' ? `
+            <div class="form-actions" style="justify-content:flex-start;margin-top:12px;">
+              <button class="btn btn-success" onclick="decide(${request.id}, 'approve'); document.querySelector('.modal-bg').remove()">อนุมัติ</button>
+              <button class="btn btn-danger" onclick="decide(${request.id}, 'reject'); document.querySelector('.modal-bg').remove()">ไม่อนุมัติ</button>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+</script>
+</body>
+</html>

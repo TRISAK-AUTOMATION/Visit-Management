@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>จัดการผู้ใช้งาน - TRISAK</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+let USERS = [];
+const ROLE_TH = { Employee: 'พนักงาน', Approver: 'ผู้อนุมัติ', Admin: 'ผู้ดูแลระบบ' };
+
+(async () => {
+  const me = await renderLayout('จัดการผู้ใช้งาน (User Management)');
+  if (!me) return;
+  if (me.role !== 'Admin') {
+    document.getElementById('content').innerHTML = `<div class="empty">คุณไม่มีสิทธิ์เข้าถึงหน้านี้</div>`;
+    return;
+  }
+  document.getElementById('content').innerHTML = `
+    <div class="flex between mb-16">
+      <h3 style="margin:0;">รายชื่อผู้ใช้งานทั้งหมด</h3>
+      <button class="btn btn-primary" onclick="openForm()">+ เพิ่มผู้ใช้</button>
+    </div>
+    <div class="card">
+      <div class="card-body" style="padding:0;">
+        <table>
+          <thead><tr><th>ชื่อ-นามสกุล</th><th>Username</th><th>อีเมล</th><th>ตำแหน่ง</th><th>สิทธิ์การใช้งาน</th><th>จัดการ</th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="modalRoot"></div>
+  `;
+  await load();
+})();
+
+async function load() {
+  const { users } = await api.get('/api/users');
+  USERS = users;
+  document.getElementById('tbody').innerHTML = users.map(u => `
+    <tr>
+      <td>${u.full_name}</td>
+      <td>${u.username}</td>
+      <td>${u.email || '-'}</td>
+      <td>${u.position || '-'}</td>
+      <td><span class="badge ${u.role === 'Admin' ? 'rejected' : u.role === 'Approver' ? 'approved' : 'pending'}">${ROLE_TH[u.role]}</span></td>
+      <td>
+        <button class="btn btn-outline btn-sm" onclick="openForm(${u.id})">แก้ไข</button>
+        <button class="btn btn-danger btn-sm" onclick="remove(${u.id})">ลบ</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function openForm(id) {
+  const u = id ? USERS.find(x => x.id === id) : null;
+  document.getElementById('modalRoot').innerHTML = `
+    <div class="modal-bg" onclick="if(event.target===this) this.remove()">
+      <div class="modal">
+        <div class="modal-head">
+          <h3>${u ? 'แก้ไขผู้ใช้' : 'เพิ่มผู้ใช้ใหม่'}</h3>
+          <button class="modal-close" onclick="document.querySelector('.modal-bg').remove()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <form id="userForm">
+            ${!u ? `
+              <div class="form-group"><label>Username <span class="req">*</span></label><input id="f_username" required></div>
+              <div class="form-group"><label>รหัสผ่าน <span class="req">*</span></label><input type="password" id="f_password" required></div>
+            ` : ''}
+            <div class="form-group"><label>ชื่อ-นามสกุล <span class="req">*</span></label><input id="f_name" value="${u ? u.full_name : ''}" required></div>
+            <div class="form-group"><label>อีเมล</label><input id="f_email" value="${u ? (u.email || '') : ''}"></div>
+            <div class="form-group"><label>เบอร์โทร</label><input id="f_phone" value="${u ? (u.phone || '') : ''}"></div>
+            <div class="form-group"><label>ตำแหน่ง</label><input id="f_position" value="${u ? (u.position || '') : ''}"></div>
+            <div class="form-group"><label>แผนก</label><input id="f_department" value="${u ? (u.department || '') : ''}"></div>
+            <div class="form-group"><label>สิทธิ์การใช้งาน</label>
+              <select id="f_role">
+                <option value="Employee" ${u && u.role==='Employee'?'selected':''}>พนักงาน (Employee)</option>
+                <option value="Approver" ${u && u.role==='Approver'?'selected':''}>ผู้อนุมัติ (Approver)</option>
+                <option value="Admin" ${u && u.role==='Admin'?'selected':''}>ผู้ดูแลระบบ (Admin)</option>
+              </select>
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-outline" onclick="document.querySelector('.modal-bg').remove()">ยกเลิก</button>
+              <button type="submit" class="btn btn-primary">บันทึก</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('userForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = {
+      full_name: document.getElementById('f_name').value,
+      email: document.getElementById('f_email').value,
+      phone: document.getElementById('f_phone').value,
+      position: document.getElementById('f_position').value,
+      department: document.getElementById('f_department').value,
+      role: document.getElementById('f_role').value
+    };
+    try {
+      if (u) {
+        await api.put(`/api/users/${u.id}`, payload);
+      } else {
+        payload.username = document.getElementById('f_username').value;
+        payload.password = document.getElementById('f_password').value;
+        await api.post('/api/users', payload);
+      }
+      toast('บันทึกสำเร็จ', 'success');
+      document.querySelector('.modal-bg').remove();
+      load();
+    } catch (err) { toast(err.message, 'error'); }
+  });
+}
+
+async function remove(id) {
+  if (!confirm('ยืนยันลบผู้ใช้รายนี้หรือไม่?')) return;
+  try {
+    await api.del(`/api/users/${id}`);
+    toast('ลบสำเร็จ', 'success');
+    load();
+  } catch (err) { toast(err.message, 'error'); }
+}
+</script>
+</body>
+</html>

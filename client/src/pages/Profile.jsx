@@ -1,0 +1,82 @@
+// client/src/pages/Profile.jsx - เทียบเท่า public/profile.html
+import React, { useState } from 'react';
+import Layout from '../components/Layout';
+import { useAuth } from '../lib/AuthContext';
+import { api, initials, ROLE_TH } from '../lib/api';
+import { useToast } from '../lib/ToastContext';
+
+export default function Profile() {
+  const { me, setMe } = useAuth();
+  const toast = useToast();
+
+  const [form, setForm] = useState({
+    full_name: me.full_name, email: me.email || '', phone: me.phone || '',
+    position: me.position || '', department: me.department || '',
+    email_notify: !!me.email_notify
+  });
+  const [pw, setPw] = useState({ current_password: '', new_password: '' });
+
+  const set = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
+  const setCheckbox = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.checked }));
+
+  const saveProfile = async (e) => {
+    e.preventDefault();
+    try {
+      await api.put('/api/users/me', form);
+      setMe(m => ({ ...m, ...form }));
+      toast('บันทึกข้อมูลสำเร็จ', 'success');
+    } catch (err) { toast(err.message, 'error'); }
+  };
+
+  const changePassword = async (e) => {
+    e.preventDefault();
+    try {
+      await api.put('/api/users/me/password', pw);
+      toast('เปลี่ยนรหัสผ่านสำเร็จ', 'success');
+      setPw({ current_password: '', new_password: '' });
+    } catch (err) { toast(err.message, 'error'); }
+  };
+
+  return (
+    <Layout title="โปรไฟล์">
+      <div className="grid-2">
+        <div className="card">
+          <div className="card-head"><h3>ข้อมูลส่วนตัว</h3></div>
+          <div className="card-body">
+            <div className="flex gap-12 mb-16">
+              <div className="pill-avatar" style={{ width: 64, height: 64, fontSize: 20 }}>{initials(me.full_name)}</div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>{me.full_name}</div>
+                <div className="muted">{me.position || '-'} · {ROLE_TH[me.role]}</div>
+              </div>
+            </div>
+            <form onSubmit={saveProfile}>
+              <div className="form-group"><label>ชื่อ-นามสกุล</label><input value={form.full_name} onChange={set('full_name')} /></div>
+              <div className="form-group"><label>อีเมล</label><input value={form.email} onChange={set('email')} /></div>
+              <div className="form-group"><label>เบอร์โทร</label><input value={form.phone} onChange={set('phone')} /></div>
+              <div className="form-group"><label>ตำแหน่ง</label><input value={form.position} onChange={set('position')} /></div>
+              <div className="form-group"><label>แผนก</label><input value={form.department} onChange={set('department')} /></div>
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={form.email_notify} onChange={setCheckbox('email_notify')} style={{ width: 16, height: 16 }} />
+                  รับการแจ้งเตือนทางอีเมล (คำขอใหม่ / ผลการอนุมัติ)
+                </label>
+              </div>
+              <div className="form-actions"><button type="submit" className="btn btn-primary">บันทึก</button></div>
+            </form>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-head"><h3>เปลี่ยนรหัสผ่าน</h3></div>
+          <div className="card-body">
+            <form onSubmit={changePassword}>
+              <div className="form-group"><label>รหัสผ่านปัจจุบัน</label><input type="password" value={pw.current_password} onChange={e => setPw(p => ({ ...p, current_password: e.target.value }))} required /></div>
+              <div className="form-group"><label>รหัสผ่านใหม่</label><input type="password" value={pw.new_password} onChange={e => setPw(p => ({ ...p, new_password: e.target.value }))} required /></div>
+              <div className="form-actions"><button type="submit" className="btn btn-primary">เปลี่ยนรหัสผ่าน</button></div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </Layout>
+  );
+}

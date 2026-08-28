@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>เข้าสู่ระบบ - TRISAK Visit Management</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-hero">
+      <div class="content">
+        <div class="brand-mark" style="width:56px;height:56px;font-size:24px;margin-bottom:20px;">T</div>
+        <h1>TRISAK</h1>
+        <p>Visit Management System</p>
+        <p style="margin-top:30px;max-width:380px;color:#c3cdec;line-height:1.7;">
+          ระบบบริหารจัดการคำขอออกนอกสถานที่ ครบวงจร ตั้งแต่สร้างคำขอ อนุมัติผ่านอีเมล
+          ไปจนถึงติดตามผลและออกรายงาน
+        </p>
+      </div>
+    </div>
+    <div class="login-form-side">
+      <div class="login-box">
+        <h2>เข้าสู่ระบบ</h2>
+        <p class="sub">กรุณากรอกข้อมูลเพื่อเข้าสู่ระบบ</p>
+        <form id="loginForm">
+          <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="username" placeholder="กรอกชื่อผู้ใช้" required>
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="password" placeholder="กรอกรหัสผ่าน" required>
+          </div>
+          <div class="login-remember">
+            <label class="flex gap-8"><input type="checkbox" id="remember"> จำฉันไว้ในระบบ</label>
+            <a href="#" style="color:var(--blue-600);font-weight:600;">ลืมรหัสผ่าน?</a>
+          </div>
+          <button type="submit" class="btn btn-primary">เข้าสู่ระบบ</button>
+        </form>
+        <div class="login-hint">
+          <b>บัญชีทดสอบ</b> (รหัสผ่าน: 123456)<br>
+          พนักงาน: anuphong · ผู้อนุมัติ: somchai · ผู้ดูแลระบบ: patcharin
+        </div>
+        <p style="text-align:center;color:var(--text-400);font-size:11.5px;margin-top:22px;">© 2026 TRISAK. All rights reserved.</p>
+      </div>
+    </div>
+  </div>
+
+<script src="/js/api.js"></script>
+<script>
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  try {
+    await api.post('/api/auth/login', { username, password });
+    window.location.href = '/dashboard.html';
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+// ถ้าเข้าสู่ระบบแล้ว ให้ไปหน้า dashboard ทันที
+api.get('/api/auth/me').then(() => { window.location.href = '/dashboard.html'; }).catch(() => {});
+</script>
+</body>
+</html>

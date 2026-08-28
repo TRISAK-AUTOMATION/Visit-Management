@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Notifications - TRISAK</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+(async () => {
+  const me = await renderLayout('Notifications');
+  if (!me) return;
+  document.getElementById('content').innerHTML = `
+    <div class="flex between mb-16">
+      <div class="tabs">
+        <div class="tab active">ทั้งหมด</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="markAll()">ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>
+    </div>
+    <div class="card"><div class="card-body" id="list"></div></div>
+  `;
+  await load();
+})();
+
+const ICONS = { new_request: '&#128221;', approved: '&#9989;', rejected: '&#10060;', reminder: '&#128276;' };
+
+async function load() {
+  const { notifications } = await api.get('/api/notifications');
+  document.getElementById('list').innerHTML = notifications.length ? notifications.map(n => `
+    <div class="flex gap-12" style="padding:12px 4px;border-bottom:1px solid var(--border);${n.is_read ? 'opacity:.6;' : ''}" onclick="markRead(${n.id})">
+      <div class="pill-avatar">${ICONS[n.type] || '&#128276;'}</div>
+      <div style="flex:1;">
+        <div style="font-size:13px;">${n.message}</div>
+        <div class="muted" style="font-size:11.5px;margin-top:2px;">${n.created_at}</div>
+      </div>
+      ${!n.is_read ? `<span style="width:8px;height:8px;border-radius:50%;background:var(--blue-600);margin-top:6px;"></span>` : ''}
+    </div>
+  `).join('') : `<div class="empty">ไม่มีการแจ้งเตือน</div>`;
+}
+
+async function markRead(id) {
+  await api.post(`/api/notifications/${id}/read`);
+  load();
+}
+async function markAll() {
+  await api.post('/api/notifications/read-all');
+  load();
+  toast('ทำเครื่องหมายว่าอ่านแล้วทั้งหมด', 'success');
+}
+</script>
+</body>
+</html>

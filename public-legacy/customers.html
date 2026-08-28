@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Customer - TRISAK</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+let CUSTOMERS = [];
+
+(async () => {
+  const me = await renderLayout('Customer');
+  if (!me) return;
+  document.getElementById('content').innerHTML = `
+    <div class="flex between mb-16">
+      <input type="text" id="search" placeholder="ค้นหาลูกค้า..." style="width:280px;padding:9px 12px;border:1px solid var(--border);border-radius:9px;">
+      <button class="btn btn-primary" onclick="openForm()">+ เพิ่มลูกค้า</button>
+    </div>
+    <div class="card">
+      <div class="card-body" style="padding:0;">
+        <table>
+          <thead><tr><th>รหัสลูกค้า</th><th>ชื่อบริษัท</th><th>ผู้ติดต่อ</th><th>เบอร์โทร</th><th>จัดการ</th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="modalRoot"></div>
+  `;
+  document.getElementById('search').addEventListener('input', (e) => load(e.target.value));
+  await load();
+})();
+
+async function load(q) {
+  const { customers } = await api.get('/api/customers' + (q ? `?q=${encodeURIComponent(q)}` : ''));
+  CUSTOMERS = customers;
+  document.getElementById('tbody').innerHTML = customers.length ? customers.map(c => `
+    <tr>
+      <td>${c.code}</td>
+      <td>${c.name}</td>
+      <td>${c.contact_person || '-'}</td>
+      <td>${c.phone || '-'}</td>
+      <td>
+        <button class="btn btn-outline btn-sm" onclick="openForm(${c.id})">แก้ไข</button>
+        <button class="btn btn-danger btn-sm" onclick="remove(${c.id})">ลบ</button>
+      </td>
+    </tr>
+  `).join('') : `<tr><td colspan="5" class="empty">ไม่พบข้อมูลลูกค้า</td></tr>`;
+}
+
+function openForm(id) {
+  const c = id ? CUSTOMERS.find(x => x.id === id) : null;
+  document.getElementById('modalRoot').innerHTML = `
+    <div class="modal-bg" onclick="if(event.target===this) this.remove()">
+      <div class="modal">
+        <div class="modal-head">
+          <h3>${c ? 'แก้ไขลูกค้า' : 'เพิ่มลูกค้าใหม่'}</h3>
+          <button class="modal-close" onclick="document.querySelector('.modal-bg').remove()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <form id="custForm">
+            <div class="form-group"><label>ชื่อบริษัท <span class="req">*</span></label><input id="f_name" value="${c ? c.name : ''}" required></div>
+            <div class="form-group"><label>ผู้ติดต่อ</label><input id="f_contact" value="${c ? (c.contact_person || '') : ''}"></div>
+            <div class="form-group"><label>เบอร์โทร</label><input id="f_phone" value="${c ? (c.phone || '') : ''}"></div>
+            <div class="form-group"><label>อีเมล</label><input id="f_email" value="${c ? (c.email || '') : ''}"></div>
+            <div class="form-group"><label>ที่อยู่</label><textarea id="f_address">${c ? (c.address || '') : ''}</textarea></div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-outline" onclick="document.querySelector('.modal-bg').remove()">ยกเลิก</button>
+              <button type="submit" class="btn btn-primary">บันทึก</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('custForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = {
+      name: document.getElementById('f_name').value,
+      contact_person: document.getElementById('f_contact').value,
+      phone: document.getElementById('f_phone').value,
+      email: document.getElementById('f_email').value,
+      address: document.getElementById('f_address').value
+    };
+    try {
+      if (c) await api.put(`/api/customers/${c.id}`, payload);
+      else await api.post('/api/customers', payload);
+      toast('บันทึกสำเร็จ', 'success');
+      document.querySelector('.modal-bg').remove();
+      load();
+    } catch (err) { toast(err.message, 'error'); }
+  });
+}
+
+async function remove(id) {
+  if (!confirm('ยืนยันลบลูกค้ารายนี้หรือไม่?')) return;
+  try {
+    await api.del(`/api/customers/${id}`);
+    toast('ลบสำเร็จ', 'success');
+    load();
+  } catch (err) { toast(err.message, 'error'); }
+}
+</script>
+</body>
+</html>

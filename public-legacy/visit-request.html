@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>สร้างคำขอ Visit - TRISAK</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/layout.js"></script>
+<script>
+(async () => {
+  const me = await renderLayout('สร้างคำขอออกนอกสถานที่ (Visit Request)');
+  if (!me) return;
+  const content = document.getElementById('content');
+
+  const { customers } = await api.get('/api/customers');
+  const today = new Date().toISOString().slice(0,10);
+
+  content.innerHTML = `
+    <div class="card" style="max-width:900px;">
+      <div class="card-head"><h3>ข้อมูลคำขอ</h3></div>
+      <div class="card-body">
+        <form id="vrForm">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>วันที่ <span class="req">*</span></label>
+              <input type="date" id="visit_date" value="${today}" required>
+            </div>
+            <div class="form-group">
+              <label>ลูกค้า / บริษัท <span class="req">*</span></label>
+              <select id="customer_id" required>
+                <option value="">-- เลือกลูกค้า --</option>
+                ${customers.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>เวลาเริ่ม (แผน) <span class="req">*</span></label>
+              <input type="time" id="time_from" value="09:00" required>
+            </div>
+            <div class="form-group">
+              <label>เวลาสิ้นสุด (แผน) <span class="req">*</span></label>
+              <input type="time" id="time_to" value="16:00" required>
+            </div>
+            <div class="form-group">
+              <label>ประเภทงาน (Job Type)</label>
+              <select id="job_type">
+                <option value="เข้าพบลูกค้า">เข้าพบลูกค้า</option>
+                <option value="ติดตั้ง/บริการ">ติดตั้ง/บริการ</option>
+                <option value="นำเสนอสินค้า">นำเสนอสินค้า</option>
+                <option value="ติดตามงาน">ติดตามงาน</option>
+                <option value="ประชุมงาน">ประชุมงาน</option>
+                <option value="อื่นๆ">อื่นๆ</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>ผู้ดูแลการขาย (Sales)</label>
+              <input type="text" id="sales_person" placeholder="ปล่อยว่างหากเป็นผู้ขอเอง">
+            </div>
+            <div class="form-group full">
+              <label>วัตถุประสงค์ / รายละเอียดงาน <span class="req">*</span></label>
+              <input type="text" id="purpose" placeholder="เช่น เข้าพบลูกค้า เพื่อนำเสนอสินค้าและบริการ" required>
+            </div>
+            <div class="form-group full">
+              <label>สถานที่</label>
+              <input type="text" id="location" placeholder="ที่อยู่ปลายทาง">
+            </div>
+            <div class="form-group">
+              <label>ผู้ติดต่อ</label>
+              <input type="text" id="contact_person" placeholder="ชื่อผู้ติดต่อฝั่งลูกค้า">
+            </div>
+            <div class="form-group">
+              <label>เบอร์โทร</label>
+              <input type="text" id="contact_phone" placeholder="0xx-xxx-xxxx">
+            </div>
+            <div class="form-group">
+              <label>สินค้า/อุปกรณ์ที่เกี่ยวข้อง</label>
+              <input type="text" id="product" placeholder="เช่น เครื่องจักร, อะไหล่, ซอฟต์แวร์">
+            </div>
+            <div class="form-group">
+              <label>ผู้ร่วมงาน</label>
+              <input type="text" id="participants" placeholder="ชื่อเพื่อนร่วมทีม (ถ้ามี)">
+            </div>
+            <div class="form-group">
+              <label>ยานพาหนะ</label>
+              <select id="transport">
+                <option value="รถยนต์ส่วนตัว">รถยนต์ส่วนตัว</option>
+                <option value="รถบริษัท">รถบริษัท</option>
+                <option value="รถสาธารณะ">รถสาธารณะ</option>
+                <option value="แท็กซี่/แอปเรียกรถ">แท็กซี่/แอปเรียกรถ</option>
+                <option value="อื่นๆ">อื่นๆ</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>ทะเบียนรถ</label>
+              <input type="text" id="license_plate" placeholder="กข 1234">
+            </div>
+            <div class="form-group">
+              <label>ไมล์ออก</label>
+              <input type="number" id="mileage_out" placeholder="เลขไมล์ตอนออกเดินทาง">
+            </div>
+            <div class="form-group">
+              <label>ไมล์เข้า</label>
+              <input type="number" id="mileage_in" placeholder="เลขไมล์ตอนกลับถึง">
+            </div>
+            <div class="form-group">
+              <label>เวลาออกจริง</label>
+              <input type="time" id="actual_time_out">
+            </div>
+            <div class="form-group">
+              <label>เวลากลับจริง</label>
+              <input type="time" id="actual_time_back">
+            </div>
+            <div class="form-group">
+              <label>จำนวนชั่วโมง OT</label>
+              <input type="number" step="0.5" id="ot_hours" placeholder="เช่น 1.5">
+            </div>
+            <div class="form-group">
+              <label>เลขประจำตัวผู้เสียภาษีลูกค้า (Cus. TAX ID)</label>
+              <input type="text" id="customer_tax_id" placeholder="0-XXXX-XXXXX-XX-X">
+            </div>
+            <div class="form-group full">
+              <label>วันที่ออกใบกำกับภาษี (TAX ID & Date)</label>
+              <input type="date" id="tax_invoice_date">
+            </div>
+            <div class="form-group full">
+              <label>รายละเอียดเพิ่มเติม (Remark)</label>
+              <textarea id="notes" placeholder="หมายเหตุเพิ่มเติม (ถ้ามี)"></textarea>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn btn-outline" onclick="location.href='/my-requests.html'">ยกเลิก</button>
+            <button type="submit" class="btn btn-primary">ส่งคำขอ</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('vrForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = {
+      customer_id: document.getElementById('customer_id').value,
+      visit_date: document.getElementById('visit_date').value,
+      time_from: document.getElementById('time_from').value,
+      time_to: document.getElementById('time_to').value,
+      purpose: document.getElementById('purpose').value,
+      location: document.getElementById('location').value,
+      contact_person: document.getElementById('contact_person').value,
+      contact_phone: document.getElementById('contact_phone').value,
+      transport: document.getElementById('transport').value,
+      license_plate: document.getElementById('license_plate').value,
+      notes: document.getElementById('notes').value,
+      job_type: document.getElementById('job_type').value,
+      sales_person: document.getElementById('sales_person').value,
+      product: document.getElementById('product').value,
+      participants: document.getElementById('participants').value,
+      mileage_out: document.getElementById('mileage_out').value || null,
+      mileage_in: document.getElementById('mileage_in').value || null,
+      actual_time_out: document.getElementById('actual_time_out').value,
+      actual_time_back: document.getElementById('actual_time_back').value,
+      ot_hours: document.getElementById('ot_hours').value || null,
+      customer_tax_id: document.getElementById('customer_tax_id').value,
+      tax_invoice_date: document.getElementById('tax_invoice_date').value
+    };
+    try {
+      const r = await api.post('/api/visit-requests', payload);
+      toast(`ส่งคำขอสำเร็จ (${r.code})`, 'success');
+      setTimeout(() => window.location.href = '/my-requests.html', 800);
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+})();
+</script>
+</body>
+</html>
