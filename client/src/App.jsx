@@ -16,6 +16,7 @@ import Settings from './pages/Settings';
 import Profile from './pages/Profile';
 import AdminUsers from './pages/AdminUsers';
 import AdminFormBuilder from './pages/AdminFormBuilder';
+import AdminPageContent from './pages/AdminPageContent';
 import AdminSystemLogs from './pages/AdminSystemLogs';
 
 export default function App() {
@@ -35,6 +36,7 @@ export default function App() {
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
       <Route path="/admin-users" element={<ProtectedRoute roles={['Admin']}><AdminUsers /></ProtectedRoute>} />
       <Route path="/admin-form-builder" element={<ProtectedRoute roles={['Admin']}><AdminFormBuilder /></ProtectedRoute>} />
+      <Route path="/admin-page-content" element={<ProtectedRoute roles={['Admin']}><AdminPageContent /></ProtectedRoute>} />
       <Route path="/admin-system-logs" element={<ProtectedRoute roles={['Admin']}><AdminSystemLogs /></ProtectedRoute>} />
 
       <Route path="/" element={<Navigate to="/dashboard" replace />} />

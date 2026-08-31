@@ -1,6 +1,7 @@
 // client/src/pages/Report.jsx - เทียบเท่า public/report.html
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
+import { usePageContent } from '../lib/PageContentContext';
 import { useAuth } from '../lib/AuthContext';
 import { api } from '../lib/api';
 
@@ -41,6 +42,7 @@ function DonutSVG({ data }) {
 }
 
 export default function Report() {
+  const { pc } = usePageContent();
   const { me } = useAuth();
   const [requests, setRequests] = useState(null);
 
@@ -49,7 +51,7 @@ export default function Report() {
     api.get(`/api/visit-requests?scope=${scope}`).then(r => setRequests(r.requests));
   }, [me.role]);
 
-  if (!requests) return <Layout title="Report"><p className="muted">กำลังโหลดข้อมูล...</p></Layout>;
+  if (!requests) return <Layout title={pc('report.title', 'Report')}><p className="muted">กำลังโหลดข้อมูล...</p></Layout>;
 
   const total = requests.length;
   const approved = requests.filter(r => r.status === 'approved').length;
@@ -63,7 +65,7 @@ export default function Report() {
   const maxCount = Math.max(1, ...custEntries.map(e => e[1]));
 
   return (
-    <Layout title="Report">
+    <Layout title={pc('report.title', 'Report')}>
       <div className="stat-grid">
         <div className="stat-card blue"><div className="label">คำขอทั้งหมด</div><div className="value">{total}<span className="unit">คำขอ</span></div></div>
         <div className="stat-card green"><div className="label">อนุมัติแล้ว</div><div className="value">{approved}<span className="unit">{pct(approved, total)}%</span></div></div>

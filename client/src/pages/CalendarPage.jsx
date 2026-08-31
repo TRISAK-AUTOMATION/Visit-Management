@@ -3,6 +3,7 @@
 // และเพิ่มช่องค้นหาชื่อลูกค้า/บริษัท (กรองฝั่ง client จากข้อมูลที่โหลดมาแล้ว ไม่มีการเรียก API เพิ่ม)
 import React, { useEffect, useMemo, useState } from 'react';
 import Layout from '../components/Layout';
+import { usePageContent } from '../lib/PageContentContext';
 import RequestModal from '../components/RequestModal';
 import { useAuth } from '../lib/AuthContext';
 import { api, fmtDate, statusLabel } from '../lib/api';
@@ -12,6 +13,7 @@ const THAI_MONTHS = ['มกราคม', 'กุมภาพันธ์', '�
 const DOW = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
 
 export default function CalendarPage() {
+  const { pc } = usePageContent();
   const { me } = useAuth();
   const toast = useToast();
   const [events, setEvents] = useState([]);
@@ -66,7 +68,7 @@ export default function CalendarPage() {
   };
 
   return (
-    <Layout title="ปฏิทิน">
+    <Layout title={pc('calendar.title', 'ปฏิทิน')}>
       <div className="card">
         <div className="card-head">
           <button className="btn btn-outline btn-sm" onClick={() => setViewDate(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))}>&larr;</button>

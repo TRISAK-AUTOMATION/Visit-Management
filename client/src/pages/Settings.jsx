@@ -28,6 +28,13 @@ export default function Settings() {
             <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>เพิ่ม/ลบ/แก้ไข Field ในฟอร์มสร้างคำขอ Visit</div>
           </Link>
         )}
+        {me.role === 'Admin' && (
+          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-page-content">
+            <div style={{ fontSize: 22 }}>&#128196;</div>
+            <div style={{ fontWeight: 700, marginTop: 8 }}>จัดการหน้า/หัวข้อของระบบ</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>แก้ไข Page Title ของแต่ละหน้าได้เอง</div>
+          </Link>
+        )}
         <Link className="card" style={{ padding: 20, display: 'block' }} to="/customers">
           <div style={{ fontSize: 22 }}>&#127970;</div>
           <div style={{ fontWeight: 700, marginTop: 8 }}>ข้อมูลลูกค้า</div>

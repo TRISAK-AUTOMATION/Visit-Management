@@ -229,4 +229,31 @@ const customFieldCols = db.prepare(`PRAGMA table_info(custom_form_fields)`).all(
 if (!customFieldCols.includes('position_after')) {
   db.exec(`ALTER TABLE custom_form_fields ADD COLUMN position_after TEXT NOT NULL DEFAULT ''`);
 }
+
+// ===== PAGE CONTENT CMS =====
+// เก็บข้อความ (title, label, ปุ่ม ฯลฯ) ของหน้าต่างๆ ที่ Admin แก้ไขได้จากหลังบ้าน โดยไม่ต้องแก้ Source Code
+// ออกแบบเป็น key-value ทั่วไป เพื่อให้เพิ่ม key ใหม่ในอนาคตได้ง่าย (เช่น dashboard.section.recent ในเฟสถัดไป)
+db.exec(`
+CREATE TABLE IF NOT EXISTS page_content (
+  content_key    TEXT PRIMARY KEY,
+  content_value  TEXT NOT NULL,
+  updated_at     TEXT DEFAULT (datetime('now')),
+  updated_by     INTEGER REFERENCES users(id)
+);
+`);
+// seed ค่าเริ่มต้น = ข้อความเดิมที่เคย hard-code ไว้ในแต่ละหน้า (คงพฤติกรรมเดิมไว้ทั้งหมดจนกว่า Admin จะแก้เอง)
+const PAGE_CONTENT_DEFAULTS = [
+  ['dashboard.title', 'Dashboard'],
+  ['my_requests.title', 'My Requests'],
+  ['approve_requests.title', 'Approve Requests'],
+  ['calendar.title', 'ปฏิทิน'],
+  ['customers.title', 'Customer'],
+  ['report.title', 'Report'],
+  ['notifications.title', 'Notifications']
+];
+{
+  const insertDefault = db.prepare('INSERT OR IGNORE INTO page_content (content_key, content_value) VALUES (?, ?)');
+  const tx = db.transaction((rows) => { rows.forEach(([k, v]) => insertDefault.run(k, v)); });
+  tx(PAGE_CONTENT_DEFAULTS);
+}
 module.exports = db;

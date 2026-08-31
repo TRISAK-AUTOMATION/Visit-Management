@@ -27,6 +27,7 @@ app.use('/api/visit-requests', require('./routes/pdf'));
 app.use('/api/system-logs', require('./routes/systemLogs'));
 app.use('/api/form-fields', require('./routes/formFields'));
 app.use('/api/core-field-settings', require('./routes/coreFields'));
+app.use('/api/page-content', require('./routes/pageContent'));
 
 // ---------- STATIC FRONTEND (React build output จาก client/) ----------
 app.use(express.static(path.join(__dirname, 'public')));

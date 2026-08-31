@@ -1,12 +1,14 @@
 // client/src/pages/Customers.jsx - เทียบเท่า public/customers.html
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
+import { usePageContent } from '../lib/PageContentContext';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
 const emptyForm = { name: '', contact_person: '', phone: '', email: '', address: '' };
 
 export default function Customers() {
+  const { pc } = usePageContent();
   const toast = useToast();
   const [customers, setCustomers] = useState([]);
   const [q, setQ] = useState('');
@@ -52,7 +54,7 @@ export default function Customers() {
   };
 
   return (
-    <Layout title="Customer">
+    <Layout title={pc('customers.title', 'Customer')}>
       <div className="flex between mb-16">
         <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหาลูกค้า..."
           style={{ width: 280, padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 9 }} />

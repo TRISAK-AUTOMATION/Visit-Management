@@ -1,6 +1,7 @@
 // client/src/pages/Notifications.jsx - เทียบเท่า public/notifications.html
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
+import { usePageContent } from '../lib/PageContentContext';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
@@ -8,6 +9,7 @@ import { useAuth } from '../lib/AuthContext';
 const ICONS = { new_request: '\uD83D\uDCDD', approved: '\u2705', rejected: '\u274C', reminder: '\uD83D\uDD14' };
 
 export default function Notifications() {
+  const { pc } = usePageContent();
   const toast = useToast();
   const { refreshBadges } = useAuth();
   const [items, setItems] = useState([]);
@@ -33,7 +35,7 @@ export default function Notifications() {
   };
 
   return (
-    <Layout title="Notifications">
+    <Layout title={pc('notifications.title', 'Notifications')}>
       <div className="flex between mb-16">
         <div className="tabs">
           <div className="tab active">ทั้งหมด</div>

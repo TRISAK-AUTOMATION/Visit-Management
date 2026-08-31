@@ -2,10 +2,12 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
+import { usePageContent } from '../lib/PageContentContext';
 import { useAuth } from '../lib/AuthContext';
 import { api, fmtDate, statusLabel } from '../lib/api';
 
 export default function Dashboard() {
+  const { pc } = usePageContent();
   const { me } = useAuth();
   const [data, setData] = useState(null);
 
@@ -14,7 +16,7 @@ export default function Dashboard() {
   const scopeLabel = me.role === 'Employee' ? 'คำขอทั้งหมดของฉัน' : 'คำขอทั้งหมดในระบบ';
 
   return (
-    <Layout title="Dashboard">
+    <Layout title={pc('dashboard.title', 'Dashboard')}>
       {!data ? <p className="muted">กำลังโหลดข้อมูล...</p> : (
         <>
           <div className="stat-grid">

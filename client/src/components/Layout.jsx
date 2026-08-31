@@ -25,6 +25,7 @@ const MENU = {
   admin: [
     { href: '/admin-users', icon: '\uD83D\uDEE1', label: 'จัดการผู้ใช้งาน' },
     { href: '/admin-form-builder', icon: '\uD83E\uDDF1', label: 'Form Builder' },
+    { href: '/admin-page-content', icon: '\uD83D\uDCC4', label: 'จัดการหน้า/หัวข้อ' },
     { href: '/admin-system-logs', icon: '\uD83D\uDCDC', label: 'System Logs' }
   ]
 };
