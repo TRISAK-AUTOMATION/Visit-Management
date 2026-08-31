@@ -10,10 +10,21 @@ const router = express.Router();
 
 // GET /api/core-field-settings -> ทุกคนที่ login แล้ว (ใช้ render ฟอร์ม Create Visit จริง)
 router.get('/', requireAuth, (req, res) => {
-  const rows = db.prepare('SELECT * FROM core_field_settings ORDER BY field_key').all();
+  const rows = db.prepare('SELECT * FROM core_field_settings ORDER BY sort_order ASC, field_key ASC').all();
   res.json({
     settings: rows.map(r => ({ ...r, is_visible: !!r.is_visible, is_required: !!r.is_required }))
   });
+});
+
+// PATCH /api/core-field-settings/reorder -> Admin จัดลำดับ Field เดิมใหม่ทั้งชุด { order: [field_key, field_key, ...] }
+router.patch('/reorder', requireAuth, requireRole('Admin'), (req, res) => {
+  const order = req.body.order;
+  if (!Array.isArray(order) || !order.length) return res.status(400).json({ error: 'ข้อมูลลำดับไม่ถูกต้อง' });
+  const stmt = db.prepare('UPDATE core_field_settings SET sort_order = ? WHERE field_key = ?');
+  const tx = db.transaction((keys) => { keys.forEach((key, idx) => stmt.run(idx, key)); });
+  tx(order);
+  logAction(req.session.userId, 'reorder_core_fields', `จัดลำดับ Field เดิมของระบบใหม่`);
+  res.json({ ok: true });
 });
 
 // PUT /api/core-field-settings/:field_key -> Admin แก้ label / is_visible / is_required

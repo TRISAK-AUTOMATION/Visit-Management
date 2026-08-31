@@ -151,13 +151,22 @@ CREATE TABLE IF NOT EXISTS core_field_settings (
   label        TEXT NOT NULL,
   is_visible   INTEGER NOT NULL DEFAULT 1,
   is_required  INTEGER NOT NULL DEFAULT 0,
+  sort_order   INTEGER NOT NULL DEFAULT 0,
   updated_at   TEXT DEFAULT (datetime('now')),
   updated_by   INTEGER REFERENCES users(id)
 );
 `);
 
+// เผื่อฐานข้อมูลถูกสร้างจากเวอร์ชันก่อนหน้าที่ยังไม่มีคอลัมน์ sort_order (ตารางมีอยู่แล้วแต่ยังไม่มีคอลัมน์นี้)
+// ต้องรันก่อน seed ด้านล่าง เพราะ INSERT ด้านล่างอ้างอิงคอลัมน์นี้
+const coreFieldCols = db.prepare(`PRAGMA table_info(core_field_settings)`).all().map(c => c.name);
+if (!coreFieldCols.includes('sort_order')) {
+  db.exec(`ALTER TABLE core_field_settings ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+}
+
 // seed ค่าเริ่มต้นของ core_field_settings ครั้งแรก (คงชื่อ Label เดิมทุกตัวไว้ ไม่เปลี่ยนพฤติกรรมเดิม)
 // ใช้ INSERT OR IGNORE จึงไม่ทับค่าที่ Admin เคยแก้ไว้แล้วในการรันครั้งถัดๆ ไป
+// ลำดับของ array นี้ = ลำดับที่เคยแสดงผลแบบ hard-code เดิมในฟอร์ม ใช้เป็นค่า sort_order เริ่มต้น
 const CORE_FIELD_DEFAULTS = [
   ['job_type', 'ประเภทงาน (Job Type)'],
   ['sales_person', 'ผู้ดูแลการขาย (Sales)'],
@@ -178,9 +187,19 @@ const CORE_FIELD_DEFAULTS = [
   ['notes', 'รายละเอียดเพิ่มเติม (Remark)']
 ];
 {
-  const insertDefault = db.prepare('INSERT OR IGNORE INTO core_field_settings (field_key, label) VALUES (?, ?)');
-  const tx = db.transaction((rows) => { rows.forEach(([k, l]) => insertDefault.run(k, l)); });
+  const insertDefault = db.prepare('INSERT OR IGNORE INTO core_field_settings (field_key, label, sort_order) VALUES (?, ?, ?)');
+  const tx = db.transaction((rows) => { rows.forEach(([k, l], idx) => insertDefault.run(k, l, idx)); });
   tx(CORE_FIELD_DEFAULTS);
+}
+// ถ้าตารางมีอยู่ก่อนแล้ว (จากเวอร์ชันก่อนที่ยังไม่มี sort_order) ให้ backfill ลำดับตามที่เคย hard-code ไว้เดิม
+// เฉพาะแถวที่ยังเป็นค่า default 0 ทั้งหมด (กันไม่ให้ทับลำดับที่ Admin เคยจัดเรียงเองไปแล้ว)
+{
+  const allZero = db.prepare('SELECT COUNT(*) c FROM core_field_settings WHERE sort_order != 0').get().c === 0;
+  if (allZero) {
+    const backfillOrder = db.prepare('UPDATE core_field_settings SET sort_order = ? WHERE field_key = ?');
+    const tx2 = db.transaction((rows) => { rows.forEach(([k], idx) => backfillOrder.run(idx, k)); });
+    tx2(CORE_FIELD_DEFAULTS);
+  }
 }
 
 // เพิ่มคอลัมน์ email_notify ให้ users เดิม (เผื่อฐานข้อมูลถูกสร้างไว้ก่อนหน้านี้)

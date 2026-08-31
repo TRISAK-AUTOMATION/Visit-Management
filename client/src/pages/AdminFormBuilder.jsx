@@ -52,7 +52,19 @@ export default function AdminFormBuilder() {
 
   const loadCore = async () => {
     const { settings } = await api.get('/api/core-field-settings');
-    setCoreFields(settings.sort((a, b) => a.label.localeCompare(b.label, 'th')));
+    setCoreFields(settings); // เรียงตาม sort_order มาจาก backend แล้ว
+  };
+
+  // จัดลำดับ Field เดิมของระบบใหม่ (สลับตำแหน่งขึ้น/ลง เหมือน Field ที่ Admin สร้างเอง)
+  const moveCore = async (idx, dir) => {
+    const targetIdx = idx + dir;
+    if (targetIdx < 0 || targetIdx >= coreFields.length) return;
+    const reordered = [...coreFields];
+    [reordered[idx], reordered[targetIdx]] = [reordered[targetIdx], reordered[idx]];
+    setCoreFields(reordered);
+    try {
+      await api.patch('/api/core-field-settings/reorder', { order: reordered.map(f => f.field_key) });
+    } catch (err) { toast(err.message, 'error'); loadCore(); }
   };
 
   // แปลงค่า position_after ที่เก็บใน DB ให้เป็นข้อความอ่านง่ายในตาราง
@@ -284,8 +296,8 @@ export default function AdminFormBuilder() {
         <div>
           <h3 style={{ margin: 0 }}>Field เดิมของระบบ</h3>
           <p className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
-            Field เหล่านี้ผูกกับข้อมูลเดิมในระบบ (PDF / Report) จึง<b>ลบไม่ได้</b> แต่สามารถ <b>ซ่อนจากฟอร์ม</b> หรือ <b>เปลี่ยนชื่อ</b> ได้อย่างปลอดภัย<br />
-            ข้อมูลเก่าที่เคยกรอกไว้จะไม่หายไปไหน ไม่ว่าจะซ่อนหรือไม่ก็ตาม
+            Field เหล่านี้ผูกกับข้อมูลเดิมในระบบ (PDF / Report) จึง<b>ลบไม่ได้</b> แต่สามารถ <b>ซ่อนจากฟอร์ม</b> <b>เปลี่ยนชื่อ</b> หรือ <b>จัดลำดับใหม่</b> ได้อย่างปลอดภัย<br />
+            ข้อมูลเก่าที่เคยกรอกไว้จะไม่หายไปไหน ไม่ว่าจะปรับอะไรก็ตาม (Field พื้นฐานที่จำเป็น เช่น วันที่/ลูกค้า/เวลา/วัตถุประสงค์ จะอยู่บนสุดของฟอร์มเสมอ ไม่รวมอยู่ในรายการนี้)
           </p>
         </div>
       </div>
@@ -294,11 +306,15 @@ export default function AdminFormBuilder() {
         <div className="card-body" style={{ padding: 0 }}>
           <table>
             <thead>
-              <tr><th>Label</th><th>Required</th><th>สถานะ</th><th>จัดการ</th></tr>
+              <tr><th style={{ width: 70 }}>ลำดับ</th><th>Label</th><th>Required</th><th>สถานะ</th><th>จัดการ</th></tr>
             </thead>
             <tbody>
-              {coreFields.map(f => (
+              {coreFields.map((f, idx) => (
                 <tr key={f.field_key}>
+                  <td>
+                    <button className="btn btn-outline btn-sm" style={{ padding: '2px 8px' }} disabled={idx === 0} onClick={() => moveCore(idx, -1)}>&uarr;</button>{' '}
+                    <button className="btn btn-outline btn-sm" style={{ padding: '2px 8px' }} disabled={idx === coreFields.length - 1} onClick={() => moveCore(idx, 1)}>&darr;</button>
+                  </td>
                   <td><b>{f.label}</b><br /><span className="muted" style={{ fontSize: 11 }}>{f.field_key}</span></td>
                   <td>{f.is_required ? <span className="badge rejected">จำเป็น</span> : <span className="muted">ไม่บังคับ</span>}</td>
                   <td><span className={`badge ${f.is_visible ? 'approved' : 'cancelled'}`}>{f.is_visible ? 'แสดงในฟอร์ม' : 'ซ่อนอยู่'}</span></td>
