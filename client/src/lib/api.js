@@ -10,7 +10,6 @@ async function _fetch(url, options = {}) {
   if (!res.ok) {
     const err = new Error((data && data.error) || 'เกิดข้อผิดพลาด');
     err.status = res.status;
-    err.data = data;
     throw err;
   }
   return data;

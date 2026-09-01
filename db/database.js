@@ -156,8 +156,16 @@ CREATE TABLE IF NOT EXISTS core_field_settings (
 );
 `);
 
+// เผื่อฐานข้อมูลถูกสร้างจากเวอร์ชันก่อนหน้าที่ยังไม่มีคอลัมน์ sort_order (ตารางมีอยู่แล้วแต่ยังไม่มีคอลัมน์นี้)
+// ต้องรันก่อน seed ด้านล่าง เพราะ INSERT ด้านล่างอ้างอิงคอลัมน์นี้
+const coreFieldCols = db.prepare(`PRAGMA table_info(core_field_settings)`).all().map(c => c.name);
+if (!coreFieldCols.includes('sort_order')) {
+  db.exec(`ALTER TABLE core_field_settings ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+}
+
 // seed ค่าเริ่มต้นของ core_field_settings ครั้งแรก (คงชื่อ Label เดิมทุกตัวไว้ ไม่เปลี่ยนพฤติกรรมเดิม)
 // ใช้ INSERT OR IGNORE จึงไม่ทับค่าที่ Admin เคยแก้ไว้แล้วในการรันครั้งถัดๆ ไป
+// ลำดับของ array นี้ = ลำดับที่เคยแสดงผลแบบ hard-code เดิมในฟอร์ม ใช้เป็นค่า sort_order เริ่มต้น
 const CORE_FIELD_DEFAULTS = [
   ['job_type', 'ประเภทงาน (Job Type)'],
   ['sales_person', 'ผู้ดูแลการขาย (Sales)'],
@@ -178,9 +186,19 @@ const CORE_FIELD_DEFAULTS = [
   ['notes', 'รายละเอียดเพิ่มเติม (Remark)']
 ];
 {
-  const insertDefault = db.prepare('INSERT OR IGNORE INTO core_field_settings (field_key, label) VALUES (?, ?)');
-  const tx = db.transaction((rows) => { rows.forEach(([k, l]) => insertDefault.run(k, l)); });
+  const insertDefault = db.prepare('INSERT OR IGNORE INTO core_field_settings (field_key, label, sort_order) VALUES (?, ?, ?)');
+  const tx = db.transaction((rows) => { rows.forEach(([k, l], idx) => insertDefault.run(k, l, idx)); });
   tx(CORE_FIELD_DEFAULTS);
+}
+// ถ้าตารางมีอยู่ก่อนแล้ว (จากเวอร์ชันก่อนที่ยังไม่มี sort_order) ให้ backfill ลำดับตามที่เคย hard-code ไว้เดิม
+// เฉพาะแถวที่ยังเป็นค่า default 0 ทั้งหมด (กันไม่ให้ทับลำดับที่ Admin เคยจัดเรียงเองไปแล้ว)
+{
+  const allZero = db.prepare('SELECT COUNT(*) c FROM core_field_settings WHERE sort_order != 0').get().c === 0;
+  if (allZero) {
+    const backfillOrder = db.prepare('UPDATE core_field_settings SET sort_order = ? WHERE field_key = ?');
+    const tx2 = db.transaction((rows) => { rows.forEach(([k], idx) => backfillOrder.run(idx, k)); });
+    tx2(CORE_FIELD_DEFAULTS);
+  }
 }
 
 // เพิ่มคอลัมน์ email_notify ให้ users เดิม (เผื่อฐานข้อมูลถูกสร้างไว้ก่อนหน้านี้)
@@ -211,6 +229,40 @@ if (!customerCols.includes('company')) {
 // จะถูกซ่อนจากช่องค้นหาตอนสร้างคำขอใหม่ แต่ข้อมูลคำขอเก่ายังแสดงชื่อลูกค้าได้ปกติ
 if (!customerCols.includes('is_archived')) {
   db.exec(`ALTER TABLE customers ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0`);
+}
+// เพิ่มคอลัมน์ position_after ให้ custom_form_fields เดิม
+// ใช้กำหนดตำแหน่งของ field ที่ Admin สร้างเองว่าจะให้แสดง "หลัง field ไหน" ในฟอร์ม (รวมถึง core field เดิม)
+// ค่าว่าง '' = ท้ายฟอร์ม (ค่าเริ่มต้น เหมือนพฤติกรรมเดิมก่อนมีฟีเจอร์นี้), 'TOP' = บนสุดของฟอร์ม, หรือ field_key ของ field ใดๆ ก็ได้ (core หรือ custom)
+const customFieldCols = db.prepare(`PRAGMA table_info(custom_form_fields)`).all().map(c => c.name);
+if (!customFieldCols.includes('position_after')) {
+  db.exec(`ALTER TABLE custom_form_fields ADD COLUMN position_after TEXT NOT NULL DEFAULT ''`);
+}
+
+// ===== PAGE CONTENT CMS =====
+// เก็บข้อความ (title, label, ปุ่ม ฯลฯ) ของหน้าต่างๆ ที่ Admin แก้ไขได้จากหลังบ้าน โดยไม่ต้องแก้ Source Code
+// ออกแบบเป็น key-value ทั่วไป เพื่อให้เพิ่ม key ใหม่ในอนาคตได้ง่าย (เช่น dashboard.section.recent ในเฟสถัดไป)
+db.exec(`
+CREATE TABLE IF NOT EXISTS page_content (
+  content_key    TEXT PRIMARY KEY,
+  content_value  TEXT NOT NULL,
+  updated_at     TEXT DEFAULT (datetime('now')),
+  updated_by     INTEGER REFERENCES users(id)
+);
+`);
+// seed ค่าเริ่มต้น = ข้อความเดิมที่เคย hard-code ไว้ในแต่ละหน้า (คงพฤติกรรมเดิมไว้ทั้งหมดจนกว่า Admin จะแก้เอง)
+const PAGE_CONTENT_DEFAULTS = [
+  ['dashboard.title', 'Dashboard'],
+  ['my_requests.title', 'My Requests'],
+  ['approve_requests.title', 'Approve Requests'],
+  ['calendar.title', 'ปฏิทิน'],
+  ['customers.title', 'Customer'],
+  ['report.title', 'Report'],
+  ['notifications.title', 'Notifications']
+];
+{
+  const insertPageContentDefault = db.prepare('INSERT OR IGNORE INTO page_content (content_key, content_value) VALUES (?, ?)');
+  const tx3 = db.transaction((rows) => { rows.forEach(([k, v]) => insertPageContentDefault.run(k, v)); });
+  tx3(PAGE_CONTENT_DEFAULTS);
 }
 
 // ---------- ย้าย code จาก UNIQUE เดี่ยว (ทั้งระบบ) เป็น UNIQUE คู่กับ company ----------
@@ -252,5 +304,41 @@ if (oldSingleUniqueOnCode) {
 
 // unique ร่วมของ (code, company) - รองรับทั้งฐานข้อมูลใหม่และเก่าที่เพิ่งย้ายมาด้านบน
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_code_company ON customers(code, company)`);
+
+// archived_at: วันเวลาที่ลูกค้ารายนี้ถูกเก็บถาวร ใช้คำนวณว่า "เก็บถาวรมานานแค่ไหนแล้ว" สำหรับกฎลบอัตโนมัติ
+if (!db.prepare(`PRAGMA table_info(customers)`).all().map(c => c.name).includes('archived_at')) {
+  db.exec(`ALTER TABLE customers ADD COLUMN archived_at TEXT`);
+}
+
+// ---------- Index เพิ่มความเร็วให้คอลัมน์ที่ค้นหา/join บ่อย ----------
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_visit_requests_requester ON visit_requests(requester_id);
+  CREATE INDEX IF NOT EXISTS idx_visit_requests_customer ON visit_requests(customer_id);
+  CREATE INDEX IF NOT EXISTS idx_visit_requests_approver ON visit_requests(approver_id);
+  CREATE INDEX IF NOT EXISTS idx_visit_requests_status ON visit_requests(status);
+  CREATE INDEX IF NOT EXISTS idx_visit_requests_visit_date ON visit_requests(visit_date);
+  CREATE INDEX IF NOT EXISTS idx_approval_history_request ON approval_history(visit_request_id);
+  CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+  CREATE INDEX IF NOT EXISTS idx_approval_tokens_request ON approval_tokens(visit_request_id);
+  CREATE INDEX IF NOT EXISTS idx_customers_company ON customers(company);
+`);
+
+// ---------- ตั้งค่าลบข้อมูลอัตโนมัติ (Data Retention) ----------
+// data_type: system_logs | notifications | completed_visit_requests | archived_customers
+// retain_unit: day | month | year - เก็บไว้กี่หน่วยก่อนลบ (คำนวณจากวันที่สร้าง/เก็บถาวร)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS retention_settings (
+    data_type        TEXT PRIMARY KEY,
+    enabled          INTEGER NOT NULL DEFAULT 0,
+    retain_value     INTEGER NOT NULL DEFAULT 12,
+    retain_unit      TEXT NOT NULL DEFAULT 'month',
+    last_run_at      TEXT,
+    last_run_summary TEXT
+  );
+`);
+const seedRetention = db.prepare(`
+  INSERT OR IGNORE INTO retention_settings (data_type, enabled, retain_value, retain_unit) VALUES (?, 0, 12, 'month')
+`);
+['system_logs', 'notifications', 'completed_visit_requests', 'archived_customers'].forEach(t => seedRetention.run(t));
 
 module.exports = db;

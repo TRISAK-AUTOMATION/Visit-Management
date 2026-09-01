@@ -90,10 +90,11 @@ router.post('/import', requireAuth, requireRole('Admin'), (req, res) => {
       email = excluded.email,
       address = excluded.address,
       tax_id = excluded.tax_id,
-      is_archived = 0
+      is_archived = 0,
+      archived_at = NULL
   `);
   const checkUsage = db.prepare('SELECT COUNT(*) c FROM visit_requests WHERE customer_id = ?');
-  const archiveStmt = db.prepare('UPDATE customers SET is_archived = 1 WHERE id = ?');
+  const archiveStmt = db.prepare("UPDATE customers SET is_archived = 1, archived_at = datetime('now') WHERE id = ?");
   const deleteStmt = db.prepare('DELETE FROM customers WHERE id = ?');
   const getByCompany = db.prepare('SELECT id, code FROM customers WHERE company = ?');
   const findByCodeAndCompany = db.prepare('SELECT id FROM customers WHERE code = ? AND company = ?');
@@ -153,7 +154,7 @@ router.delete('/bulk/all', requireAuth, requireRole('Admin'), (req, res) => {
     : db.prepare('SELECT id FROM customers').all();
 
   const checkUsage = db.prepare('SELECT COUNT(*) c FROM visit_requests WHERE customer_id = ?');
-  const archiveStmt = db.prepare('UPDATE customers SET is_archived = 1 WHERE id = ?');
+  const archiveStmt = db.prepare("UPDATE customers SET is_archived = 1, archived_at = datetime('now') WHERE id = ?");
   const deleteStmt = db.prepare('DELETE FROM customers WHERE id = ?');
 
   let deleted = 0, archived = 0;

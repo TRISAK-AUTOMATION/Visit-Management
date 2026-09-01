@@ -27,6 +27,7 @@ app.use('/api/visit-requests', require('./routes/pdf'));
 app.use('/api/system-logs', require('./routes/systemLogs'));
 app.use('/api/form-fields', require('./routes/formFields'));
 app.use('/api/core-field-settings', require('./routes/coreFields'));
+app.use('/api/retention-settings', require('./routes/retentionSettings'));
 app.use('/api/page-content', require('./routes/pageContent'));
 
 // ---------- STATIC FRONTEND (React build output จาก client/) ----------
@@ -39,4 +40,16 @@ app.get('*', (req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 TRISAK Visit Management System กำลังทำงานที่ http://localhost:${PORT}`);
+
+  // ---------- ตัวจับเวลาลบข้อมูลอัตโนมัติ (Data Retention) ----------
+  // เช็คทุก 24 ชม. ว่ามีกฎไหนเปิดใช้งานอยู่บ้าง แล้วลบข้อมูลที่เก่าเกินกำหนดตามกฎนั้น
+  // รันครั้งแรกหลังสตาร์ท 2 นาที (ไม่รอเต็มวันแรก) จากนั้นรันซ้ำทุก 24 ชม.
+  const { runRetentionCleanup } = require('./utils/retention');
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  setTimeout(() => {
+    try { runRetentionCleanup(); } catch (err) { console.error('[retention] รันตอนสตาร์ทไม่สำเร็จ:', err.message); }
+    setInterval(() => {
+      try { runRetentionCleanup(); } catch (err) { console.error('[retention] รันตามรอบไม่สำเร็จ:', err.message); }
+    }, DAY_MS);
+  }, 2 * 60 * 1000);
 });

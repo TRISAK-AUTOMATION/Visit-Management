@@ -85,54 +85,22 @@ router.delete('/:id', requireAuth, requireRole('Admin'), (req, res) => {
   if (Number(req.params.id) === req.session.userId) {
     return res.status(400).json({ error: 'ไม่สามารถลบบัญชีของตัวเองได้' });
   }
-  const userId = req.params.id;
-  const target = db.prepare('SELECT username, full_name FROM users WHERE id = ?').get(userId);
+  const target = db.prepare('SELECT username, full_name FROM users WHERE id = ?').get(req.params.id);
   if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
-
-  const ownRequestCount = db.prepare('SELECT COUNT(*) c FROM visit_requests WHERE requester_id = ?').get(userId).c;
-  const otherUsage = db.prepare(`
-    SELECT
-      (SELECT COUNT(*) FROM visit_requests WHERE approver_id = ? AND requester_id != ?) +
-      (SELECT COUNT(*) FROM approval_history WHERE action_by = ?) +
-      (SELECT COUNT(*) FROM notifications WHERE user_id = ?) +
-      (SELECT COUNT(*) FROM system_logs WHERE user_id = ?) AS c
-  `).get(userId, userId, userId, userId, userId).c;
-
-  const cascade = req.query.cascade === '1';
-
-  if ((ownRequestCount > 0 || otherUsage > 0) && !cascade) {
-    return res.status(400).json({
-      error: `ไม่สามารถลบผู้ใช้นี้ได้ตรงๆ เนื่องจากมีประวัติการใช้งานในระบบอยู่ (คำขอ Visit ของตัวเอง ${ownRequestCount} รายการ) กรุณาใช้ "ระงับการใช้งาน" แทน หรือยืนยันลบแบบรวมประวัติทั้งหมด`,
-      requiresCascadeConfirm: true,
-      ownRequestCount
-    });
-  }
-
-  const run = db.transaction(() => {
-    const ownRequestIds = db.prepare('SELECT id FROM visit_requests WHERE requester_id = ?').all(userId).map(r => r.id);
-
-    if (ownRequestIds.length) {
-      const placeholders = ownRequestIds.map(() => '?').join(',');
-      db.prepare(`DELETE FROM approval_tokens WHERE visit_request_id IN (${placeholders})`).run(...ownRequestIds);
-      db.prepare(`DELETE FROM approval_history WHERE visit_request_id IN (${placeholders})`).run(...ownRequestIds);
-      db.prepare(`DELETE FROM notifications WHERE related_id IN (${placeholders})`).run(...ownRequestIds);
-      db.prepare(`DELETE FROM visit_requests WHERE id IN (${placeholders})`).run(...ownRequestIds);
+  try {
+    db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  } catch (err) {
+    // ผู้ใช้รายนี้มีข้อมูลเชื่อมโยงอยู่ในระบบ (เคยส่งคำขอ Visit, อนุมัติ, มี log ฯลฯ)
+    // ลบไม่ได้เพราะจะทำให้ข้อมูลเก่าเสียหาย (ประวัติ Visit ไม่รู้ว่าใครเป็นคนขอ) — ให้ระงับการใช้งานแทน
+    if (err.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' || err.code === 'SQLITE_CONSTRAINT') {
+      return res.status(400).json({
+        error: `ไม่สามารถลบผู้ใช้ "${target.full_name}" ได้ เนื่องจากมีข้อมูลเชื่อมโยงอยู่ในระบบ (เคยส่งคำขอ Visit / อนุมัติ / มีประวัติการใช้งาน) กรุณากด "ระงับการใช้งาน" แทนการลบ เพื่อไม่ให้ข้อมูลเก่าเสียหาย`
+      });
     }
-
-    // คำขอ "ของคนอื่น" ที่ user นี้เคยเป็นผู้อนุมัติ/มีชื่ออยู่ - ไม่ลบคำขอ แค่ล้างการอ้างอิงถึง user นี้ออก
-    db.prepare('UPDATE visit_requests SET approver_id = NULL WHERE approver_id = ?').run(userId);
-    db.prepare('UPDATE approval_history SET action_by = NULL WHERE action_by = ?').run(userId);
-    db.prepare('DELETE FROM approval_tokens WHERE approver_id = ?').run(userId);
-    db.prepare('DELETE FROM notifications WHERE user_id = ?').run(userId);
-    db.prepare('UPDATE system_logs SET user_id = NULL WHERE user_id = ?').run(userId);
-
-    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
-  });
-  run();
-
-  logAction(req.session.userId, 'delete_user',
-    `ลบผู้ใช้ ${target.username} (${target.full_name})${ownRequestCount ? ` พร้อมคำขอ Visit เก่า ${ownRequestCount} รายการ` : ''}`);
-  res.json({ ok: true, deletedRequests: ownRequestCount });
+    throw err;
+  }
+  logAction(req.session.userId, 'delete_user', `ลบผู้ใช้ ${target.username} (${target.full_name})`);
+  res.json({ ok: true });
 });
 
 module.exports = router;
