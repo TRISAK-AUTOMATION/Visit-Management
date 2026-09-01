@@ -45,10 +45,26 @@ export default function AdminUsers() {
   const remove = async (id) => {
     if (!confirm('ยืนยันลบผู้ใช้รายนี้หรือไม่?')) return;
     try {
-      await api.del(`/api/users/${id}`);
-      toast('ลบสำเร็จ', 'success');
+      const result = await api.del(`/api/users/${id}`);
+      toast(result.deletedRequests ? `ลบสำเร็จ (พร้อมคำขอ Visit เก่า ${result.deletedRequests} รายการ)` : 'ลบสำเร็จ', 'success');
       load();
-    } catch (err) { toast(err.message, 'error'); }
+    } catch (err) {
+      if (err.data && err.data.requiresCascadeConfirm) {
+        const ok = confirm(
+          `${err.message}\n\n` +
+          `ต้องการลบแบบรวมประวัติทั้งหมดเลยหรือไม่? (จะลบคำขอ Visit เก่าของบัญชีนี้ไปด้วย และล้างชื่อบัญชีนี้ออกจากประวัติการอนุมัติ/แจ้งเตือนอื่นๆ)\n` +
+          `การกระทำนี้ไม่สามารถย้อนกลับได้`
+        );
+        if (!ok) return;
+        try {
+          const result = await api.del(`/api/users/${id}?cascade=1`);
+          toast(result.deletedRequests ? `ลบสำเร็จ (พร้อมคำขอ Visit เก่า ${result.deletedRequests} รายการ)` : 'ลบสำเร็จ', 'success');
+          load();
+        } catch (err2) { toast(err2.message, 'error'); }
+        return;
+      }
+      toast(err.message, 'error');
+    }
   };
 
   const toggleActive = async (u) => {
