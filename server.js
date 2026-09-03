@@ -23,6 +23,7 @@ app.use('/api/visit-requests', require('./routes/visitRequests'));
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/departments', require('./routes/departments'));
 app.use('/api/visit-requests', require('./routes/pdf'));
 app.use('/api/system-logs', require('./routes/systemLogs'));
 app.use('/api/form-fields', require('./routes/formFields'));

@@ -9,12 +9,28 @@ const emptyForm = { username: '', password: '', full_name: '', email: '', phone:
 export default function AdminUsers() {
   const toast = useToast();
   const [users, setUsers] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [editing, setEditing] = useState(undefined);
   const [form, setForm] = useState(emptyForm);
 
   const load = async () => {
-    const { users } = await api.get('/api/users');
+    const [{ users }, { departments }] = await Promise.all([
+      api.get('/api/users'),
+      api.get('/api/departments')
+    ]);
     setUsers(users);
+    setDepartments(departments);
+  };
+
+  const addDepartment = async () => {
+    const name = (prompt('ชื่อแผนกใหม่:') || '').trim();
+    if (!name) return;
+    try {
+      const { departments } = await api.post('/api/departments', { name });
+      setDepartments(departments);
+      setForm(f => ({ ...f, department: name }));
+      toast('เพิ่มแผนกสำเร็จ', 'success');
+    } catch (err) { toast(err.message, 'error'); }
   };
 
   useEffect(() => { load(); }, []);
@@ -111,7 +127,20 @@ export default function AdminUsers() {
                 <div className="form-group"><label>อีเมล</label><input value={form.email} onChange={set('email')} /></div>
                 <div className="form-group"><label>เบอร์โทร</label><input value={form.phone} onChange={set('phone')} /></div>
                 <div className="form-group"><label>ตำแหน่ง</label><input value={form.position} onChange={set('position')} /></div>
-                <div className="form-group"><label>แผนก</label><input value={form.department} onChange={set('department')} /></div>
+                <div className="form-group">
+                  <label>แผนก</label>
+                  <select value={form.department} onChange={set('department')}>
+                    <option value="">-- เลือกแผนก --</option>
+                    {/* ถ้าค่าเดิมของ user ไม่ตรงกับลิสต์ปัจจุบัน (เช่น พิมพ์ผิดมาจากรอบก่อน) ให้โชว์ไว้ด้วยเพื่อให้เห็นและแก้ไขได้ */}
+                    {form.department && !departments.includes(form.department) && (
+                      <option value={form.department}>{form.department} (ไม่ตรงรายการ - โปรดแก้ไข)</option>
+                    )}
+                    {departments.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                  <button type="button" className="btn btn-outline btn-sm" style={{ marginTop: 6 }} onClick={addDepartment}>
+                    + เพิ่มแผนกใหม่
+                  </button>
+                </div>
                 <div className="form-group">
                   <label>สิทธิ์การใช้งาน</label>
                   <select value={form.role} onChange={set('role')}>

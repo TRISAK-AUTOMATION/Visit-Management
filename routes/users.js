@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const db = require('../db/database');
 const { requireAuth, requireRole } = require('./middleware');
 const { logAction } = require('../utils/systemLog');
+const { isValidDepartment } = require('../utils/departments');
 
 const router = express.Router();
 
@@ -15,6 +16,9 @@ function sanitize(u) {
 // โปรไฟล์ของตัวเอง
 router.put('/me', requireAuth, (req, res) => {
   const { full_name, email, phone, position, department, email_notify } = req.body;
+  if (!isValidDepartment(department)) {
+    return res.status(400).json({ error: 'แผนกไม่ถูกต้อง กรุณาเลือกจากรายการ' });
+  }
   db.prepare(`
     UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, department = ?, email_notify = ?
     WHERE id = ?
@@ -44,6 +48,9 @@ router.post('/', requireAuth, requireRole('Admin'), (req, res) => {
   if (!username || !password || !full_name) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
   }
+  if (!isValidDepartment(department)) {
+    return res.status(400).json({ error: 'แผนกไม่ถูกต้อง กรุณาเลือกจากรายการ' });
+  }
   const dup = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
   if (dup) return res.status(400).json({ error: 'ชื่อผู้ใช้นี้มีอยู่แล้ว' });
 
@@ -59,6 +66,9 @@ router.put('/:id', requireAuth, requireRole('Admin'), (req, res) => {
   const { full_name, email, phone, position, department, role } = req.body;
   const exists = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
   if (!exists) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+  if (!isValidDepartment(department)) {
+    return res.status(400).json({ error: 'แผนกไม่ถูกต้อง กรุณาเลือกจากรายการ' });
+  }
   db.prepare(`
     UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, department = ?, role = ?
     WHERE id = ?

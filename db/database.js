@@ -386,4 +386,10 @@ CREATE TABLE IF NOT EXISTS system_settings (
 `);
 db.prepare(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('email_show_doc_code', '1')`).run();
 
+// รายชื่อ "แผนก" ที่ใช้เป็นตัวเลือกแบบ dropdown ทั่วทั้งระบบ (แทนการพิมพ์เองแบบเดิม)
+// ป้องกันปัญหาพิมพ์ไม่ตรงกัน เช่น "Sales" vs "Sales Engineer" ซึ่งทำให้การหาผู้อนุมัติ (เทียบ department แบบ exact match) พลาด
+// Admin เพิ่ม/ลบแผนกเองได้ภายหลังที่หน้าจัดการผู้ใช้งาน โดยไม่ต้องแก้โค้ด (ดู routes/departments.js)
+db.prepare(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('departments', ?)`)
+  .run(JSON.stringify(['Sales', 'IT', 'Engineer', 'บัญชี/Accounting', 'HR', 'Stor']));
+
 module.exports = db;

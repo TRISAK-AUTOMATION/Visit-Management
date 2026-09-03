@@ -1,5 +1,5 @@
 // client/src/pages/Profile.jsx - เทียบเท่า public/profile.html
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { useAuth } from '../lib/AuthContext';
 import { api, initials, ROLE_TH } from '../lib/api';
@@ -15,6 +15,11 @@ export default function Profile() {
     email_notify: !!me.email_notify
   });
   const [pw, setPw] = useState({ current_password: '', new_password: '' });
+  const [departments, setDepartments] = useState([]);
+
+  useEffect(() => {
+    api.get('/api/departments').then(({ departments }) => setDepartments(departments)).catch(() => {});
+  }, []);
 
   const set = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
   const setCheckbox = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.checked }));
@@ -55,7 +60,16 @@ export default function Profile() {
               <div className="form-group"><label>อีเมล</label><input value={form.email} onChange={set('email')} /></div>
               <div className="form-group"><label>เบอร์โทร</label><input value={form.phone} onChange={set('phone')} /></div>
               <div className="form-group"><label>ตำแหน่ง</label><input value={form.position} onChange={set('position')} /></div>
-              <div className="form-group"><label>แผนก</label><input value={form.department} onChange={set('department')} /></div>
+              <div className="form-group">
+                <label>แผนก</label>
+                <select value={form.department} onChange={set('department')}>
+                  <option value="">-- เลือกแผนก --</option>
+                  {form.department && !departments.includes(form.department) && (
+                    <option value={form.department}>{form.department} (ไม่ตรงรายการ)</option>
+                  )}
+                  {departments.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
               <div className="form-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                   <input type="checkbox" checked={form.email_notify} onChange={setCheckbox('email_notify')} style={{ width: 16, height: 16 }} />

@@ -131,10 +131,27 @@ function validateRequiredCoreFields(body) {
   });
 }
 
+// สร้างเลขที่เอกสาร (VR-2026-XXXXX) แบบอิงจาก "เลขรันสูงสุดที่เคยใช้จริง" ไม่ใช่จำนวนแถวในตาราง (COUNT)
+// เดิมใช้ COUNT(*)+1 ซึ่งพังถ้าจำนวนแถวไม่ตรงกับเลขรันสูงสุดที่เคยใช้ไปแล้ว เช่น:
+//  - มีข้อมูลตัวอย่าง (seed) ที่เลขที่เอกสารกระโดดสูงกว่าจำนวนแถวจริง (เช่น VR-2026-00121 ทั้งที่มีแค่ 7 แถว)
+//  - เคยลบแถวออกจากตาราง ทำให้ COUNT ลดลงแต่เลขที่เอกสารเดิมยังค้างอยู่
+// เมื่อ COUNT+1 ไปตรงกับเลขที่มีอยู่แล้วพอดี จะเจอ SqliteError: UNIQUE constraint failed ทุกครั้งที่กดส่งคำขอ
+// และจะติดค้างแบบนี้ตลอดไป เพราะแถวไม่ถูกเพิ่มจริง (insert fail) เลข COUNT เลยไม่ขยับ วนซ้ำเดิมไม่จบ
 function generateCode() {
-  const row = db.prepare(`SELECT COUNT(*) c FROM visit_requests`).get();
-  const seq = (row.c + 1).toString().padStart(5, '0');
-  return `VR-2026-${seq}`;
+  const prefix = 'VR-2026-';
+  const row = db.prepare(`
+    SELECT code FROM visit_requests
+    WHERE code LIKE ?
+    ORDER BY CAST(SUBSTR(code, LENGTH(?) + 1) AS INTEGER) DESC
+    LIMIT 1
+  `).get(`${prefix}%`, prefix);
+
+  let nextSeq = 1;
+  if (row && row.code) {
+    const lastSeq = parseInt(row.code.slice(prefix.length), 10);
+    if (!Number.isNaN(lastSeq)) nextSeq = lastSeq + 1;
+  }
+  return `${prefix}${nextSeq.toString().padStart(5, '0')}`;
 }
 
 // GET /api/visit-requests?scope=mine|pending|all&status=
