@@ -12,8 +12,20 @@ const router = express.Router();
 router.get('/', requireAuth, (req, res) => {
   const rows = db.prepare('SELECT * FROM core_field_settings ORDER BY sort_order ASC, field_key ASC').all();
   res.json({
-    settings: rows.map(r => ({ ...r, is_visible: !!r.is_visible, is_required: !!r.is_required }))
+    settings: rows.map(r => ({ ...r, is_visible: !!r.is_visible, is_required: !!r.is_required, show_in_email: !!r.show_in_email }))
   });
+});
+
+// PATCH /api/core-field-settings/:field_key/email -> เปิด/ปิด "แสดงใน Email แจ้งเตือน" ของ Field เดิม (แยกจากการแก้ label/visibility)
+router.patch('/:field_key/email', requireAuth, requireRole('Admin'), (req, res) => {
+  const existing = db.prepare('SELECT * FROM core_field_settings WHERE field_key = ?').get(req.params.field_key);
+  if (!existing) return res.status(404).json({ error: 'ไม่พบ Field นี้' });
+  const showInEmail = req.body.show_in_email ? 1 : 0;
+  db.prepare('UPDATE core_field_settings SET show_in_email = ?, updated_at = datetime(\'now\'), updated_by = ? WHERE field_key = ?')
+    .run(showInEmail, req.session.userId, req.params.field_key);
+  logAction(req.session.userId, 'edit_core_field_email',
+    `${showInEmail ? 'เปิด' : 'ปิด'}แสดงใน Email สำหรับ Field เดิม: ${existing.label} (${req.params.field_key})`);
+  res.json({ ok: true, show_in_email: !!showInEmail });
 });
 
 // PATCH /api/core-field-settings/reorder -> Admin จัดลำดับ Field เดิมใหม่ทั้งชุด { order: [field_key, field_key, ...] }

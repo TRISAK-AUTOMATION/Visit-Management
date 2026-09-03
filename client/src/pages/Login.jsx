@@ -50,9 +50,9 @@ export default function Login() {
               <stop offset="100%" stopColor="#182647" />
             </linearGradient>
           </defs>
-          <rect x="30" y="40" width="240" height="320" rx="26" fill="url(#badgeFace)" stroke="#3E5590" strokeWidth="1.5" />
-          <rect x="115" y="16" width="70" height="26" rx="13" fill="#0F1A33" stroke="#C99A3B" strokeWidth="1.5" />
-          <circle cx="150" cy="29" r="4.5" fill="#C99A3B" />
+          <rect x="30" y="40" width="240" height="320" rx="26" fill="url(#badgeFace)" stroke="#1549cc" strokeWidth="1.5" />
+          <rect x="115" y="16" width="70" height="26" rx="13" fill="#0F1A33" stroke="#453bc9" strokeWidth="1.5" />
+          <circle cx="150" cy="29" r="4.5" fill="#3b95c9" />
           <circle cx="150" cy="130" r="42" fill="#0F1A33" />
           <circle cx="150" cy="118" r="16" fill="#3E5590" />
           <path d="M118 158c6-16 20-24 32-24s26 8 32 24" stroke="#3E5590" strokeWidth="3" fill="none" strokeLinecap="round" />
@@ -129,12 +129,13 @@ export default function Login() {
 
           <div className="tlogin-hint">
             <div className="tlogin-hint-head">
-              บัญชีทดสอบ <span>รหัสผ่าน: 123456</span>
+              บัญชีทดสอบ <span>รหัสผ่าน: ******</span>
             </div>
             <div className="tlogin-hint-rows">
-              <div><span>พนักงาน</span><b>anuphong</b></div>
-              <div><span>ผู้อนุมัติ</span><b>somchai</b></div>
-              <div><span>ผู้ดูแลระบบ</span><b>patcharin</b></div>
+              <div><span>พนักงาน</span><b>New</b></div>
+              <div><span>ผู้อนุมัติ</span><b>jamees</b></div>
+              <div><span>ผู้ดูแลระบบ</span><b>supachai</b></div>
+              <div><span>ผู้ดูแลระบบ</span><b>Admin</b></div>
             </div>
           </div>
 
@@ -181,7 +182,7 @@ export default function Login() {
           height: 52px;
           border-radius: 14px;
           background: linear-gradient(135deg, #C99A3B, #A87B24);
-          color: #14203D;
+          color: #083ebd;
           font-family: 'Noto Serif Thai', serif;
           font-weight: 700;
           font-size: 22px;

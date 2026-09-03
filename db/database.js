@@ -341,4 +341,49 @@ const seedRetention = db.prepare(`
 `);
 ['system_logs', 'notifications', 'completed_visit_requests', 'archived_customers'].forEach(t => seedRetention.run(t));
 
+// ---------- ตั้งค่าอีเมล (Email Settings) ----------
+// เพิ่มคอลัมน์ show_in_email ให้ core_field_settings (Field เดิมของระบบ) เพื่อให้เลือกได้ว่าจะโชว์ในอีเมลแจ้งอนุมัติหรือไม่
+// เหมือนกับที่ custom_form_fields มีอยู่แล้ว แต่ก่อนหน้านี้ field เดิมยังไม่มีคอลัมน์นี้เลย
+{
+  const coreFieldColsForEmail = db.prepare(`PRAGMA table_info(core_field_settings)`).all().map(c => c.name);
+  if (!coreFieldColsForEmail.includes('show_in_email')) {
+    db.exec(`ALTER TABLE core_field_settings ADD COLUMN show_in_email INTEGER NOT NULL DEFAULT 0`);
+  }
+}
+
+// Field พื้นฐานที่จำเป็นต่อระบบ (ลูกค้า/วันที่/เวลา/วัตถุประสงค์) ไม่อยู่ใน core_field_settings เพราะซ่อน/ถอด required ไม่ได้
+// แต่ยังต้องเลือกได้ว่าจะโชว์ในอีเมลแจ้งอนุมัติหรือไม่ จึงแยกเก็บ flag นี้ไว้ต่างหาก
+// default show_in_email = 1 ทุกตัว เพื่อคงพฤติกรรมเดิม (อีเมลเคย hardcode โชว์ 4 อย่างนี้เสมอ) จนกว่า Admin จะปรับเอง
+db.exec(`
+CREATE TABLE IF NOT EXISTS essential_field_email_settings (
+  field_key     TEXT PRIMARY KEY,   -- customer_id | visit_date | time_range | purpose
+  label         TEXT NOT NULL,
+  show_in_email INTEGER NOT NULL DEFAULT 1,
+  sort_order    INTEGER NOT NULL DEFAULT 0,
+  updated_at    TEXT DEFAULT (datetime('now')),
+  updated_by    INTEGER REFERENCES users(id)
+);
+`);
+const ESSENTIAL_EMAIL_DEFAULTS = [
+  ['customer_id', 'ลูกค้า'],
+  ['visit_date', 'วันที่'],
+  ['time_range', 'เวลา (เริ่ม - สิ้นสุด)'],
+  ['purpose', 'วัตถุประสงค์']
+];
+{
+  const insertEssentialEmail = db.prepare('INSERT OR IGNORE INTO essential_field_email_settings (field_key, label, show_in_email, sort_order) VALUES (?, ?, 1, ?)');
+  const tx4 = db.transaction((rows) => { rows.forEach(([k, l], idx) => insertEssentialEmail.run(k, l, idx)); });
+  tx4(ESSENTIAL_EMAIL_DEFAULTS);
+}
+
+// ตั้งค่าทั่วไปแบบ key-value เผื่อใช้ในอนาคต (ตอนนี้ใช้เก็บว่าจะแสดงเลขที่เอกสาร #VR-code ในอีเมลหรือไม่)
+// default = '1' (แสดง) เพื่อคงพฤติกรรมเดิมไว้ก่อน จนกว่า Admin จะเข้าไปปิดเองที่หน้าตั้งค่าอีเมล
+db.exec(`
+CREATE TABLE IF NOT EXISTS system_settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
+`);
+db.prepare(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('email_show_doc_code', '1')`).run();
+
 module.exports = db;

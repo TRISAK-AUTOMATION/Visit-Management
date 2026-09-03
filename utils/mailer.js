@@ -88,7 +88,10 @@ function detailRow(label, value, isLast) {
 }
 
 // การ์ดพื้นเทาอ่อนที่รวมแถวข้อมูลไว้ด้วยกัน
-function detailCard(rowsHtml) {
+// items: array ของ { label, value } เรียงตามลำดับที่จะแสดง (แถวสุดท้ายจะไม่มีเส้นคั่นด้านล่าง) ค่าว่าง/undefined จะถูกข้ามไป
+function detailCard(items) {
+  const visible = (items || []).filter(it => it && it.value !== undefined && it.value !== null && it.value !== '');
+  const rowsHtml = visible.map((it, i) => detailRow(it.label, it.value, i === visible.length - 1)).join('');
   return `
   <tr>
     <td style="padding:16px 32px 8px 32px;">
@@ -138,23 +141,20 @@ function emailShell(innerRowsHtml) {
 }
 
 // อีเมลแจ้งผู้อนุมัติ: มีคำขอออกนอกสถานที่ใหม่รออนุมัติ พร้อมปุ่มอนุมัติ/ไม่อนุมัติผ่านอีเมลได้ทันที
-async function sendNewRequestEmail({ to, approverName, requesterName, vr, approveToken, rejectToken }) {
+// emailRows: array ของ { label, value } ที่ประกอบมาแล้วจากภายนอก (ฟิลด์พื้นฐาน + Field เดิม + Field ที่สร้างเอง ตามที่ Admin ติ๊กว่า "แสดงใน Email")
+// showDocCode: true/false - จะแสดงเลขที่เอกสาร #VR-code ทั้งใน subject และเนื้อหาหรือไม่ (มาจากค่าตั้งค่าที่ Admin ปรับได้)
+async function sendNewRequestEmail({ to, approverName, requesterName, vr, approveToken, rejectToken, emailRows, showDocCode }) {
   const detailUrl = `${APP_BASE_URL}/approve-requests?id=${vr.id}`;
   const approveUrl = `${APP_BASE_URL}/api/visit-requests/email-action/${approveToken}`;
   const rejectUrl = `${APP_BASE_URL}/api/visit-requests/email-action/${rejectToken}`;
-
-  const rows = [
-    detailRow('ลูกค้า', vr.customer_name || '-'),
-    detailRow('วันที่', vr.visit_date) + detailRow('เวลา', `${vr.time_from} - ${vr.time_to}`),
-    detailRow('วัตถุประสงค์', vr.purpose, true)
-  ].join('');
+  const codeSuffix = showDocCode ? ` #${vr.code}` : '';
 
   const html = emailShell(`
     ${emailHeader('รออนุมัติ')}
     <tr>
       <td style="padding:28px 32px 8px 32px;">
         <div style="color:#111827;font-size:19px;font-weight:700;font-family:Arial,sans-serif;">คำขอออกนอกสถานที่รออนุมัติ</div>
-        <div style="color:#6b7280;font-size:13px;margin-top:4px;font-family:Arial,sans-serif;">#${vr.code}</div>
+        ${showDocCode ? `<div style="color:#6b7280;font-size:13px;margin-top:4px;font-family:Arial,sans-serif;">#${vr.code}</div>` : ''}
       </td>
     </tr>
     <tr>
@@ -163,7 +163,7 @@ async function sendNewRequestEmail({ to, approverName, requesterName, vr, approv
         <b>${requesterName}</b> ได้ส่งคำขอออกนอกสถานที่นี้เพื่อรอการอนุมัติจากท่าน
       </td>
     </tr>
-    ${detailCard(rows)}
+    ${detailCard(emailRows)}
     <tr>
       <td style="padding:22px 32px 6px 32px;">
         <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
@@ -182,28 +182,32 @@ async function sendNewRequestEmail({ to, approverName, requesterName, vr, approv
     ${emailFooter('ลิงก์อนุมัติในอีเมลนี้ใช้ได้ครั้งเดียวและหมดอายุใน 7 วัน')}
   `);
 
-  return sendMail({ to, subject: `[รออนุมัติ] คำขอออกนอกสถานที่ #${vr.code} จาก ${requesterName}`, html });
+  return sendMail({ to, subject: `[รออนุมัติ] คำขอออกนอกสถานที่${codeSuffix} จาก ${requesterName}`, html });
 }
 
 // อีเมลแจ้งผู้ขอ: ผลการอนุมัติ/ไม่อนุมัติ
-async function sendDecisionEmail({ to, requesterName, vr, status, approverName, note, viaChannel }) {
+async function sendDecisionEmail({ to, requesterName, vr, status, approverName, note, viaChannel, showDocCode }) {
   const approved = status === 'approved';
   const detailUrl = `${APP_BASE_URL}/my-requests?id=${vr.id}`;
   const color = approved ? '#16a34a' : '#dc2626';
   const badge = approved ? 'อนุมัติแล้ว' : 'ไม่อนุมัติ';
+  const showCode = showDocCode !== false; // undefined = true เพื่อคงพฤติกรรมเดิมถ้าผู้เรียกไม่ได้ส่งค่ามา
+  const codeSuffix = showCode ? ` #${vr.code}` : '';
 
   const rows = [
-    detailRow('วันที่', vr.visit_date) + detailRow('เวลา', `${vr.time_from} - ${vr.time_to}`),
-    detailRow('ผู้อนุมัติ', approverName) + detailRow('ช่องทาง', viaChannel === 'email' ? 'อีเมล' : 'เว็บแอปพลิเคชัน', !note),
-    note ? detailRow('หมายเหตุ', note, true) : ''
-  ].join('');
+    { label: 'วันที่', value: vr.visit_date },
+    { label: 'เวลา', value: `${vr.time_from} - ${vr.time_to}` },
+    { label: 'ผู้อนุมัติ', value: approverName },
+    { label: 'ช่องทาง', value: viaChannel === 'email' ? 'อีเมล' : 'เว็บแอปพลิเคชัน' },
+    { label: 'หมายเหตุ', value: note }
+  ];
 
   const html = emailShell(`
     ${emailHeader(badge)}
     <tr>
       <td style="padding:28px 32px 8px 32px;">
         <div style="color:${color};font-size:19px;font-weight:700;font-family:Arial,sans-serif;">คำขอออกนอกสถานที่${approved ? 'ได้รับการอนุมัติ' : 'ไม่ได้รับการอนุมัติ'}</div>
-        <div style="color:#6b7280;font-size:13px;margin-top:4px;font-family:Arial,sans-serif;">#${vr.code}</div>
+        ${showCode ? `<div style="color:#6b7280;font-size:13px;margin-top:4px;font-family:Arial,sans-serif;">#${vr.code}</div>` : ''}
       </td>
     </tr>
     <tr>
@@ -219,26 +223,29 @@ async function sendDecisionEmail({ to, requesterName, vr, status, approverName, 
     ${emailFooter('ท่านสามารถดูประวัติคำขอทั้งหมดได้ในเมนู My Requests')}
   `);
 
-  return sendMail({ to, subject: `[${badge}] คำขอออกนอกสถานที่ #${vr.code}`, html });
+  return sendMail({ to, subject: `[${badge}] คำขอออกนอกสถานที่${codeSuffix}`, html });
 }
 
 // อีเมลแจ้งผู้ขอ: ผู้อนุมัติส่งคำขอกลับมาให้แก้ไข (revision)
-async function sendRevisionEmail({ to, requesterName, vr, approverName, note }) {
+async function sendRevisionEmail({ to, requesterName, vr, approverName, note, showDocCode }) {
   const editUrl = `${APP_BASE_URL}/visit-request?id=${vr.id}`;
   const color = '#c9861a';
+  const showCode = showDocCode !== false; // undefined = true เพื่อคงพฤติกรรมเดิมถ้าผู้เรียกไม่ได้ส่งค่ามา
+  const codeSuffix = showCode ? ` #${vr.code}` : '';
 
   const rows = [
-    detailRow('วันที่', vr.visit_date) + detailRow('เวลา', `${vr.time_from} - ${vr.time_to}`),
-    detailRow('ส่งกลับโดย', approverName, !note),
-    note ? detailRow('หมายเหตุจากผู้อนุมัติ', note, true) : ''
-  ].join('');
+    { label: 'วันที่', value: vr.visit_date },
+    { label: 'เวลา', value: `${vr.time_from} - ${vr.time_to}` },
+    { label: 'ส่งกลับโดย', value: approverName },
+    { label: 'หมายเหตุจากผู้อนุมัติ', value: note }
+  ];
 
   const html = emailShell(`
     ${emailHeader('ส่งกลับแก้ไข')}
     <tr>
       <td style="padding:28px 32px 8px 32px;">
         <div style="color:${color};font-size:19px;font-weight:700;font-family:Arial,sans-serif;">คำขอออกนอกสถานที่ถูกส่งกลับให้แก้ไข</div>
-        <div style="color:#6b7280;font-size:13px;margin-top:4px;font-family:Arial,sans-serif;">#${vr.code}</div>
+        ${showCode ? `<div style="color:#6b7280;font-size:13px;margin-top:4px;font-family:Arial,sans-serif;">#${vr.code}</div>` : ''}
       </td>
     </tr>
     <tr>
@@ -254,7 +261,7 @@ async function sendRevisionEmail({ to, requesterName, vr, approverName, note }) 
     ${emailFooter('หลังแก้ไขแล้วกรุณาส่งคำขออีกครั้งเพื่อรอการอนุมัติ')}
   `);
 
-  return sendMail({ to, subject: `[ส่งกลับแก้ไข] คำขอออกนอกสถานที่ #${vr.code}`, html });
+  return sendMail({ to, subject: `[ส่งกลับแก้ไข] คำขอออกนอกสถานที่${codeSuffix}`, html });
 }
 
 module.exports = { sendMail, sendNewRequestEmail, sendDecisionEmail, sendRevisionEmail, APP_BASE_URL };

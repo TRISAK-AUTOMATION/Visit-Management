@@ -19,6 +19,7 @@ import AdminFormBuilder from './pages/AdminFormBuilder';
 import AdminPageContent from './pages/AdminPageContent';
 import AdminSystemLogs from './pages/AdminSystemLogs';
 import AdminDataRetention from './pages/AdminDataRetention';
+import AdminEmailSettings from './pages/AdminEmailSettings';
 
 export default function App() {
   return (
@@ -40,6 +41,7 @@ export default function App() {
       <Route path="/admin-page-content" element={<ProtectedRoute roles={['Admin']}><AdminPageContent /></ProtectedRoute>} />
       <Route path="/admin-system-logs" element={<ProtectedRoute roles={['Admin']}><AdminSystemLogs /></ProtectedRoute>} />
       <Route path="/admin-data-retention" element={<ProtectedRoute roles={['Admin']}><AdminDataRetention /></ProtectedRoute>} />
+      <Route path="/admin-email-settings" element={<ProtectedRoute roles={['Admin']}><AdminEmailSettings /></ProtectedRoute>} />
 
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

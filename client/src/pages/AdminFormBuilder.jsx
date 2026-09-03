@@ -85,6 +85,15 @@ export default function AdminFormBuilder() {
     setCoreForm({ label: f.label, is_visible: f.is_visible, is_required: f.is_required });
   };
 
+  // เปิด/ปิด "แสดงใน Email" ของ Field เดิม แบบไม่ต้องเปิด modal (เหมือน toggleActive ของ Field ที่สร้างเอง)
+  const toggleCoreEmail = async (f) => {
+    const next = !f.show_in_email;
+    setCoreFields(list => list.map(x => x.field_key === f.field_key ? { ...x, show_in_email: next } : x));
+    try {
+      await api.patch(`/api/core-field-settings/${f.field_key}/email`, { show_in_email: next });
+    } catch (err) { toast(err.message, 'error'); loadCore(); }
+  };
+
   const setCoreFormField = (field) => (e) => {
     const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
     setCoreForm(f => ({ ...f, [field]: val }));
@@ -306,7 +315,7 @@ export default function AdminFormBuilder() {
         <div className="card-body" style={{ padding: 0 }}>
           <table>
             <thead>
-              <tr><th style={{ width: 70 }}>ลำดับ</th><th>Label</th><th>Required</th><th>สถานะ</th><th>จัดการ</th></tr>
+              <tr><th style={{ width: 70 }}>ลำดับ</th><th>Label</th><th>Required</th><th>สถานะ</th><th>แสดงใน Email</th><th>จัดการ</th></tr>
             </thead>
             <tbody>
               {coreFields.map((f, idx) => (
@@ -318,6 +327,7 @@ export default function AdminFormBuilder() {
                   <td><b>{f.label}</b><br /><span className="muted" style={{ fontSize: 11 }}>{f.field_key}</span></td>
                   <td>{f.is_required ? <span className="badge rejected">จำเป็น</span> : <span className="muted">ไม่บังคับ</span>}</td>
                   <td><span className={`badge ${f.is_visible ? 'approved' : 'cancelled'}`}>{f.is_visible ? 'แสดงในฟอร์ม' : 'ซ่อนอยู่'}</span></td>
+                  <td><input type="checkbox" checked={!!f.show_in_email} onChange={() => toggleCoreEmail(f)} /></td>
                   <td><button className="btn btn-outline btn-sm" onClick={() => openCoreEdit(f)}>แก้ไข</button></td>
                 </tr>
               ))}

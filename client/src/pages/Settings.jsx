@@ -42,6 +42,13 @@ export default function Settings() {
             <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>กำหนดระยะเวลาเก็บข้อมูลก่อนลบอัตโนมัติ</div>
           </Link>
         )}
+        {me.role === 'Admin' && (
+          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-email-settings">
+            <div style={{ fontSize: 22 }}>&#128231;</div>
+            <div style={{ fontWeight: 700, marginTop: 8 }}>ตั้งค่าอีเมล</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>เลือกข้อมูลที่จะแสดงในอีเมลแจ้งอนุมัติ</div>
+          </Link>
+        )}
         <Link className="card" style={{ padding: 20, display: 'block' }} to="/customers">
           <div style={{ fontSize: 22 }}>&#127970;</div>
           <div style={{ fontWeight: 700, marginTop: 8 }}>ข้อมูลลูกค้า</div>

@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const db = require('../db/database');
 const { requireAuth, requireRole } = require('./middleware');
 const { sendNewRequestEmail, sendDecisionEmail, sendRevisionEmail } = require('../utils/mailer');
+const { getEmailRows, getShowDocCode } = require('../utils/emailFields');
 const { logAction } = require('../utils/systemLog');
 
 const router = express.Router();
@@ -26,6 +27,9 @@ async function notifyApproversByEmail(vr, requesterName, requesterDept) {
   const insertToken = db.prepare(`
     INSERT INTO approval_tokens (token, visit_request_id, approver_id, action, expires_at) VALUES (?, ?, ?, ?, ?)
   `);
+  // ประกอบแถวข้อมูลที่จะแสดงในอีเมลครั้งเดียว (เหมือนกันทุกผู้อนุมัติของคำขอนี้) แทนที่ 4 แถวตายตัวเดิม
+  const emailRows = getEmailRows(vr);
+  const showDocCode = getShowDocCode();
   for (const a of approvers) {
     if (!a.email || !a.email_notify) continue;
     const approveToken = generateToken();
@@ -33,7 +37,7 @@ async function notifyApproversByEmail(vr, requesterName, requesterDept) {
     insertToken.run(approveToken, vr.id, a.id, 'approve', expiresAt);
     insertToken.run(rejectToken, vr.id, a.id, 'reject', expiresAt);
     sendNewRequestEmail({
-      to: a.email, approverName: a.full_name, requesterName, vr, approveToken, rejectToken
+      to: a.email, approverName: a.full_name, requesterName, vr, approveToken, rejectToken, emailRows, showDocCode
     }).catch(err => console.error('sendNewRequestEmail error:', err.message));
   }
 }
@@ -379,7 +383,8 @@ router.post('/:id/request-revision', requireAuth, requireRole('Approver', 'Admin
     .run(vr.requester_id, `คำขอออกนอกสถานที่ของคุณ #${vr.code} ถูกส่งกลับให้แก้ไข`, vr.id);
   if (requester && requester.email && requester.email_notify) {
     sendRevisionEmail({
-      to: requester.email, requesterName: requester.full_name, vr, approverName: approver ? approver.full_name : '-', note
+      to: requester.email, requesterName: requester.full_name, vr, approverName: approver ? approver.full_name : '-', note,
+      showDocCode: getShowDocCode()
     }).catch(err => console.error('sendRevisionEmail error:', err.message));
   }
 
@@ -418,7 +423,7 @@ function sendDecisionResultEmail(vr, approverId, status, note, viaChannel) {
   if (!requester || !requester.email || !requester.email_notify) return;
   sendDecisionEmail({
     to: requester.email, requesterName: requester.full_name, vr, status,
-    approverName: approver ? approver.full_name : '-', note, viaChannel
+    approverName: approver ? approver.full_name : '-', note, viaChannel, showDocCode: getShowDocCode()
   }).catch(err => console.error('sendDecisionEmail error:', err.message));
 }
 
