@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
 import { usePageContent } from '../lib/PageContentContext';
-import { api } from '../lib/api';
+import { api, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
 
@@ -49,7 +49,7 @@ export default function Notifications() {
               <div className="pill-avatar" dangerouslySetInnerHTML={{ __html: ICONS[n.type] || '\uD83D\uDD14' }} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 13 }}>{n.message}</div>
-                <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>{n.created_at}</div>
+                <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>{fmtDateTime(n.created_at)}</div>
               </div>
               {!n.is_read && <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--blue-600)', marginTop: 6 }} />}
             </div>

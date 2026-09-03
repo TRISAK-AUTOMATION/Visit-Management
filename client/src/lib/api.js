@@ -29,6 +29,16 @@ export function fmtDate(d) {
   return `${day}/${m}/${y}`;
 }
 
+// แปลง datetime แบบ SQLite ("YYYY-MM-DD HH:MM:SS") ให้เป็นรูปแบบไทย วัน/เดือน/ปี เวลา (เช่น 03/09/2026 09:31)
+export function fmtDateTime(s) {
+  if (!s) return '-';
+  const [datePart, timePart] = s.split(' ');
+  const [y, m, day] = (datePart || '').split('-');
+  if (!y || !m || !day) return s; // เผื่อรูปแบบไม่ตรงที่คาดไว้ แสดงค่าดิบแทนดีกว่า error
+  const hm = (timePart || '').slice(0, 5);
+  return hm ? `${day}/${m}/${y} ${hm}` : `${day}/${m}/${y}`;
+}
+
 export function statusLabel(status) {
   return {
     pending: 'รออนุมัติ', approved: 'อนุมัติแล้ว', rejected: 'ไม่อนุมัติ', cancelled: 'ยกเลิกแล้ว',

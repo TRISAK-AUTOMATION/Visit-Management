@@ -45,7 +45,8 @@ export default function CalendarPage() {
     const list = [];
     for (let i = firstDay - 1; i >= 0; i--) list.push({ day: prevDays - i, other: true });
     for (let d = 1; d <= daysInMonth; d++) list.push({ day: d, other: false });
-    while (list.length % 7 !== 0) list.push({ day: list.length, other: true });
+    let nextDay = 1;
+    while (list.length % 7 !== 0) list.push({ day: nextDay++, other: true });
     return list;
   }, [viewDate]);
 

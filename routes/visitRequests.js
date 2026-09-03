@@ -4,13 +4,20 @@ const crypto = require('crypto');
 const db = require('../db/database');
 const { requireAuth, requireRole } = require('./middleware');
 const { sendNewRequestEmail, sendDecisionEmail, sendRevisionEmail } = require('../utils/mailer');
-const { getEmailRows, getShowDocCode } = require('../utils/emailFields');
 const { logAction } = require('../utils/systemLog');
 
 const router = express.Router();
 
 const TOKEN_TTL_DAYS = 7;
 const EDITABLE_STATUSES = ['pending', 'draft', 'revision'];
+
+// แปลงวันที่รูปแบบ YYYY-MM-DD (จาก <input type="date">) ให้เป็น วัน/เดือน/ปี ตามรูปแบบไทย
+// ใช้ตอนสร้างข้อความแจ้งเตือน (notifications.message) เพื่อไม่ให้ปนกับรูปแบบสากลที่อ่านสลับกันได้
+function formatDateThai(d) {
+  if (!d) return '-';
+  const [y, m, day] = d.split('-');
+  return `${day}/${m}/${y}`;
+}
 
 function generateToken() {
   return crypto.randomBytes(24).toString('hex');
@@ -27,9 +34,6 @@ async function notifyApproversByEmail(vr, requesterName, requesterDept) {
   const insertToken = db.prepare(`
     INSERT INTO approval_tokens (token, visit_request_id, approver_id, action, expires_at) VALUES (?, ?, ?, ?, ?)
   `);
-  // ประกอบแถวข้อมูลที่จะแสดงในอีเมลครั้งเดียว (เหมือนกันทุกผู้อนุมัติของคำขอนี้) แทนที่ 4 แถวตายตัวเดิม
-  const emailRows = getEmailRows(vr);
-  const showDocCode = getShowDocCode();
   for (const a of approvers) {
     if (!a.email || !a.email_notify) continue;
     const approveToken = generateToken();
@@ -37,7 +41,7 @@ async function notifyApproversByEmail(vr, requesterName, requesterDept) {
     insertToken.run(approveToken, vr.id, a.id, 'approve', expiresAt);
     insertToken.run(rejectToken, vr.id, a.id, 'reject', expiresAt);
     sendNewRequestEmail({
-      to: a.email, approverName: a.full_name, requesterName, vr, approveToken, rejectToken, emailRows, showDocCode
+      to: a.email, approverName: a.full_name, requesterName, vr, approveToken, rejectToken
     }).catch(err => console.error('sendNewRequestEmail error:', err.message));
   }
 }
@@ -131,27 +135,10 @@ function validateRequiredCoreFields(body) {
   });
 }
 
-// สร้างเลขที่เอกสาร (VR-2026-XXXXX) แบบอิงจาก "เลขรันสูงสุดที่เคยใช้จริง" ไม่ใช่จำนวนแถวในตาราง (COUNT)
-// เดิมใช้ COUNT(*)+1 ซึ่งพังถ้าจำนวนแถวไม่ตรงกับเลขรันสูงสุดที่เคยใช้ไปแล้ว เช่น:
-//  - มีข้อมูลตัวอย่าง (seed) ที่เลขที่เอกสารกระโดดสูงกว่าจำนวนแถวจริง (เช่น VR-2026-00121 ทั้งที่มีแค่ 7 แถว)
-//  - เคยลบแถวออกจากตาราง ทำให้ COUNT ลดลงแต่เลขที่เอกสารเดิมยังค้างอยู่
-// เมื่อ COUNT+1 ไปตรงกับเลขที่มีอยู่แล้วพอดี จะเจอ SqliteError: UNIQUE constraint failed ทุกครั้งที่กดส่งคำขอ
-// และจะติดค้างแบบนี้ตลอดไป เพราะแถวไม่ถูกเพิ่มจริง (insert fail) เลข COUNT เลยไม่ขยับ วนซ้ำเดิมไม่จบ
 function generateCode() {
-  const prefix = 'VR-2026-';
-  const row = db.prepare(`
-    SELECT code FROM visit_requests
-    WHERE code LIKE ?
-    ORDER BY CAST(SUBSTR(code, LENGTH(?) + 1) AS INTEGER) DESC
-    LIMIT 1
-  `).get(`${prefix}%`, prefix);
-
-  let nextSeq = 1;
-  if (row && row.code) {
-    const lastSeq = parseInt(row.code.slice(prefix.length), 10);
-    if (!Number.isNaN(lastSeq)) nextSeq = lastSeq + 1;
-  }
-  return `${prefix}${nextSeq.toString().padStart(5, '0')}`;
+  const row = db.prepare(`SELECT COUNT(*) c FROM visit_requests`).get();
+  const seq = (row.c + 1).toString().padStart(5, '0');
+  return `VR-2026-${seq}`;
 }
 
 // GET /api/visit-requests?scope=mine|pending|all&status=
@@ -291,7 +278,7 @@ function notifyRequestSubmitted(vrId, requester) {
   const notifStmt = db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, 'new_request', ?, ?)`);
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(vrId);
   for (const a of approvers) {
-    notifStmt.run(a.id, `มีคำขอออกนอกสถานที่ใหม่จาก ${requester.full_name} วันที่ ${vr.visit_date} เวลา ${vr.time_from} - ${vr.time_to}`, vrId);
+    notifStmt.run(a.id, `มีคำขอออกนอกสถานที่ใหม่จาก ${requester.full_name} วันที่ ${formatDateThai(vr.visit_date)} เวลา ${vr.time_from} - ${vr.time_to}`, vrId);
   }
   const vrWithCustomer = db.prepare(`
     SELECT vr.*, c.name AS customer_name FROM visit_requests vr LEFT JOIN customers c ON c.id = vr.customer_id WHERE vr.id = ?
@@ -400,8 +387,7 @@ router.post('/:id/request-revision', requireAuth, requireRole('Approver', 'Admin
     .run(vr.requester_id, `คำขอออกนอกสถานที่ของคุณ #${vr.code} ถูกส่งกลับให้แก้ไข`, vr.id);
   if (requester && requester.email && requester.email_notify) {
     sendRevisionEmail({
-      to: requester.email, requesterName: requester.full_name, vr, approverName: approver ? approver.full_name : '-', note,
-      showDocCode: getShowDocCode()
+      to: requester.email, requesterName: requester.full_name, vr, approverName: approver ? approver.full_name : '-', note
     }).catch(err => console.error('sendRevisionEmail error:', err.message));
   }
 
@@ -440,7 +426,7 @@ function sendDecisionResultEmail(vr, approverId, status, note, viaChannel) {
   if (!requester || !requester.email || !requester.email_notify) return;
   sendDecisionEmail({
     to: requester.email, requesterName: requester.full_name, vr, status,
-    approverName: approver ? approver.full_name : '-', note, viaChannel, showDocCode: getShowDocCode()
+    approverName: approver ? approver.full_name : '-', note, viaChannel
   }).catch(err => console.error('sendDecisionEmail error:', err.message));
 }
 
