@@ -1,4 +1,5 @@
 // routes/visitRequests.js
+const { getEmailRows, getShowDocCode } = require('../utils/emailFields');
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db/database');
@@ -41,8 +42,9 @@ async function notifyApproversByEmail(vr, requesterName, requesterDept) {
     insertToken.run(approveToken, vr.id, a.id, 'approve', expiresAt);
     insertToken.run(rejectToken, vr.id, a.id, 'reject', expiresAt);
     sendNewRequestEmail({
-      to: a.email, approverName: a.full_name, requesterName, vr, approveToken, rejectToken
-    }).catch(err => console.error('sendNewRequestEmail error:', err.message));
+  to: a.email, approverName: a.full_name, requesterName, vr, approveToken, rejectToken,
+  emailRows: getEmailRows(vr), showDocCode: getShowDocCode()
+  }).catch(err => console.error('sendNewRequestEmail error:', err.message));
   }
 }
 
@@ -136,9 +138,18 @@ function validateRequiredCoreFields(body) {
 }
 
 function generateCode() {
-  const row = db.prepare(`SELECT COUNT(*) c FROM visit_requests`).get();
-  const seq = (row.c + 1).toString().padStart(5, '0');
-  return `VR-2026-${seq}`;
+  const year = new Date().getFullYear();
+  const prefix = `VR-${year}-`;
+  // หาเลขรันสูงสุดที่ "เคยใช้จริง" จาก code ที่มีอยู่ในตาราง (ไม่ใช่นับจำนวนแถว)
+  // ป้องกันรหัสซ้ำเมื่อมีการลบคำขอออกไป หรือย้าย/นำเข้าข้อมูลข้ามฐานข้อมูล
+  const row = db.prepare(`
+    SELECT MAX(CAST(SUBSTR(code, LENGTH(?) + 1) AS INTEGER)) AS maxSeq
+    FROM visit_requests
+    WHERE code LIKE ?
+  `).get(prefix, `${prefix}%`);
+
+  const nextSeq = (row.maxSeq || 0) + 1;
+  return `${prefix}${nextSeq.toString().padStart(5, '0')}`;
 }
 
 // GET /api/visit-requests?scope=mine|pending|all&status=
@@ -237,20 +248,33 @@ router.post('/', requireAuth, (req, res) => {
     }
   }
 
-  const code = generateCode();
-  const status = isDraft ? 'draft' : 'pending';
-  const info = db.prepare(`
+   const status = isDraft ? 'draft' : 'pending';
+  const insertStmt = db.prepare(`
     INSERT INTO visit_requests
       (code, requester_id, customer_id, visit_date, time_from, time_to, purpose, location,
        contact_person, contact_phone, transport, license_plate, notes, status,
        job_type, sales_person, mileage_out, mileage_in, actual_time_out, actual_time_back,
        ot_hours, product, participants, customer_tax_id, tax_invoice_date)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(code, userId, customer_id || null, visit_date || '', time_from || '', time_to || '', purpose || '', location || '',
-    contact_person || '', contact_phone || '', transport || '', license_plate || '', notes || '', status,
-    job_type || '', sales_person || '', mileage_out || null, mileage_in || null,
-    actual_time_out || '', actual_time_back || '', ot_hours || null, product || '',
-    participants || '', customer_tax_id || '', tax_invoice_date || '');
+  `);
+
+  // เผื่อกรณี code ชนกันพอดี (เช่นมีคนส่งคำขอพร้อมกัน) ให้ generate ใหม่แล้วลองใหม่
+  let code, info;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    code = generateCode();
+    try {
+      info = insertStmt.run(code, userId, customer_id || null, visit_date || '', time_from || '', time_to || '', purpose || '', location || '',
+        contact_person || '', contact_phone || '', transport || '', license_plate || '', notes || '', status,
+        job_type || '', sales_person || '', mileage_out || null, mileage_in || null,
+        actual_time_out || '', actual_time_back || '', ot_hours || null, product || '',
+        participants || '', customer_tax_id || '', tax_invoice_date || '');
+      break;
+    } catch (err) {
+      const isDupCode = err.code === 'SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed: visit_requests\.code/.test(err.message);
+      if (isDupCode && attempt < 4) continue; // ลองใหม่ด้วยรหัสถัดไป
+      throw err;
+    }
+  }
 
   const vrId = info.lastInsertRowid;
   saveCustomFieldValues(vrId, custom_fields);
