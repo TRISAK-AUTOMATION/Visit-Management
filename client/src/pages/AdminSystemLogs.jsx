@@ -1,7 +1,7 @@
 // client/src/pages/AdminSystemLogs.jsx - หน้าดู audit trail (System Logs) สำหรับ Admin
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
-import { api } from '../lib/api';
+import { api, fmtDateTime } from '../lib/api';
 
 const ACTION_TH = {
   login: 'เข้าสู่ระบบ',
@@ -58,7 +58,7 @@ export default function AdminSystemLogs() {
             <tbody>
               {logs.length ? logs.map(l => (
                 <tr key={l.id}>
-                  <td style={{ whiteSpace: 'nowrap' }}>{l.created_at}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(l.created_at)}</td>
                   <td>{l.actor_name || 'ระบบ'} {l.actor_username ? <span className="muted">({l.actor_username})</span> : ''}</td>
                   <td>{ACTION_TH[l.action] || l.action}</td>
                   <td>{l.details}</td>

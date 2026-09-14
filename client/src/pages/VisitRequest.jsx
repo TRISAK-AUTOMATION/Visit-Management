@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
+import TimeInput24 from '../components/TimeInput24';
 import { api, statusLabel } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
@@ -91,7 +92,7 @@ export default function VisitRequest() {
           <input type="number" step={spec.step} value={form[key]} onChange={set(key)} placeholder={spec.placeholder} required={setting.is_required} />
         )}
         {spec.type === 'time' && (
-          <input type="time" value={form[key]} onChange={set(key)} required={setting.is_required} />
+          <TimeInput24 value={form[key]} onChange={set(key)} required={setting.is_required} />
         )}
         {spec.type === 'date' && (
           <input type="date" value={form[key]} onChange={set(key)} required={setting.is_required} />
@@ -133,7 +134,7 @@ export default function VisitRequest() {
         <input type="date" value={customValues[f.field_key] ?? f.default_value ?? ''} onChange={setCustom(f.field_key)} required={f.is_required} />
       )}
       {f.field_type === 'time' && (
-        <input type="time" value={customValues[f.field_key] ?? f.default_value ?? ''} onChange={setCustom(f.field_key)} required={f.is_required} />
+        <TimeInput24 value={customValues[f.field_key] ?? f.default_value ?? ''} onChange={setCustom(f.field_key)} required={f.is_required} />
       )}
       {f.field_type === 'datetime' && (
         <input type="datetime-local" value={customValues[f.field_key] ?? f.default_value ?? ''} onChange={setCustom(f.field_key)} required={f.is_required} />
@@ -257,7 +258,8 @@ export default function VisitRequest() {
   useEffect(() => {
     if (!editId) { setEditingRequest(null); setForm(emptyForm); setCustomValues({}); return; }
     api.get(`/api/visit-requests/${editId}`).then(({ request, customFields }) => {
-      if (!['draft', 'revision'].includes(request.status)) {
+      // 'approved' = โหมด "อัปเดตข้อมูลหลังปฏิบัติงาน" (แก้ไขได้ทุก field แต่ไม่ต้องขออนุมัติซ้ำ)
+      if (!['draft', 'revision', 'approved'].includes(request.status)) {
         toast('ไม่สามารถแก้ไขคำขอนี้ได้แล้ว', 'error');
         navigate('/my-requests');
         return;
@@ -341,8 +343,26 @@ export default function VisitRequest() {
     }
   };
 
+  // โหมด "อัปเดตข้อมูลหลังปฏิบัติงาน": คำขอนี้อนุมัติแล้ว แก้ไขได้ทุก field แต่บันทึกแล้วจบเลย ไม่ต้องขออนุมัติซ้ำ
+  const isPostVisitUpdate = editingRequest && editingRequest.status === 'approved';
+
+  const handlePostVisitSave = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await api.put(`/api/visit-requests/${editingRequest.id}`, buildPayload());
+      toast(`บันทึกข้อมูลหลังปฏิบัติงานสำเร็จ (${editingRequest.code})`, 'success');
+      setTimeout(() => navigate('/my-requests'), 600);
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // ส่งคำขอเข้าสู่ระบบอนุมัติ
   const handleSubmit = async (e) => {
+    if (isPostVisitUpdate) return handlePostVisitSave(e);
     e.preventDefault();
     if (!form.customer_id) {
       toast('กรุณาเลือกลูกค้าจากรายการค้นหาก่อนส่งคำขอ', 'error');
@@ -385,7 +405,7 @@ export default function VisitRequest() {
   };
 
   return (
-    <Layout title={editingRequest ? `แก้ไขคำขอ #${editingRequest.code}` : 'สร้างคำขอออกนอกสถานที่ (Visit Request)'}>
+    <Layout title={editingRequest ? (isPostVisitUpdate ? `อัปเดตข้อมูลหลังปฏิบัติงาน #${editingRequest.code}` : `แก้ไขคำขอ #${editingRequest.code}`) : 'สร้างคำขอออกนอกสถานที่ (Visit Request)'}>
       <div className="card" style={{ maxWidth: 900 }}>
         <div className="card-head">
           <h3>ข้อมูลคำขอ</h3>
@@ -395,6 +415,11 @@ export default function VisitRequest() {
           {editingRequest && editingRequest.status === 'revision' && editingRequest.approval_note && (
             <div style={{ background: '#ffe9d1', color: '#c9670f', borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 13 }}>
               <b>ผู้อนุมัติขอให้แก้ไข:</b> {editingRequest.approval_note}
+            </div>
+          )}
+          {isPostVisitUpdate && (
+            <div style={{ background: '#e6f4ea', color: '#1a7a3c', borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 13 }}>
+              คำขอนี้อนุมัติแล้ว — แก้ไขข้อมูลให้ตรงกับที่ปฏิบัติงานจริงได้ทุกช่อง แล้วกด "บันทึกข้อมูล" ได้เลย ไม่ต้องขออนุมัติใหม่อีกครั้ง
             </div>
           )}
           <form onSubmit={handleSubmit}>
@@ -454,12 +479,12 @@ export default function VisitRequest() {
               {renderCustomFieldsAt('customer_id')}
               <div className="form-group">
                 <label>เวลาเริ่ม (แผน) <span className="req">*</span></label>
-                <input type="time" value={form.time_from} onChange={set('time_from')} required />
+                <TimeInput24 value={form.time_from} onChange={set('time_from')} required />
               </div>
               {renderCustomFieldsAt('time_from')}
               <div className="form-group">
                 <label>เวลาสิ้นสุด (แผน) <span className="req">*</span></label>
-                <input type="time" value={form.time_to} onChange={set('time_to')} required />
+                <TimeInput24 value={form.time_to} onChange={set('time_to')} required />
               </div>
               {renderCustomFieldsAt('time_to')}
               <div className="form-group full">
@@ -487,7 +512,7 @@ export default function VisitRequest() {
               {(!editingRequest || editingRequest.status === 'draft') && (
                 <button type="button" className="btn btn-outline" disabled={saving} onClick={handleSaveDraft}>บันทึกฉบับร่าง</button>
               )}
-              <button type="submit" className="btn btn-primary" disabled={saving}>ส่งคำขอ</button>
+              <button type="submit" className="btn btn-primary" disabled={saving}>{isPostVisitUpdate ? 'บันทึกข้อมูล' : 'ส่งคำขอ'}</button>
             </div>
           </form>
         </div>

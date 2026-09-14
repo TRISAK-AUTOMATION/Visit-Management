@@ -1,7 +1,7 @@
 // client/src/pages/AdminDataRetention.jsx
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
-import { api } from '../lib/api';
+import { api, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
 const UNIT_LABEL = { day: 'วัน', month: 'เดือน', year: 'ปี' };
@@ -11,6 +11,7 @@ export default function AdminDataRetention() {
   const [settings, setSettings] = useState([]);
   const [saving, setSaving] = useState({});
   const [runningNow, setRunningNow] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
 
   const load = async () => {
     const { settings } = await api.get('/api/retention-settings');
@@ -49,6 +50,21 @@ export default function AdminDataRetention() {
     finally { setRunningNow(false); }
   };
 
+  const deleteAllRequests = async () => {
+    const ok = confirm(
+      'ยืนยันลบ "คำขอ Visit ทั้งหมด" ในระบบทิ้งถาวร?\n\n' +
+      'คำเตือน: การกระทำนี้ไม่สามารถย้อนกลับได้ จะลบคำขอทุกสถานะ (ฉบับร่าง/รออนุมัติ/อนุมัติแล้ว/ไม่อนุมัติ/ยกเลิก) ' +
+      'พร้อมประวัติการอนุมัติและข้อมูลที่กรอกไว้ทั้งหมด เหมาะสำหรับล้างข้อมูลที่ทดสอบระบบไว้ก่อนเริ่มใช้งานจริงเท่านั้น'
+    );
+    if (!ok) return;
+    setDeletingAll(true);
+    try {
+      const result = await api.del('/api/visit-requests/bulk/all');
+      toast(`ลบคำขอ Visit ทั้งหมดสำเร็จ (${result.deleted} รายการ)`, 'success');
+    } catch (err) { toast(err.message, 'error'); }
+    finally { setDeletingAll(false); }
+  };
+
   return (
     <Layout title="ตั้งค่าการลบข้อมูลอัตโนมัติ (Data Retention)">
       <p className="muted" style={{ marginBottom: 16 }}>
@@ -83,7 +99,7 @@ export default function AdminDataRetention() {
                     </div>
                   </td>
                   <td className="muted" style={{ fontSize: 13 }}>
-                    {row.last_run_at ? <>{row.last_run_at}<br />{row.last_run_summary}</> : 'ยังไม่เคยรัน'}
+                    {row.last_run_at ? <>{fmtDateTime(row.last_run_at)}<br />{row.last_run_summary}</> : 'ยังไม่เคยรัน'}
                   </td>
                   <td>
                     <button className="btn btn-primary btn-sm" disabled={saving[row.data_type]} onClick={() => save(row)}>
@@ -101,6 +117,19 @@ export default function AdminDataRetention() {
         <button className="btn btn-outline" disabled={runningNow} onClick={runNow}>
           {runningNow ? 'กำลังรัน...' : 'รันตามกฎที่เปิดใช้งานทันที'}
         </button>
+      </div>
+
+      <div className="card" style={{ marginTop: 24, borderColor: '#f0483e' }}>
+        <div className="card-head"><h3 style={{ color: '#c0392b' }}>ล้างข้อมูลทดสอบ</h3></div>
+        <div className="card-body">
+          <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+            ลบ "คำขอ Visit" ทั้งหมดในระบบทิ้งถาวรทันที (ทุกสถานะ) — ใช้สำหรับเคลียร์ข้อมูลที่ลองส่งทดสอบกันไว้ ก่อนเริ่มใช้งานจริง
+            การลบนี้ไม่เกี่ยวกับกฎลบอัตโนมัติด้านบน และย้อนกลับไม่ได้
+          </p>
+          <button className="btn" style={{ background: '#f0483e', color: '#fff' }} disabled={deletingAll} onClick={deleteAllRequests}>
+            {deletingAll ? 'กำลังลบ...' : 'ลบคำขอ Visit ทั้งหมด'}
+          </button>
+        </div>
       </div>
     </Layout>
   );

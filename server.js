@@ -31,6 +31,7 @@ app.use('/api/core-field-settings', require('./routes/coreFields'));
 app.use('/api/retention-settings', require('./routes/retentionSettings'));
 app.use('/api/page-content', require('./routes/pageContent'));
 app.use('/api/email-settings', require('./routes/emailSettings'));
+app.use('/api/pdf-settings', require('./routes/pdfSettings'));
 
 // ---------- STATIC FRONTEND (React build output จาก client/) ----------
 app.use(express.static(path.join(__dirname, 'public')));

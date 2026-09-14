@@ -11,6 +11,9 @@ const router = express.Router();
 
 const TOKEN_TTL_DAYS = 7;
 const EDITABLE_STATUSES = ['pending', 'draft', 'revision'];
+// สถานะที่ผู้ขอสามารถกลับมา "อัปเดตข้อมูลหลังปฏิบัติงาน" ได้ (เช่น เวลาออกจริง/เข้าจริง, ไมล์, OT ฯลฯ)
+// อนุญาตเฉพาะคำขอที่อนุมัติแล้ว และการอัปเดตนี้จะไม่เปลี่ยนสถานะ/ไม่ต้องส่งขออนุมัติใหม่ (อนุมัติแค่ครั้งเดียว)
+const POST_VISIT_EDITABLE_STATUSES = ['approved'];
 
 // แปลงวันที่รูปแบบ YYYY-MM-DD (จาก <input type="date">) ให้เป็น วัน/เดือน/ปี ตามรูปแบบไทย
 // ใช้ตอนสร้างข้อความแจ้งเตือน (notifications.message) เพื่อไม่ให้ปนกับรูปแบบสากลที่อ่านสลับกันได้
@@ -350,7 +353,10 @@ router.put('/:id', requireAuth, (req, res) => {
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
   if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
   if (vr.requester_id !== req.session.userId) return res.status(403).json({ error: 'ไม่มีสิทธิ์แก้ไขคำขอนี้' });
-  if (!EDITABLE_STATUSES.includes(vr.status)) return res.status(400).json({ error: 'ไม่สามารถแก้ไขคำขอที่ดำเนินการแล้วได้' });
+  const isPostVisitUpdate = POST_VISIT_EDITABLE_STATUSES.includes(vr.status);
+  if (!EDITABLE_STATUSES.includes(vr.status) && !isPostVisitUpdate) {
+    return res.status(400).json({ error: 'ไม่สามารถแก้ไขคำขอที่ดำเนินการแล้วได้' });
+  }
 
   const fields = ['customer_id', 'visit_date', 'time_from', 'time_to', 'purpose', 'location',
     'contact_person', 'contact_phone', 'transport', 'license_plate', 'notes',
@@ -366,12 +372,19 @@ router.put('/:id', requireAuth, (req, res) => {
   }
   if (updates.length) {
     values.push(req.params.id);
+    // หมายเหตุ: ไม่แตะคอลัมน์ status เลย ดังนั้นคำขอที่ "อนุมัติแล้ว" จะยังคงเป็น approved อยู่เหมือนเดิมหลังอัปเดต
+    // (ไม่ต้องส่งขออนุมัติซ้ำ - อนุมัติแค่ครั้งเดียวตามที่ต้องการ)
     db.prepare(`UPDATE visit_requests SET ${updates.join(', ')} WHERE id = ?`).run(...values);
   }
   if (req.body.custom_fields) {
     saveCustomFieldValues(req.params.id, req.body.custom_fields);
   }
-  logAction(req.session.userId, 'edit_request', `แก้ไขคำขอ #${vr.code}`);
+  if (isPostVisitUpdate) {
+    db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'อัปเดตข้อมูลหลังปฏิบัติงาน', 'web')`).run(req.params.id, req.session.userId);
+    logAction(req.session.userId, 'update_after_visit', `อัปเดตข้อมูลหลังปฏิบัติงาน #${vr.code}`);
+  } else {
+    logAction(req.session.userId, 'edit_request', `แก้ไขคำขอ #${vr.code}`);
+  }
   res.json({ ok: true });
 });
 
@@ -385,6 +398,37 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
   db.prepare(`UPDATE visit_requests SET status = 'cancelled' WHERE id = ?`).run(req.params.id);
   db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'ยกเลิกคำขอ', 'web')`).run(req.params.id, req.session.userId);
   logAction(req.session.userId, 'cancel_request', `ยกเลิกคำขอ #${vr.code}`);
+  res.json({ ok: true });
+});
+
+// ลบคำขอ Visit ทิ้งถาวร (ไม่ใช่แค่ยกเลิก/เปลี่ยนสถานะ) - เฉพาะ Admin เท่านั้น ใช้สำหรับเคลียร์ข้อมูลทดสอบ
+// ลบข้อมูลลูกผูกทั้งหมดที่อ้างถึงคำขอนี้ด้วย (ไม่มี ON DELETE CASCADE ในสคีมา จึงต้องลบเองให้ครบ)
+function deleteVisitRequestCascade(id) {
+  db.prepare('DELETE FROM approval_history WHERE visit_request_id = ?').run(id);
+  db.prepare('DELETE FROM approval_tokens WHERE visit_request_id = ?').run(id);
+  db.prepare('DELETE FROM visit_custom_values WHERE visit_request_id = ?').run(id);
+  db.prepare('DELETE FROM notifications WHERE related_id = ?').run(id);
+  db.prepare('DELETE FROM visit_requests WHERE id = ?').run(id);
+}
+
+// ลบคำขอ Visit "ทั้งหมด" ในระบบทิ้งถาวร - สำหรับเคลียร์ข้อมูลทดสอบก่อนใช้งานจริง (เฉพาะ Admin)
+// หมายเหตุ: ต้อง define ไว้ "ก่อน" router.delete('/:id') ด้านล่าง เพราะ Express จับเส้นทางตามลำดับที่ประกาศ
+// ถ้า '/:id' อยู่ก่อน จะจับ '/bulk/all' เป็น id='bulk' แทนที่จะไปเส้นทางนี้
+router.delete('/bulk/all', requireAuth, requireRole('Admin'), (req, res) => {
+  const rows = db.prepare('SELECT id FROM visit_requests').all();
+  const tx = db.transaction(() => {
+    rows.forEach(r => deleteVisitRequestCascade(r.id));
+  });
+  tx();
+  logAction(req.session.userId, 'delete_all_requests', `ลบคำขอ Visit ทั้งหมดทิ้งถาวร (${rows.length} รายการ) - ล้างข้อมูลทดสอบ`);
+  res.json({ ok: true, deleted: rows.length });
+});
+
+router.delete('/:id', requireAuth, requireRole('Admin'), (req, res) => {
+  const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
+  if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
+  deleteVisitRequestCascade(req.params.id);
+  logAction(req.session.userId, 'delete_request', `ลบคำขอ #${vr.code} ถาวร`);
   res.json({ ok: true });
 });
 

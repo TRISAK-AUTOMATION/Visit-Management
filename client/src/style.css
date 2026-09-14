@@ -204,4 +204,46 @@ tbody tr:hover{background:#fafbfe;}
   .topbar-right{gap:8px;}
   .topbar-user{display:none;} /* ชื่อ/ตำแหน่งซ้ำกับที่โชว์ในเมนูด้านข้างอยู่แล้ว ซ่อนบนจอแคบเพื่อกันชนกับปุ่มอื่น */
   .stat-grid{grid-template-columns:1fr;}
+  .content{padding:14px;}
+
+  /* ---------- ตารางข้อมูล -> การ์ดแนวตั้ง (แทนการเลื่อนซ้าย-ขวา ให้เป็นธรรมชาติกับมือถือมากขึ้น) ---------- */
+  /* ขอบเขตเฉพาะตารางหลักที่อยู่ใน .card-body เท่านั้น (ตารางเล็กๆ ใน modal เช่น preview นำเข้าไฟล์ ไม่โดนผลกระทบ) */
+  .card-body{overflow-x:visible;padding:10px;}
+  .card-body table{min-width:0;width:100%;}
+  .card-body thead{display:none;}
+  .card-body table,.card-body tbody,.card-body tr{display:block;width:100%;}
+  .card-body tbody tr{
+    background:#fff;border:1px solid var(--border);border-radius:12px;
+    margin-bottom:10px;padding:2px 14px;box-shadow:var(--shadow);
+  }
+  .card-body tbody tr:last-child{margin-bottom:0;}
+  .card-body tbody td{
+    display:flex;justify-content:space-between;align-items:center;gap:14px;
+    padding:10px 0;border-bottom:1px dashed var(--border);text-align:right;white-space:normal;
+  }
+  .card-body tbody td:last-child{border-bottom:none;}
+  .card-body tbody td::before{
+    content:attr(data-label);color:var(--text-400);font-size:11px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.03em;text-align:left;flex-shrink:0;
+  }
+  /* คอลัมน์ "จัดการ" (data-label ว่าง) ให้ปุ่มกระจายเต็มแถวแทนการชิดขวาแคบๆ */
+  .card-body tbody td[data-label=""]{flex-wrap:wrap;justify-content:flex-start;}
+  .card-body tbody td[data-label=""]::before{display:none;}
+  .card-body tbody td[data-label=""] .btn{flex:1;justify-content:center;min-width:70px;}
+  /* แถวว่าง/loading ที่กิน colSpan ทั้งแถว ไม่ต้องเป็นการ์ด */
+  .card-body tbody tr:has(td.empty){box-shadow:none;border-style:dashed;}
+  .card-body tbody tr:has(td.empty) td{display:block;text-align:center;}
+  .card-body tbody tr:has(td.empty) td::before{content:none;}
+
+  /* ---------- ปฏิทิน: ซ่อนข้อความในช่อง ใช้จุดบอกจำนวนงานแทน แตะเพื่อดูรายละเอียด ---------- */
+  .cal-grid{min-width:0;gap:3px;}
+  .cal-cell{min-height:46px;padding:4px 3px;font-size:10px;}
+  .cal-cell .d{margin-bottom:2px;}
+  .cal-evt{display:none;} /* ข้อความเต็มโชว์แค่จอกว้าง บนมือถือใช้จุดแทน */
+  .cal-evt-dots{display:flex;gap:2px;flex-wrap:wrap;justify-content:center;}
+  .cal-evt-dot{width:5px;height:5px;border-radius:50%;background:var(--blue-600);}
+  .cal-evt-more{font-size:9px;color:var(--blue-600);font-weight:700;}
+}
+@media(min-width:721px){
+  .cal-evt-dots{display:none;} /* จอกว้างใช้ป้ายชื่อเต็มแบบเดิม ไม่ต้องมีจุด */
 }

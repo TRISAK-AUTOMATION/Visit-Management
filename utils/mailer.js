@@ -2,6 +2,7 @@
 // ตัวช่วยส่งอีเมลของระบบ TRISAK Visit Management
 // อ่านค่าคอนฟิก SMTP จาก Environment Variables (ดูตัวอย่างใน .env.example)
 const nodemailer = require('nodemailer');
+const { toThaiDate } = require('./dateFormat');
 
 const APP_BASE_URL = process.env.APP_BASE_URL || 'http://localhost:3000';
 const MAIL_FROM = process.env.MAIL_FROM || 'TRISAK Visit Management <no-reply@trisak.co.th>';
@@ -229,7 +230,7 @@ async function sendDecisionEmail({ to, requesterName, vr, status, approverName, 
   const badge = approved ? 'อนุมัติแล้ว' : 'ไม่อนุมัติ';
 
   const rows = [
-    { label: 'วันที่', value: vr.visit_date },
+    { label: 'วันที่', value: toThaiDate(vr.visit_date) },
     { label: 'เวลา', value: `${vr.time_from} - ${vr.time_to}` },
     { label: 'ผู้อนุมัติ', value: approverName },
     { label: 'ช่องทาง', value: viaChannel === 'email' ? 'อีเมล' : 'เว็บแอปพลิเคชัน' },
@@ -263,7 +264,7 @@ async function sendRevisionEmail({ to, requesterName, vr, approverName, note, sh
   const codeSuffix = showCode ? ` #${vr.code}` : '';
 
   const rows = [
-    { label: 'วันที่', value: vr.visit_date },
+    { label: 'วันที่', value: toThaiDate(vr.visit_date) },
     { label: 'เวลา', value: `${vr.time_from} - ${vr.time_to}` },
     { label: 'ส่งกลับโดย', value: approverName },
     { label: 'หมายเหตุจากผู้อนุมัติ', value: note }

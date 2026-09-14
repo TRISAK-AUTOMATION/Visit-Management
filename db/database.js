@@ -392,4 +392,22 @@ db.prepare(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('email_sh
 db.prepare(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('departments', ?)`)
   .run(JSON.stringify(['Sales', 'IT', 'Engineer', 'บัญชี/Accounting', 'HR', 'Stor']));
 
+// การตั้งค่าหน้าตา PDF (Settings > ออกแบบ PDF) - Admin ปรับสี/โลโก้/หัวเอกสาร/ลำดับ-เปิดปิดหมวดได้เอง
+// เก็บใน system_settings แบบ key-value เดียวกับค่าตั้งค่าอื่นๆ ของระบบ ไม่ต้องสร้างตารางใหม่
+// pdf_logo_base64 เก็บเป็น data URL (base64) ตรงๆ - ใช้ pattern เดียวกับไฟล์แนบใน Form Builder (ดู server.js บรรทัด express.json limit 8mb)
+// pdf_section_order / pdf_section_visible เก็บเป็น JSON string ของหมวดที่พิมพ์ใน PDF
+const PDF_SETTINGS_DEFAULTS = {
+  pdf_primary_color: '#0b1530',
+  pdf_accent_color: '#2f5bff',
+  pdf_logo_base64: '',
+  pdf_org_name: 'TRISAK',
+  pdf_org_subtitle: 'VISIT MANAGEMENT SYSTEM',
+  pdf_doc_title: 'ใบขออนุมัติออกนอกสถานที่ (Visit Request Form)',
+  pdf_show_signature: '1',
+  pdf_section_order: JSON.stringify(['requester', 'customer', 'work', 'approval']),
+  pdf_section_visible: JSON.stringify({ requester: true, customer: true, work: true, approval: true })
+};
+const insertPdfSetting = db.prepare(`INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)`);
+Object.entries(PDF_SETTINGS_DEFAULTS).forEach(([k, v]) => insertPdfSetting.run(k, v));
+
 module.exports = db;
