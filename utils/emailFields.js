@@ -5,12 +5,16 @@
 //   3. Field ที่ Admin สร้างเอง (custom_form_fields) ที่ active + ติ๊ก "แสดงใน Email" ไว้ เรียงตาม sort_order
 // ทุกจุดอ่านอย่างเดียว ไม่แก้ข้อมูล จึงปลอดภัยเรียกจากที่ไหนก็ได้ก่อนส่งเมล
 const db = require('../db/database');
+const { toThaiDate } = require('./dateFormat');
+
+// field_key ของ field เดิมในระบบที่เก็บค่าเป็นวันที่ (ISO) ต้องแปลงเป็นรูปแบบไทย DD/MM/YYYY ก่อนใส่ในอีเมลเสมอ
+const CORE_DATE_FIELD_KEYS = new Set(['tax_invoice_date']);
 
 // ค่าของ field พื้นฐาน อ้างอิงจากคอลัมน์จริงใน visit_requests (ผ่าน object vr ที่ query มาแล้ว รวม customer_name)
 function essentialValue(fieldKey, vr) {
   switch (fieldKey) {
     case 'customer_id': return vr.customer_name || '-';
-    case 'visit_date': return vr.visit_date;
+    case 'visit_date': return toThaiDate(vr.visit_date);
     case 'time_range': return `${vr.time_from} - ${vr.time_to}`;
     case 'purpose': return vr.purpose;
     default: return '';
@@ -31,17 +35,19 @@ function getEmailRows(vr) {
     'SELECT field_key, label FROM core_field_settings WHERE show_in_email = 1 ORDER BY sort_order ASC'
   ).all();
   for (const f of coreFields) {
-    rows.push({ label: f.label, value: vr[f.field_key] });
+    const raw = vr[f.field_key];
+    rows.push({ label: f.label, value: CORE_DATE_FIELD_KEYS.has(f.field_key) ? toThaiDate(raw) : raw });
   }
 
   const customFields = db.prepare(
-    'SELECT id, field_key, label FROM custom_form_fields WHERE is_active = 1 AND show_in_email = 1 ORDER BY sort_order ASC'
+    'SELECT id, field_key, label, field_type FROM custom_form_fields WHERE is_active = 1 AND show_in_email = 1 ORDER BY sort_order ASC'
   ).all();
   if (customFields.length) {
     const getValue = db.prepare('SELECT value FROM visit_custom_values WHERE visit_request_id = ? AND field_id = ?');
     for (const f of customFields) {
       const row = getValue.get(vr.id, f.id);
-      rows.push({ label: f.label, value: row ? row.value : '' });
+      const raw = row ? row.value : '';
+      rows.push({ label: f.label, value: f.field_type === 'date' ? toThaiDate(raw) : raw });
     }
   }
 

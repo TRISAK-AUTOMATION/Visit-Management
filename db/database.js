@@ -386,10 +386,51 @@ CREATE TABLE IF NOT EXISTS system_settings (
 `);
 db.prepare(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('email_show_doc_code', '1')`).run();
 
+// Field พื้นฐานที่จำเป็นต่อระบบ (วันที่ / รหัสลูกค้า / เวลาเริ่ม / เวลาสิ้นสุด / วัตถุประสงค์)
+// ห้ามซ่อน/ห้ามถอด required (ผูกกับ logic หลักของระบบ) แต่ Admin ยังแก้ "ชื่อหัวข้อ (Label)" ที่แสดงในฟอร์มได้
+// แยกเก็บเป็นตารางของตัวเอง (ไม่ปนกับ core_field_settings ที่มี is_visible/is_required/sort_order เพราะ 3 อย่างนั้นแก้ไม่ได้กับ field กลุ่มนี้)
+db.exec(`
+CREATE TABLE IF NOT EXISTS essential_field_labels (
+  field_key  TEXT PRIMARY KEY,   -- visit_date | customer_id | time_from | time_to | purpose
+  label      TEXT NOT NULL,
+  updated_at TEXT DEFAULT (datetime('now')),
+  updated_by INTEGER REFERENCES users(id)
+);
+`);
+const ESSENTIAL_LABEL_DEFAULTS = [
+  ['visit_date', 'วันที่'],
+  ['customer_id', 'รหัสลูกค้า / บริษัท'],
+  ['time_from', 'เวลาเริ่ม (แผน)'],
+  ['time_to', 'เวลาสิ้นสุด (แผน)'],
+  ['purpose', 'วัตถุประสงค์ / รายละเอียดงาน']
+];
+{
+  const insertEssentialLabel = db.prepare('INSERT OR IGNORE INTO essential_field_labels (field_key, label) VALUES (?, ?)');
+  ESSENTIAL_LABEL_DEFAULTS.forEach(([k, l]) => insertEssentialLabel.run(k, l));
+}
+
 // รายชื่อ "แผนก" ที่ใช้เป็นตัวเลือกแบบ dropdown ทั่วทั้งระบบ (แทนการพิมพ์เองแบบเดิม)
 // ป้องกันปัญหาพิมพ์ไม่ตรงกัน เช่น "Sales" vs "Sales Engineer" ซึ่งทำให้การหาผู้อนุมัติ (เทียบ department แบบ exact match) พลาด
 // Admin เพิ่ม/ลบแผนกเองได้ภายหลังที่หน้าจัดการผู้ใช้งาน โดยไม่ต้องแก้โค้ด (ดู routes/departments.js)
 db.prepare(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('departments', ?)`)
   .run(JSON.stringify(['Sales', 'IT', 'Engineer', 'บัญชี/Accounting', 'HR', 'Stor']));
+
+// การตั้งค่าหน้าตา PDF (Settings > ออกแบบ PDF) - Admin ปรับสี/โลโก้/หัวเอกสาร/ลำดับ-เปิดปิดหมวดได้เอง
+// เก็บใน system_settings แบบ key-value เดียวกับค่าตั้งค่าอื่นๆ ของระบบ ไม่ต้องสร้างตารางใหม่
+// pdf_logo_base64 เก็บเป็น data URL (base64) ตรงๆ - ใช้ pattern เดียวกับไฟล์แนบใน Form Builder (ดู server.js บรรทัด express.json limit 8mb)
+// pdf_section_order / pdf_section_visible เก็บเป็น JSON string ของหมวดที่พิมพ์ใน PDF
+const PDF_SETTINGS_DEFAULTS = {
+  pdf_primary_color: '#0b1530',
+  pdf_accent_color: '#2f5bff',
+  pdf_logo_base64: '',
+  pdf_org_name: 'TRISAK',
+  pdf_org_subtitle: 'VISIT MANAGEMENT SYSTEM',
+  pdf_doc_title: 'ใบขออนุมัติออกนอกสถานที่ (Visit Request Form)',
+  pdf_show_signature: '1',
+  pdf_section_order: JSON.stringify(['requester', 'customer', 'work', 'approval']),
+  pdf_section_visible: JSON.stringify({ requester: true, customer: true, work: true, approval: true })
+};
+const insertPdfSetting = db.prepare(`INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)`);
+Object.entries(PDF_SETTINGS_DEFAULTS).forEach(([k, v]) => insertPdfSetting.run(k, v));
 
 module.exports = db;

@@ -79,7 +79,7 @@ export default function CalendarPage() {
         <div className="card-body">
           <div className="flex between mb-16" style={{ flexWrap: 'wrap', gap: 8 }}>
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="ค้นหาชื่อลูกค้า/บริษัท..."
-              style={{ width: 260, padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 9 }} />
+              style={{ width: '100%', maxWidth: 260, padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 9 }} />
             <span className="muted" style={{ fontSize: 12.5 }}>คลิกวันที่หรือรายการเพื่อดูรายละเอียด</span>
           </div>
           <div className="cal-grid">
@@ -101,13 +101,19 @@ export default function CalendarPage() {
                       key={e.id}
                       className="cal-evt"
                       style={{ cursor: 'pointer' }}
-                      title={`${e.customer_name} ${e.time_from}-${e.time_to}`}
+                      title={`${e.customer_name} ${e.time_from}-${e.time_to} · ผู้ขอ: ${e.requester_name || '-'}${e.participants ? ` · ผู้ร่วมงาน: ${e.participants}` : ''}`}
                       onClick={(ev) => { ev.stopPropagation(); viewRequest(e.id); }}
                     >
                       {e.customer_name}
                     </div>
                   ))}
                   {evts.length > 3 && <div className="muted" style={{ fontSize: 10 }}>+{evts.length - 3} เพิ่มเติม</div>}
+                  {evts.length > 0 && (
+                    <div className="cal-evt-dots">
+                      {evts.slice(0, 4).map(e => <span key={e.id} className="cal-evt-dot" />)}
+                      {evts.length > 4 && <span className="cal-evt-more">+{evts.length - 4}</span>}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -138,6 +144,9 @@ export default function CalendarPage() {
                     </div>
                     <div>{e.customer_name || '-'}</div>
                     <div className="muted" style={{ fontSize: 12 }}>{e.purpose || '-'}</div>
+                    <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                      ผู้ขอ: {e.requester_name || '-'}{e.participants ? ` · ผู้ร่วมงาน: ${e.participants}` : ''}
+                    </div>
                   </div>
                 )) : <p className="muted">ไม่มี Visit ในวันนี้</p>}
             </div>

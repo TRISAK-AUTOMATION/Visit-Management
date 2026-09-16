@@ -31,7 +31,7 @@ router.post('/', requireAuth, requireRole('Admin'), (req, res) => {
 // ลบแผนก - Admin เท่านั้น (กันลบถ้ายังมีผู้ใช้อยู่แผนกนั้น เพื่อไม่ให้ข้อมูลเก่ากำพร้า)
 router.delete('/:name', requireAuth, requireRole('Admin'), (req, res) => {
   const name = decodeURIComponent(req.params.name);
-  const inUse = db.prepare('SELECT COUNT(*) AS c FROM users WHERE department = ?').get(name);
+  const inUse = db.prepare('SELECT COUNT(DISTINCT user_id) AS c FROM user_departments WHERE department = ?').get(name);
   if (inUse.c > 0) {
     return res.status(400).json({
       error: `ไม่สามารถลบแผนก "${name}" ได้ เนื่องจากยังมีผู้ใช้งาน ${inUse.c} คนอยู่แผนกนี้ กรุณาย้ายผู้ใช้ออกจากแผนกนี้ก่อน`

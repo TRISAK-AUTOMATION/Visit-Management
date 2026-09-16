@@ -23,8 +23,9 @@ const FIELD_TYPES = [
 const OPTION_TYPES = ['dropdown', 'multiselect', 'radio'];
 const typeLabel = (v) => (FIELD_TYPES.find(t => t.v === v) || {}).label || v;
 
-// field ที่จำเป็นต่อระบบ (ซ่อน/ลบไม่ได้) แต่ยังใช้เลือกเป็น "ตำแหน่งอ้างอิง" ได้ ว่าจะวาง field ใหม่ไว้ต่อจาก field ไหน
-const ESSENTIAL_FIELDS = [
+// field ที่จำเป็นต่อระบบ (ซ่อน/ลบไม่ได้ ต้องแสดง+บังคับกรอกเสมอ) แต่แก้ "ชื่อหัวข้อ (Label)" ได้ผ่าน essential_field_labels
+// รายการนี้เป็นค่า default ไว้ใช้ระหว่างรอโหลดจาก backend เท่านั้น ของจริงมาจาก essentialLabels state ด้านล่าง
+const ESSENTIAL_FIELDS_DEFAULT = [
   { field_key: 'visit_date', label: 'วันที่' },
   { field_key: 'customer_id', label: 'รหัสลูกค้า / บริษัท' },
   { field_key: 'time_from', label: 'เวลาเริ่ม (แผน)' },
@@ -49,6 +50,35 @@ export default function AdminFormBuilder() {
   const [editingCore, setEditingCore] = useState(null); // { field_key, label, is_visible, is_required } หรือ null
   const [coreForm, setCoreForm] = useState({ label: '', is_visible: true, is_required: false });
   const [savingCore, setSavingCore] = useState(false);
+
+  // Field พื้นฐานที่จำเป็นต่อระบบ (วันที่/ลูกค้า/เวลา/วัตถุประสงค์) - แสดง+บังคับกรอกเสมอ แก้ได้แค่ชื่อหัวข้อ (Label)
+  const [essentialLabels, setEssentialLabels] = useState(ESSENTIAL_FIELDS_DEFAULT);
+  const ESSENTIAL_FIELDS = essentialLabels; // ใช้ชื่อเดิมต่อในโค้ดที่เหลือ (position_after dropdown ฯลฯ)
+  const [editingEssential, setEditingEssential] = useState(null); // { field_key, label } หรือ null
+  const [essentialLabel, setEssentialLabel] = useState('');
+  const [savingEssential, setSavingEssential] = useState(false);
+
+  const loadEssential = async () => {
+    const { labels } = await api.get('/api/core-field-settings/essential-labels');
+    if (labels && labels.length) setEssentialLabels(labels);
+  };
+
+  const openEssentialEdit = (f) => {
+    setEditingEssential(f);
+    setEssentialLabel(f.label);
+  };
+
+  const submitEssentialEdit = async (e) => {
+    e.preventDefault();
+    setSavingEssential(true);
+    try {
+      await api.put(`/api/core-field-settings/essential-labels/${editingEssential.field_key}`, { label: essentialLabel });
+      toast('บันทึกสำเร็จ', 'success');
+      setEditingEssential(null);
+      loadEssential();
+    } catch (err) { toast(err.message, 'error'); }
+    setSavingEssential(false);
+  };
 
   const loadCore = async () => {
     const { settings } = await api.get('/api/core-field-settings');
@@ -116,7 +146,7 @@ export default function AdminFormBuilder() {
     setFields(fields);
   };
 
-  useEffect(() => { load(); loadCore(); }, []);
+  useEffect(() => { load(); loadCore(); loadEssential(); }, []);
 
   const openForm = (f) => {
     setEditing(f || null);
@@ -301,6 +331,59 @@ export default function AdminFormBuilder() {
           </div>
         </div>
       )}
+      <div className="flex between mb-16" style={{ marginTop: 28 }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Field พื้นฐาน (จำเป็นต่อระบบ)</h3>
+          <p className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
+            Field กลุ่มนี้ต้อง<b>แสดงและบังคับกรอกเสมอ</b> (ผูกกับ logic หลักของระบบ) จึง<b>ซ่อน/ปิดบังคับกรอกไม่ได้</b> แต่แก้ <b>ชื่อหัวข้อ (Label)</b> ได้
+          </p>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 28 }}>
+        <div className="card-body" style={{ padding: 0 }}>
+          <table>
+            <thead>
+              <tr><th>Label</th><th>สถานะ</th><th>จัดการ</th></tr>
+            </thead>
+            <tbody>
+              {essentialLabels.map(f => (
+                <tr key={f.field_key}>
+                  <td><b>{f.label}</b><br /><span className="muted" style={{ fontSize: 11 }}>{f.field_key}</span></td>
+                  <td><span className="badge approved">แสดงในฟอร์ม · จำเป็น</span></td>
+                  <td><button className="btn btn-outline btn-sm" onClick={() => openEssentialEdit(f)}>แก้ไข</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {editingEssential && (
+        <div className="modal-bg" onClick={(e) => { if (e.target === e.currentTarget) setEditingEssential(null); }}>
+          <div className="modal">
+            <div className="modal-head">
+              <h3>แก้ไขชื่อหัวข้อ: {editingEssential.field_key}</h3>
+              <button className="modal-close" onClick={() => setEditingEssential(null)}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <form onSubmit={submitEssentialEdit}>
+                <div className="form-group"><label>ชื่อหัวข้อ (Label) <span className="req">*</span></label>
+                  <input value={essentialLabel} onChange={(e) => setEssentialLabel(e.target.value)} required />
+                </div>
+                <div className="muted" style={{ fontSize: 11.5, marginBottom: 10 }}>
+                  Field นี้ผูกกับ logic หลักของระบบ ต้องแสดงและบังคับกรอกเสมอ แก้ได้เฉพาะชื่อหัวข้อ
+                </div>
+                <div className="form-actions">
+                  <button type="button" className="btn btn-outline" onClick={() => setEditingEssential(null)}>ยกเลิก</button>
+                  <button type="submit" className="btn btn-primary" disabled={savingEssential}>บันทึก</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex between mb-16" style={{ marginTop: 28 }}>
         <div>
           <h3 style={{ margin: 0 }}>Field เดิมของระบบ</h3>

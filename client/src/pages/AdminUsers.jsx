@@ -4,7 +4,7 @@ import Layout from '../components/Layout';
 import { api, ROLE_TH } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
-const emptyForm = { username: '', password: '', full_name: '', email: '', phone: '', position: '', department: '', role: 'Employee' };
+const emptyForm = { username: '', password: '', full_name: '', email: '', phone: '', position: '', departments: [], role: 'Employee' };
 
 export default function AdminUsers() {
   const toast = useToast();
@@ -28,7 +28,7 @@ export default function AdminUsers() {
     try {
       const { departments } = await api.post('/api/departments', { name });
       setDepartments(departments);
-      setForm(f => ({ ...f, department: name }));
+      setForm(f => ({ ...f, departments: f.departments.includes(name) ? f.departments : [...f.departments, name] }));
       toast('เพิ่มแผนกสำเร็จ', 'success');
     } catch (err) { toast(err.message, 'error'); }
   };
@@ -38,11 +38,22 @@ export default function AdminUsers() {
   const openForm = (u) => {
     setEditing(u || null);
     setForm(u
-      ? { username: u.username, password: '', full_name: u.full_name, email: u.email || '', phone: u.phone || '', position: u.position || '', department: u.department || '', role: u.role }
+      ? {
+        username: u.username, password: '', full_name: u.full_name, email: u.email || '', phone: u.phone || '',
+        position: u.position || '', departments: Array.isArray(u.departments) && u.departments.length ? u.departments : (u.department ? [u.department] : []),
+        role: u.role
+      }
       : emptyForm);
   };
 
   const set = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
+
+  const toggleDept = (d) => (e) => {
+    setForm(f => ({
+      ...f,
+      departments: e.target.checked ? [...f.departments, d] : f.departments.filter(x => x !== d)
+    }));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -86,7 +97,7 @@ export default function AdminUsers() {
       <div className="card">
         <div className="card-body" style={{ padding: 0 }}>
           <table>
-            <thead><tr><th>ชื่อ-นามสกุล</th><th>Username</th><th>อีเมล</th><th>ตำแหน่ง</th><th>สิทธิ์การใช้งาน</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+            <thead><tr><th>ชื่อ-นามสกุล</th><th>Username</th><th>อีเมล</th><th>ตำแหน่ง</th><th>แผนก</th><th>สิทธิ์การใช้งาน</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
             <tbody>
               {users.map(u => (
                 <tr key={u.id}>
@@ -94,6 +105,7 @@ export default function AdminUsers() {
                   <td>{u.username}</td>
                   <td>{u.email || '-'}</td>
                   <td>{u.position || '-'}</td>
+                  <td>{(Array.isArray(u.departments) && u.departments.length) ? u.departments.join(', ') : (u.department || '-')}</td>
                   <td><span className={`badge ${u.role === 'Admin' ? 'rejected' : u.role === 'Approver' ? 'approved' : 'pending'}`}>{ROLE_TH[u.role]}</span></td>
                   <td><span className={`badge ${u.is_active ? 'approved' : 'cancelled'}`}>{u.is_active ? 'ใช้งานอยู่' : 'ถูกระงับ'}</span></td>
                   <td>
@@ -128,15 +140,20 @@ export default function AdminUsers() {
                 <div className="form-group"><label>เบอร์โทร</label><input value={form.phone} onChange={set('phone')} /></div>
                 <div className="form-group"><label>ตำแหน่ง</label><input value={form.position} onChange={set('position')} /></div>
                 <div className="form-group">
-                  <label>แผนก</label>
-                  <select value={form.department} onChange={set('department')}>
-                    <option value="">-- เลือกแผนก --</option>
-                    {/* ถ้าค่าเดิมของ user ไม่ตรงกับลิสต์ปัจจุบัน (เช่น พิมพ์ผิดมาจากรอบก่อน) ให้โชว์ไว้ด้วยเพื่อให้เห็นและแก้ไขได้ */}
-                    {form.department && !departments.includes(form.department) && (
-                      <option value={form.department}>{form.department} (ไม่ตรงรายการ - โปรดแก้ไข)</option>
-                    )}
-                    {departments.map(d => <option key={d} value={d}>{d}</option>)}
-                  </select>
+                  <label>แผนก {form.role === 'Approver' && <span className="muted" style={{ fontWeight: 400 }}>(เลือกได้หลายแผนก ถ้าดูแลมากกว่า 1 แผนก)</span>}</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: '1px solid var(--border)', borderRadius: 9, padding: '10px 12px', maxHeight: 180, overflowY: 'auto' }}>
+                    {departments.length ? departments.map(d => (
+                      <label key={d} style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 400 }}>
+                        <input type="checkbox" style={{ width: 'auto' }} checked={form.departments.includes(d)} onChange={toggleDept(d)} /> {d}
+                      </label>
+                    )) : <span className="muted" style={{ fontSize: 12.5 }}>ยังไม่มีรายชื่อแผนก</span>}
+                    {/* ถ้าค่าเดิมของ user มีแผนกที่ไม่ตรงกับลิสต์ปัจจุบัน (เช่น พิมพ์ผิดมาจากรอบก่อน) ให้โชว์ไว้ด้วยเพื่อให้เห็นและแก้ไขได้ */}
+                    {form.departments.filter(d => !departments.includes(d)).map(d => (
+                      <label key={d} style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 400, color: '#c0392b' }}>
+                        <input type="checkbox" style={{ width: 'auto' }} checked onChange={toggleDept(d)} /> {d} (ไม่ตรงรายการ - โปรดแก้ไข)
+                      </label>
+                    ))}
+                  </div>
                   <button type="button" className="btn btn-outline btn-sm" style={{ marginTop: 6 }} onClick={addDepartment}>
                     + เพิ่มแผนกใหม่
                   </button>

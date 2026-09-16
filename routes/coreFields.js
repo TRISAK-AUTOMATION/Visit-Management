@@ -39,6 +39,33 @@ router.patch('/reorder', requireAuth, requireRole('Admin'), (req, res) => {
   res.json({ ok: true });
 });
 
+// GET /api/core-field-settings/essential-labels -> ทุกคนที่ login แล้ว (ใช้ render ฟอร์ม Create Visit จริง)
+// Label ของ Field พื้นฐานที่จำเป็นต่อระบบ (วันที่ / รหัสลูกค้า / เวลาเริ่ม / เวลาสิ้นสุด / วัตถุประสงค์)
+// ต่างจาก core_field_settings ตรงที่ field กลุ่มนี้ไม่มี is_visible/is_required ให้ปรับ (ต้องแสดง+บังคับกรอกเสมอ) แก้ได้แค่ชื่อหัวข้อ
+router.get('/essential-labels', requireAuth, (req, res) => {
+  const rows = db.prepare('SELECT field_key, label FROM essential_field_labels').all();
+  res.json({ labels: rows });
+});
+
+// PUT /api/core-field-settings/essential-labels/:field_key -> Admin แก้ label เท่านั้น
+router.put('/essential-labels/:field_key', requireAuth, requireRole('Admin'), (req, res) => {
+  const existing = db.prepare('SELECT * FROM essential_field_labels WHERE field_key = ?').get(req.params.field_key);
+  if (!existing) return res.status(404).json({ error: 'ไม่พบ Field นี้' });
+
+  const { label } = req.body;
+  if (!label || !label.trim()) return res.status(400).json({ error: 'กรุณาระบุชื่อหัวข้อ (Label)' });
+
+  db.prepare(`
+    UPDATE essential_field_labels
+    SET label = ?, updated_at = datetime('now'), updated_by = ?
+    WHERE field_key = ?
+  `).run(label.trim(), req.session.userId, req.params.field_key);
+
+  logAction(req.session.userId, 'edit_essential_field_label',
+    `แก้ไขชื่อหัวข้อ Field พื้นฐาน (${req.params.field_key}): "${existing.label}" -> "${label.trim()}"`);
+  res.json({ ok: true });
+});
+
 // PUT /api/core-field-settings/:field_key -> Admin แก้ label / is_visible / is_required
 router.put('/:field_key', requireAuth, requireRole('Admin'), (req, res) => {
   const existing = db.prepare('SELECT * FROM core_field_settings WHERE field_key = ?').get(req.params.field_key);

@@ -98,6 +98,11 @@ export default function MyRequests() {
                     {v.status !== 'draft' && v.status !== 'revision' && (
                       <a className="btn btn-outline btn-sm" href={`/api/visit-requests/${v.id}/pdf`} target="_blank" rel="noreferrer" title="พิมพ์ PDF">&#128196;</a>
                     )}{' '}
+                    {v.status === 'approved' && (
+                      <button className="btn btn-outline btn-sm" onClick={() => navigate(`/visit-request?id=${v.id}`)}>
+                        อัปเดตข้อมูลหลังปฏิบัติงาน
+                      </button>
+                    )}{' '}
                     {['pending', 'draft', 'revision'].includes(v.status) && (
                       <button className="btn btn-danger btn-sm" onClick={() => cancelRequest(v.id, v.status === 'draft')}>
                         {v.status === 'draft' ? 'ลบ' : 'ยกเลิก'}
