@@ -24,6 +24,57 @@ CREATE TABLE IF NOT EXISTS users (
   created_at    TEXT DEFAULT (datetime('now'))
 );
 
+-- ผู้ใช้ 1 คน ดูแลได้หลายแผนก (many-to-many) - ใช้คู่กับ users.department (แผนกหลัก/แผนกแรก) เพื่อความเข้ากันได้กับของเดิม
+CREATE TABLE IF NOT EXISTS user_departments (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  department TEXT NOT NULL,
+  PRIMARY KEY (user_id, department)
+);
+
+-- ===== ระบบลา (Leave Management) =====
+CREATE TABLE IF NOT EXISTS leave_requests (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  code            TEXT UNIQUE NOT NULL,       -- LV-2026-00001
+  requester_id    INTEGER NOT NULL REFERENCES users(id),
+  leave_type      TEXT NOT NULL,              -- ลากิจ | ลาป่วย | ลาพักร้อน
+  leave_mode      TEXT NOT NULL,              -- full_day | half_day_morning | half_day_afternoon | hours
+  date_from       TEXT NOT NULL,              -- YYYY-MM-DD
+  date_to         TEXT NOT NULL,              -- YYYY-MM-DD (เท่ากับ date_from ถ้าลาวันเดียว/ครึ่งวัน/ชั่วโมง)
+  time_from       TEXT,                       -- HH:MM ใช้เมื่อ leave_mode = hours
+  time_to         TEXT,
+  duration_days   REAL NOT NULL DEFAULT 0,    -- นับเป็นวัน (เต็มวัน=1, ครึ่งวัน=0.5, ลาชม.=0)
+  duration_hours  REAL NOT NULL DEFAULT 0,    -- นับเป็นชั่วโมง (ใช้เมื่อ leave_mode = hours, ลา 30 นาที = 0.5)
+  reason          TEXT NOT NULL,
+  attachment      TEXT,                       -- เอกสารแนบ (data URL, ถ้ามี)
+  status          TEXT NOT NULL DEFAULT 'pending', -- draft | pending | approved | rejected | cancelled
+  approver_id     INTEGER REFERENCES users(id),
+  approved_at     TEXT,
+  approval_note   TEXT,
+  created_at      TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS leave_history (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  leave_request_id  INTEGER NOT NULL REFERENCES leave_requests(id),
+  action_by         INTEGER REFERENCES users(id),
+  action            TEXT NOT NULL,   -- ส่งคำขอ | อนุมัติ | ไม่อนุมัติ | ยกเลิก
+  note              TEXT,
+  created_at        TEXT DEFAULT (datetime('now'))
+);
+
+-- สิทธิ์/โควตาการลารายบุคคล กำหนดโดย Admin (เผื่อพนักงานเริ่มงานระหว่างปี สิทธิ์ไม่เท่ากัน)
+CREATE TABLE IF NOT EXISTS leave_balances (
+  user_id          INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  vacation_total   REAL NOT NULL DEFAULT 6,   -- สิทธิ์ลาพักร้อนต่อปี (วัน)
+  vacation_used    REAL NOT NULL DEFAULT 0,   -- ใช้ไปแล้ว (วัน) - อัปเดตอัตโนมัติเมื่อคำขอลาพักร้อนถูกอนุมัติ
+  personal_total   REAL NOT NULL DEFAULT 3,   -- สิทธิ์ลากิจต่อปี (วัน) - ไม่มีขั้นต่ำตามกฎหมาย ปรับได้ตามนโยบายบริษัท
+  personal_used    REAL NOT NULL DEFAULT 0,
+  sick_total       REAL NOT NULL DEFAULT 30,  -- สิทธิ์ลาป่วยแบบได้ค่าจ้างต่อปี (วัน) - ตามกฎหมายแรงงานไทยสูงสุด 30 วัน/ปี
+  sick_used        REAL NOT NULL DEFAULT 0,
+  note             TEXT,
+  updated_at       TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS customers (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   code           TEXT NOT NULL,            -- CUS-001 (unique ร่วมกับ company ไม่ใช่ unique เดี่ยว เพราะรหัสจาก SAP ของแต่ละบริษัทอาจซ้ำกันได้)
@@ -304,6 +355,52 @@ if (oldSingleUniqueOnCode) {
 
 // unique ร่วมของ (code, company) - รองรับทั้งฐานข้อมูลใหม่และเก่าที่เพิ่งย้ายมาด้านบน
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_code_company ON customers(code, company)`);
+
+// ---------- leave_balances: migration (ON DELETE CASCADE + คอลัมน์โควตาลากิจ/ลาป่วย) ----------
+// เหตุผล CASCADE: หน้า "จัดการสิทธิ์วันลา" จะสร้างแถว leave_balances ให้ทุก user โดยอัตโนมัติตอนเปิดหน้า (เพื่อความสะดวก)
+// ถ้าตารางเดิมไม่มี ON DELETE CASCADE จะทำให้ลบ user ไม่ได้ทั้งที่ user คนนั้นไม่เคยมีคำขอลา/ข้อมูลอะไรเลย
+// เหตุผลคอลัมน์ใหม่: เพิ่มสิทธิ์ตั้งต้นสำหรับลากิจ/ลาป่วย (เดิมมีแค่ลาพักร้อน)
+{
+  const lbCols = db.prepare(`PRAGMA table_info(leave_balances)`).all().map(c => c.name);
+  const lbFks = db.prepare(`PRAGMA foreign_key_list(leave_balances)`).all();
+  const hasCascade = lbFks.length > 0 && lbFks.some(fk => fk.on_delete === 'CASCADE');
+  const hasNewCols = ['personal_total', 'personal_used', 'sick_total', 'sick_used'].every(c => lbCols.includes(c));
+
+  if (!hasCascade || !hasNewCols) {
+    db.pragma('foreign_keys = OFF'); // ต้องปิดนอก transaction เพราะ SQLite ไม่ยอมเปลี่ยนค่านี้ระหว่างมี transaction ค้างอยู่
+    const rebuildLeaveBalances = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE leave_balances_rebuild (
+          user_id          INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          vacation_total   REAL NOT NULL DEFAULT 6,
+          vacation_used    REAL NOT NULL DEFAULT 0,
+          personal_total   REAL NOT NULL DEFAULT 3,
+          personal_used    REAL NOT NULL DEFAULT 0,
+          sick_total       REAL NOT NULL DEFAULT 30,
+          sick_used        REAL NOT NULL DEFAULT 0,
+          note             TEXT,
+          updated_at       TEXT DEFAULT (datetime('now'))
+        );
+      `);
+      const selectCols = [
+        'user_id', 'vacation_total', 'vacation_used',
+        lbCols.includes('personal_total') ? 'personal_total' : '3 AS personal_total',
+        lbCols.includes('personal_used') ? 'personal_used' : '0 AS personal_used',
+        lbCols.includes('sick_total') ? 'sick_total' : '30 AS sick_total',
+        lbCols.includes('sick_used') ? 'sick_used' : '0 AS sick_used',
+        'note', 'updated_at'
+      ].join(', ');
+      db.exec(`
+        INSERT INTO leave_balances_rebuild (user_id, vacation_total, vacation_used, personal_total, personal_used, sick_total, sick_used, note, updated_at)
+        SELECT ${selectCols} FROM leave_balances;
+        DROP TABLE leave_balances;
+        ALTER TABLE leave_balances_rebuild RENAME TO leave_balances;
+      `);
+    });
+    rebuildLeaveBalances();
+    db.pragma('foreign_keys = ON');
+  }
+}
 
 // archived_at: วันเวลาที่ลูกค้ารายนี้ถูกเก็บถาวร ใช้คำนวณว่า "เก็บถาวรมานานแค่ไหนแล้ว" สำหรับกฎลบอัตโนมัติ
 if (!db.prepare(`PRAGMA table_info(customers)`).all().map(c => c.name).includes('archived_at')) {

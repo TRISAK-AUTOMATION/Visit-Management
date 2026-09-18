@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const db = require('../db/database');
 const { requireAuth } = require('./middleware');
 const { logAction } = require('../utils/systemLog');
+const { getDepartmentsForUser } = require('../utils/userDepartments');
 
 const router = express.Router();
 
@@ -22,7 +23,7 @@ router.post('/login', (req, res) => {
   req.session.userId = user.id;
   req.session.role = user.role;
   logAction(user.id, 'login', `เข้าสู่ระบบ (${user.username})`);
-  res.json({ user: sanitize(user) });
+  res.json({ user: { ...sanitize(user), departments: getDepartmentsForUser(user.id) } });
 });
 
 router.post('/logout', requireAuth, (req, res) => {
@@ -34,7 +35,7 @@ router.post('/logout', requireAuth, (req, res) => {
 router.get('/me', requireAuth, (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
   if (!user) return res.status(401).json({ error: 'ไม่พบผู้ใช้' });
-  res.json({ user: sanitize(user) });
+  res.json({ user: { ...sanitize(user), departments: getDepartmentsForUser(user.id) } });
 });
 
 function sanitize(user) {

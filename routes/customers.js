@@ -34,7 +34,7 @@ router.get('/:id', requireAuth, (req, res) => {
   res.json({ customer: row });
 });
 
-router.post('/', requireAuth, (req, res) => {
+router.post('/', requireAuth, requireRole('Admin'), (req, res) => {
   const { name, contact_person, phone, email, address, company } = req.body;
   if (!name) return res.status(400).json({ error: 'กรุณากรอกชื่อลูกค้า/บริษัท' });
   const last = db.prepare(`SELECT code FROM customers ORDER BY id DESC LIMIT 1`).get();
@@ -47,7 +47,7 @@ router.post('/', requireAuth, (req, res) => {
   res.status(201).json({ id: info.lastInsertRowid, code });
 });
 
-router.put('/:id', requireAuth, (req, res) => {
+router.put('/:id', requireAuth, requireRole('Admin'), (req, res) => {
   const { name, contact_person, phone, email, address, company } = req.body;
   const exists = db.prepare('SELECT id FROM customers WHERE id = ?').get(req.params.id);
   if (!exists) return res.status(404).json({ error: 'ไม่พบลูกค้า' });
@@ -58,7 +58,7 @@ router.put('/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-router.delete('/:id', requireAuth, (req, res) => {
+router.delete('/:id', requireAuth, requireRole('Admin'), (req, res) => {
   const used = db.prepare('SELECT COUNT(*) c FROM visit_requests WHERE customer_id = ?').get(req.params.id).c;
   if (used > 0) return res.status(400).json({ error: 'ไม่สามารถลบลูกค้านี้ได้ เนื่องจากมีคำขอ Visit ที่เกี่ยวข้องอยู่' });
   db.prepare('DELETE FROM customers WHERE id = ?').run(req.params.id);

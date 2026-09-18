@@ -2,18 +2,23 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
-import { ROLE_TH } from '../lib/api';
+import { ROLE_TH, canAccessVisit } from '../lib/api';
 
 const MENU = {
   common: [{ href: '/dashboard', icon: '\u2302', label: 'Dashboard' }],
   Employee: [
     { href: '/visit-request', icon: '\uD83D\uDCDD', label: 'สร้างคำขอ Visit' },
     { href: '/my-requests', icon: '\uD83D\uDCCB', label: 'My Requests' },
+    { href: '/leave-request', icon: '\uD83C\uDFD6', label: 'สร้างคำขอลา' },
+    { href: '/my-leave', icon: '\uD83D\uDCC6', label: 'การลาของฉัน' },
   ],
   ApproverAdmin: [
     { href: '/visit-request', icon: '\uD83D\uDCDD', label: 'สร้างคำขอ Visit' },
     { href: '/my-requests', icon: '\uD83D\uDCCB', label: 'My Requests' },
     { href: '/approve-requests', icon: '\u2705', label: 'Approve Requests', badgeKey: 'pending' },
+    { href: '/leave-request', icon: '\uD83C\uDFD6', label: 'สร้างคำขอลา' },
+    { href: '/my-leave', icon: '\uD83D\uDCC6', label: 'การลาของฉัน' },
+    { href: '/approve-leave', icon: '\uD83D\uDDD3', label: 'อนุมัติการลา', badgeKey: 'pendingLeave' },
   ],
   tail: [
     { href: '/calendar', icon: '\uD83D\uDCC5', label: 'ปฏิทิน' },
@@ -24,6 +29,7 @@ const MENU = {
   ],
   admin: [
     { href: '/admin-users', icon: '\uD83D\uDEE1', label: 'จัดการผู้ใช้งาน' },
+    { href: '/admin-leave-balances', icon: '\uD83C\uDF34', label: 'จัดการสิทธิ์วันลา' },
     { href: '/admin-form-builder', icon: '\uD83E\uDDF1', label: 'Form Builder' },
     { href: '/admin-page-content', icon: '\uD83D\uDCC4', label: 'จัดการหน้า/หัวข้อ' },
     { href: '/admin-data-retention', icon: '\uD83D\uDDD1', label: 'ตั้งค่าการลบข้อมูลอัตโนมัติ' },
@@ -31,11 +37,16 @@ const MENU = {
   ]
 };
 
-function buildMenu(role) {
+function buildMenu(me) {
   let items = [...MENU.common];
-  items = items.concat(role === 'Employee' ? MENU.Employee : MENU.ApproverAdmin);
+  let roleMenu = me.role === 'Employee' ? MENU.Employee : MENU.ApproverAdmin;
+  if (!canAccessVisit(me)) {
+    // เฉพาะ Engineer หรือระดับหัวหน้าเท่านั้นที่ไป Visit ลูกค้าได้ พนักงานแผนกอื่นไม่ต้องเห็นเมนูนี้
+    roleMenu = roleMenu.filter(item => item.href !== '/visit-request' && item.href !== '/my-requests');
+  }
+  items = items.concat(roleMenu);
   items = items.concat(MENU.tail);
-  if (role === 'Admin') items = items.concat(MENU.admin);
+  if (me.role === 'Admin') items = items.concat(MENU.admin);
   return items;
 }
 
@@ -47,7 +58,7 @@ export default function Layout({ title, children }) {
 
   if (!me) return null; // ProtectedRoute จัดการ redirect ให้แล้ว
 
-  const items = buildMenu(me.role);
+  const items = buildMenu(me);
   const closeSidebar = () => setSidebarOpen(false);
 
   const handleLogout = async () => {

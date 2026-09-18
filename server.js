@@ -21,6 +21,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/visit-requests', require('./routes/visitRequests'));
 app.use('/api/customers', require('./routes/customers'));
+app.use('/api/leave-requests', require('./routes/leave'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/departments', require('./routes/departments'));

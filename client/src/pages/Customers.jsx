@@ -202,33 +202,49 @@ export default function Customers() {
             style={{ width: 220, padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 9 }} />
           {isAdmin && <button className="btn btn-outline" onClick={openImport}>นำเข้าจากไฟล์</button>}
           {isAdmin && <button className="btn btn-danger" onClick={deleteAll}>ลบข้อมูลทั้งหมด</button>}
-          <button className="btn btn-primary" onClick={() => openForm(null)}>+ เพิ่มลูกค้า</button>
+          {isAdmin && <button className="btn btn-primary" onClick={() => openForm(null)}>+ เพิ่มลูกค้า</button>}
         </div>
       </div>
 
-      <div className="card">
-        <div className="card-body" style={{ padding: 0 }}>
-          <table>
-            <thead><tr><th>รหัสลูกค้า</th><th>ชื่อบริษัท</th><th>บริษัท</th><th>ผู้ติดต่อ</th><th>เบอร์โทร</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
-            <tbody>
-              {customers.length ? customers.map(c => (
-                <tr key={c.id} style={c.is_archived ? { opacity: 0.55 } : undefined}>
-                  <td>{c.code}</td>
-                  <td>{c.name}</td>
-                  <td>{c.company || '-'}</td>
-                  <td>{c.contact_person || '-'}</td>
-                  <td>{c.phone || '-'}</td>
-                  <td>{c.is_archived ? <span className="badge cancelled">เก็บถาวร</span> : <span className="badge approved">ใช้งานอยู่</span>}</td>
-                  <td>
-                    <button className="btn btn-outline btn-sm" onClick={() => openForm(c)}>แก้ไข</button>{' '}
-                    <button className="btn btn-danger btn-sm" onClick={() => remove(c.id)}>ลบ</button>
-                  </td>
-                </tr>
-              )) : <tr><td colSpan={7} className="empty">ไม่พบข้อมูลลูกค้า</td></tr>}
-            </tbody>
-          </table>
+      {isAdmin ? (
+        <div className="card">
+          <div className="card-body" style={{ padding: 0 }}>
+            <table>
+              <thead><tr><th>รหัสลูกค้า</th><th>ชื่อบริษัท</th><th>Company</th><th>ผู้ติดต่อ</th><th>เบอร์โทร</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+              <tbody>
+                {customers.length ? customers.map(c => (
+                  <tr key={c.id} style={c.is_archived ? { opacity: 0.55 } : undefined}>
+                    <td>{c.code}</td>
+                    <td>{c.name}</td>
+                    <td>{c.company || '-'}</td>
+                    <td>{c.contact_person || '-'}</td>
+                    <td>{c.phone || '-'}</td>
+                    <td>{c.is_archived ? <span className="badge cancelled">เก็บถาวร</span> : <span className="badge approved">ใช้งานอยู่</span>}</td>
+                    <td>
+                      <button className="btn btn-outline btn-sm" onClick={() => openForm(c)}>แก้ไข</button>{' '}
+                      <button className="btn btn-danger btn-sm" onClick={() => remove(c.id)}>ลบ</button>
+                    </td>
+                  </tr>
+                )) : <tr><td colSpan={7} className="empty">ไม่พบข้อมูลลูกค้า</td></tr>}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      ) : (
+        // พนักงาน/ผู้อนุมัติ: ดูได้อย่างเดียว โชว์แค่รายชื่อบริษัทเฉยๆ ไม่มีปุ่มแก้ไข/ลบ
+        <div className="card">
+          <div className="card-body" style={{ padding: 0 }}>
+            <table>
+              <thead><tr><th>รหัสลูกค้า</th><th>ชื่อบริษัท</th></tr></thead>
+              <tbody>
+                {customers.length ? customers.filter(c => !c.is_archived).map(c => (
+                  <tr key={c.id}><td>{c.code}</td><td>{c.name}</td></tr>
+                )) : <tr><td colSpan={2} className="empty">ไม่พบข้อมูลลูกค้า</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* เพิ่ม/แก้ไขลูกค้ารายเดียว */}
       {editing !== undefined && (

@@ -6,7 +6,7 @@ import { api, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
 
-const ICONS = { new_request: '\uD83D\uDCDD', approved: '\u2705', rejected: '\u274C', reminder: '\uD83D\uDD14' };
+const ICONS = { new_request: '\uD83D\uDCDD', approved: '\u2705', rejected: '\u274C', reminder: '\uD83D\uDD14', leave_new_request: '\uD83C\uDFD6', leave_approved: '\u2705', leave_rejected: '\u274C' };
 
 export default function Notifications() {
   const { pc } = usePageContent();

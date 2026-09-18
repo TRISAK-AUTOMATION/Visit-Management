@@ -31,6 +31,12 @@ export default function VisitRequest() {
   const [customFieldDefs, setCustomFieldDefs] = useState([]);
   const [customValues, setCustomValues] = useState({});
 
+  // รายชื่อพนักงานแผนก Engineer สำหรับให้เลือกเป็น "ผู้ร่วมงาน" (จำกัดเฉพาะแผนกนี้ตามที่ขอ)
+  const [engineerUsers, setEngineerUsers] = useState([]);
+  useEffect(() => {
+    api.get('/api/users/by-department/Engineer').then(({ users }) => setEngineerUsers(users)).catch(() => {});
+  }, []);
+
   // การตั้งค่าซ่อน/แสดง/เปลี่ยนชื่อ ของ Field เดิมของระบบ (Settings > Form Builder > Field เดิมของระบบ)
   // ค่าเริ่มต้น = แสดงทุก field ด้วยชื่อเดิม (เหมือนพฤติกรรมก่อนมีฟีเจอร์นี้) กันหน้าตาสั่นระหว่างรอโหลด
   const DEFAULT_CORE_LABELS = {
@@ -67,7 +73,7 @@ export default function VisitRequest() {
     contact_person: { type: 'text', placeholder: 'ชื่อผู้ติดต่อฝั่งลูกค้า' },
     contact_phone: { type: 'text', placeholder: '0xx-xxx-xxxx' },
     product: { type: 'text', placeholder: 'เช่น เครื่องจักร, อะไหล่, ซอฟต์แวร์' },
-    participants: { type: 'text', placeholder: 'ชื่อเพื่อนร่วมทีม (ถ้ามี)' },
+    participants: { type: 'engineer_multiselect', placeholder: 'เลือกผู้ร่วมงาน (เฉพาะแผนก Engineer)' },
     transport: { type: 'select', options: TRANSPORTS },
     license_plate: { type: 'text', placeholder: 'กข 1234' },
     mileage_out: { type: 'number', placeholder: 'เลขไมล์ตอนออกเดินทาง' },
@@ -109,6 +115,23 @@ export default function VisitRequest() {
         {spec.type === 'textarea' && (
           <textarea value={form[key]} onChange={set(key)} placeholder={spec.placeholder} required={setting.is_required} />
         )}
+        {spec.type === 'engineer_multiselect' && (() => {
+          const selected = form[key] ? form[key].split(',').map(s => s.trim()).filter(Boolean) : [];
+          const toggle = (name) => {
+            const next = selected.includes(name) ? selected.filter(n => n !== name) : [...selected, name];
+            setForm(f => ({ ...f, [key]: next.join(', ') }));
+          };
+          return (
+            <div style={{ border: '1px solid var(--border)', borderRadius: 9, padding: '8px 12px', maxHeight: 160, overflowY: 'auto' }}>
+              {engineerUsers.length ? engineerUsers.map(u => (
+                <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 13, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={selected.includes(u.full_name)} onChange={() => toggle(u.full_name)} />
+                  {u.full_name}
+                </label>
+              )) : <div className="muted" style={{ fontSize: 12.5 }}>ยังไม่มีพนักงานในแผนก Engineer</div>}
+            </div>
+          );
+        })()}
       </div>
     );
   };

@@ -2,6 +2,7 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
+import { canAccessVisit } from './lib/api';
 
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -10,6 +11,10 @@ import MyRequests from './pages/MyRequests';
 import ApproveRequests from './pages/ApproveRequests';
 import CalendarPage from './pages/CalendarPage';
 import Customers from './pages/Customers';
+import LeaveRequest from './pages/LeaveRequest';
+import MyLeave from './pages/MyLeave';
+import ApproveLeave from './pages/ApproveLeave';
+import AdminLeaveBalances from './pages/AdminLeaveBalances';
 import Report from './pages/Report';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
@@ -28,11 +33,15 @@ export default function App() {
       <Route path="/login" element={<Login />} />
 
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-      <Route path="/visit-request" element={<ProtectedRoute><VisitRequest /></ProtectedRoute>} />
-      <Route path="/my-requests" element={<ProtectedRoute><MyRequests /></ProtectedRoute>} />
+      <Route path="/visit-request" element={<ProtectedRoute check={canAccessVisit}><VisitRequest /></ProtectedRoute>} />
+      <Route path="/my-requests" element={<ProtectedRoute check={canAccessVisit}><MyRequests /></ProtectedRoute>} />
       <Route path="/approve-requests" element={<ProtectedRoute roles={['Approver', 'Admin']}><ApproveRequests /></ProtectedRoute>} />
       <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
       <Route path="/customers" element={<ProtectedRoute><Customers /></ProtectedRoute>} />
+      <Route path="/leave-request" element={<ProtectedRoute><LeaveRequest /></ProtectedRoute>} />
+      <Route path="/my-leave" element={<ProtectedRoute><MyLeave /></ProtectedRoute>} />
+      <Route path="/approve-leave" element={<ProtectedRoute roles={['Approver', 'Admin']}><ApproveLeave /></ProtectedRoute>} />
+      <Route path="/admin-leave-balances" element={<ProtectedRoute roles={['Admin']}><AdminLeaveBalances /></ProtectedRoute>} />
       <Route path="/report" element={<ProtectedRoute><Report /></ProtectedRoute>} />
       <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />

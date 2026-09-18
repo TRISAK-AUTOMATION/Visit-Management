@@ -88,24 +88,56 @@ export default function AdminUsers() {
     } catch (err) { toast(err.message, 'error'); }
   };
 
+  // แผนกของ user คนหนึ่ง (รองรับทั้งของเก่า department เดี่ยว และของใหม่ departments หลายแผนก)
+  const deptOf = (u) => (Array.isArray(u.departments) && u.departments.length) ? u.departments : (u.department ? [u.department] : []);
+  const CARD_COLORS = ['blue', 'green', 'orange', 'purple', 'teal', 'pink', 'indigo', 'slate', 'cyan', 'red'];
+  const deptCounts = departments.map((d, i) => ({ name: d, count: users.filter(u => deptOf(u).includes(d)).length, color: CARD_COLORS[i % CARD_COLORS.length] }));
+  const unassignedCount = users.filter(u => deptOf(u).length === 0).length;
+
   return (
     <Layout title="จัดการผู้ใช้งาน (User Management)">
       <div className="flex between mb-16">
         <h3 style={{ margin: 0 }}>รายชื่อผู้ใช้งานทั้งหมด</h3>
         <button className="btn btn-primary" onClick={() => openForm(null)}>+ เพิ่มผู้ใช้</button>
       </div>
-      <div className="card">
-        <div className="card-body" style={{ padding: 0 }}>
+
+      {/* สรุปจำนวนพนักงานรวม และแยกตามแผนก */}
+      <div className="stat-card blue mb-16" style={{ maxWidth: 320 }}>
+        <div className="label">พนักงานทั้งหมดในระบบ</div>
+        <div className="value">{users.length}<span className="unit">คน</span></div>
+      </div>
+      <div className="dept-grid">
+        {deptCounts.map(d => (
+          <div className={`stat-card sm ${d.color}`} key={d.name}>
+            <div className="label">{d.name}</div>
+            <div className="value">{d.count}<span className="unit">คน</span></div>
+          </div>
+        ))}
+        {unassignedCount > 0 && (
+          <div className="stat-card sm slate">
+            <div className="label">ไม่ระบุแผนก</div>
+            <div className="value">{unassignedCount}<span className="unit">คน</span></div>
+          </div>
+        )}
+      </div>
+
+      {(() => {
+        // จัดกลุ่มผู้ใช้ตามแผนก (คนที่ดูแลหลายแผนกจะโผล่ในทุกโซนที่เกี่ยวข้อง)
+        const zones = departments.map(d => ({ name: d, users: users.filter(u => deptOf(u).includes(d)) }));
+        const unassigned = users.filter(u => deptOf(u).length === 0);
+        if (unassigned.length) zones.push({ name: 'ไม่ระบุแผนก', users: unassigned });
+
+        const renderTable = (list) => (
           <table>
             <thead><tr><th>ชื่อ-นามสกุล</th><th>Username</th><th>อีเมล</th><th>ตำแหน่ง</th><th>แผนก</th><th>สิทธิ์การใช้งาน</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
             <tbody>
-              {users.map(u => (
+              {list.map(u => (
                 <tr key={u.id}>
                   <td>{u.full_name}</td>
                   <td>{u.username}</td>
                   <td>{u.email || '-'}</td>
                   <td>{u.position || '-'}</td>
-                  <td>{(Array.isArray(u.departments) && u.departments.length) ? u.departments.join(', ') : (u.department || '-')}</td>
+                  <td>{deptOf(u).length ? deptOf(u).join(', ') : '-'}</td>
                   <td><span className={`badge ${u.role === 'Admin' ? 'rejected' : u.role === 'Approver' ? 'approved' : 'pending'}`}>{ROLE_TH[u.role]}</span></td>
                   <td><span className={`badge ${u.is_active ? 'approved' : 'cancelled'}`}>{u.is_active ? 'ใช้งานอยู่' : 'ถูกระงับ'}</span></td>
                   <td>
@@ -117,8 +149,21 @@ export default function AdminUsers() {
               ))}
             </tbody>
           </table>
-        </div>
-      </div>
+        );
+
+        return zones.map(z => (
+          <div className="card mb-16" key={z.name}>
+            <div className="card-body" style={{ padding: 0 }}>
+              <div style={{ padding: '12px 16px', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>
+                รายชื่อแผนก {z.name} <span className="muted" style={{ fontWeight: 400 }}>({z.users.length} คน)</span>
+              </div>
+              {z.users.length ? renderTable(z.users) : (
+                <div className="muted" style={{ padding: '12px 16px', fontSize: 12.5 }}>ยังไม่มีผู้ใช้ในแผนกนี้</div>
+              )}
+            </div>
+          </div>
+        ));
+      })()}
 
       {editing !== undefined && (
         <div className="modal-bg" onClick={(e) => { if (e.target === e.currentTarget) setEditing(undefined); }}>
