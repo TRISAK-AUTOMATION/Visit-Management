@@ -8,6 +8,13 @@ const { getDepartmentsForUser } = require('../utils/userDepartments');
 
 const router = express.Router();
 
+// มีสิทธิ์ประเมิน/แก้ไขโปรไฟล์คนอื่นไหม (ใช้โชว์เมนู "ทีมของฉัน") - เป็นหัวหน้า/Admin โดยตำแหน่ง หรือได้รับสิทธิ์พิเศษจาก Admin ก็ได้
+function computeCanEvaluate(user) {
+  if (user.role === 'Approver' || user.role === 'Admin') return true;
+  const grant = db.prepare('SELECT 1 FROM profile_edit_permissions WHERE editor_user_id = ?').get(user.id);
+  return !!grant;
+}
+
 router.post('/login', (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -23,7 +30,7 @@ router.post('/login', (req, res) => {
   req.session.userId = user.id;
   req.session.role = user.role;
   logAction(user.id, 'login', `เข้าสู่ระบบ (${user.username})`);
-  res.json({ user: { ...sanitize(user), departments: getDepartmentsForUser(user.id) } });
+  res.json({ user: { ...sanitize(user), departments: getDepartmentsForUser(user.id), can_evaluate: computeCanEvaluate(user) } });
 });
 
 router.post('/logout', requireAuth, (req, res) => {
@@ -35,7 +42,7 @@ router.post('/logout', requireAuth, (req, res) => {
 router.get('/me', requireAuth, (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
   if (!user) return res.status(401).json({ error: 'ไม่พบผู้ใช้' });
-  res.json({ user: { ...sanitize(user), departments: getDepartmentsForUser(user.id) } });
+  res.json({ user: { ...sanitize(user), departments: getDepartmentsForUser(user.id), can_evaluate: computeCanEvaluate(user) } });
 });
 
 function sanitize(user) {

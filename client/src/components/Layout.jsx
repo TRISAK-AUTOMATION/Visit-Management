@@ -24,7 +24,6 @@ const MENU = {
     { href: '/ot-request', icon: '\u23F0', label: 'สร้างคำขอ OT' },
     { href: '/my-ot', icon: '\uD83D\uDDD2', label: 'OT ของฉัน' },
     { href: '/approve-ot', icon: '\u2611', label: 'อนุมัติ OT', badgeKey: 'pendingOT' },
-    { href: '/my-team', icon: '\uD83C\uDFC5', label: 'ทีมของฉัน' },
   ],
   tail: [
     { href: '/calendar', icon: '\uD83D\uDCC5', label: 'ปฏิทิน' },
@@ -52,6 +51,8 @@ function buildMenu(me) {
     roleMenu = roleMenu.filter(item => item.href !== '/visit-request' && item.href !== '/my-requests');
   }
   items = items.concat(roleMenu);
+  // "ทีมของฉัน" โชว์ตามสิทธิ์จริง (can_evaluate) ไม่ใช่ role ตายตัว เพราะ Admin อาจมอบสิทธิ์พิเศษให้พนักงาน role Employee ก็ได้
+  if (me.can_evaluate) items.push({ href: '/my-team', icon: '\uD83C\uDFC5', label: 'ทีมของฉัน' });
   items = items.concat(canAccessVisit(me) ? MENU.tail : MENU.tail.filter(item => item.href !== '/customers'));
   if (me.role === 'Admin') items = items.concat(MENU.admin);
   return items;

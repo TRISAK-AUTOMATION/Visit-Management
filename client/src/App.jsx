@@ -56,8 +56,8 @@ export default function App() {
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
       <Route path="/admin-users" element={<ProtectedRoute roles={['Admin']}><AdminUsers /></ProtectedRoute>} />
-      <Route path="/my-team" element={<ProtectedRoute roles={['Approver', 'Admin']}><MyTeam /></ProtectedRoute>} />
-      <Route path="/team/:id" element={<ProtectedRoute roles={['Approver', 'Admin']}><TeamMemberProfile /></ProtectedRoute>} />
+      <Route path="/my-team" element={<ProtectedRoute check={(me) => me.can_evaluate}><MyTeam /></ProtectedRoute>} />
+      <Route path="/team/:id" element={<ProtectedRoute check={(me) => me.can_evaluate}><TeamMemberProfile /></ProtectedRoute>} />
       <Route path="/admin-profile-permissions" element={<ProtectedRoute roles={['Admin']}><AdminProfilePermissions /></ProtectedRoute>} />
       <Route path="/admin-form-builder" element={<ProtectedRoute roles={['Admin']}><AdminFormBuilder /></ProtectedRoute>} />
       <Route path="/admin-page-content" element={<ProtectedRoute roles={['Admin']}><AdminPageContent /></ProtectedRoute>} />

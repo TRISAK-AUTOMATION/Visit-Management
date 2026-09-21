@@ -91,16 +91,15 @@ router.post('/:userId/checklist', requireAuth, (req, res) => {
 router.put('/checklist/:itemId', requireAuth, (req, res) => {
   const item = db.prepare('SELECT * FROM employee_kpi_checklist WHERE id = ?').get(req.params.itemId);
   if (!item) return res.status(404).json({ error: 'ไม่พบรายการ' });
-  // แก้สถานะติ๊กถูกได้ทั้งเจ้าของโปรไฟล์ (ดูอย่างเดียวไม่ได้ แก้เอง) และคนที่มีสิทธิ์แก้ไข
-  const isSelf = Number(req.session.userId) === Number(item.user_id);
-  if (!isSelf && !canEditProfile(req.session.userId, item.user_id)) {
+  // ติ๊กเช็คลิสต์/แก้ข้อความได้เฉพาะคนที่มีสิทธิ์แก้ไขโปรไฟล์คนนี้เท่านั้น (เจ้าของโปรไฟล์ดูอย่างเดียว แก้เองไม่ได้)
+  if (!canEditProfile(req.session.userId, item.user_id)) {
     return res.status(403).json({ error: 'คุณไม่มีสิทธิ์แก้ไขข้อมูลนี้' });
   }
   const { is_checked, label } = req.body;
   if (typeof is_checked !== 'undefined') {
     db.prepare('UPDATE employee_kpi_checklist SET is_checked = ? WHERE id = ?').run(is_checked ? 1 : 0, req.params.itemId);
   }
-  if (typeof label !== 'undefined' && !isSelf) {
+  if (typeof label !== 'undefined') {
     db.prepare('UPDATE employee_kpi_checklist SET label = ? WHERE id = ?').run(label, req.params.itemId);
   }
   res.json({ ok: true });
@@ -161,7 +160,8 @@ router.delete('/permissions/:id', requireAuth, (req, res) => {
 
 // รายชื่อคนที่ฉันมีสิทธิ์แก้ไขโปรไฟล์ได้ (ทีมของฉัน) - ใช้ทำหน้า "ทีมของฉัน" สำหรับหัวหน้า
 router.get('/team/mine', requireAuth, (req, res) => {
-  if (!['Approver', 'Admin'].includes(req.session.role)) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์เข้าถึงส่วนนี้' });
+  // ไม่ล็อกด้วย role ตายตัว เพราะ Admin อาจมอบสิทธิ์พิเศษให้พนักงาน role Employee ก็ได้ (เช่น ให้ HR แก้ได้ทุกคน)
+  // canEditProfile ด้านล่างเป็นตัวกรองสิทธิ์จริงอยู่แล้ว คนที่ไม่มีสิทธิ์อะไรเลยจะได้ทีมว่างเปล่า ไม่รั่วข้อมูล
   const all = db.prepare(`SELECT id, full_name, position, department, avatar_url, is_active FROM users WHERE id != ? ORDER BY full_name`).all(req.session.userId);
   const mine = all.filter(u => canEditProfile(req.session.userId, u.id));
   res.json({ team: mine });

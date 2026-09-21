@@ -1,6 +1,6 @@
 // client/src/components/KpiPanel.jsx - แผงคะแนนประเมินผลงาน (KPI) ใช้ในหน้าโปรไฟล์และหน้าทีมของฉัน
 import React, { useState, useEffect } from 'react';
-import { api, initials, fmtDate } from '../lib/api';
+import { api, initials, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
 const CATS = [
@@ -32,16 +32,25 @@ export default function KpiPanel({ userId, showHeader = false }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(null);
   const [newChecklist, setNewChecklist] = useState({});
+  const [loadError, setLoadError] = useState(null);
 
   const load = async () => {
-    const d = await api.get(`/api/kpi/${userId}`);
-    setData(d);
-    if (!form) setForm(d.kpi);
-    api.get(`/api/leave-requests/summary/${userId}`).then(setLeave).catch(() => {});
-    api.get(`/api/kpi/${userId}/activity`).then(r => setActivity(r.activity)).catch(() => {});
+    try {
+      const d = await api.get(`/api/kpi/${userId}`);
+      setData(d);
+      api.get(`/api/leave-requests/summary/${userId}`).then(setLeave).catch(() => {});
+      api.get(`/api/kpi/${userId}/activity`).then(r => setActivity(r.activity)).catch(() => {});
+    } catch (err) {
+      setLoadError(err.message || 'ไม่สามารถโหลดข้อมูลได้');
+    }
   };
-  useEffect(() => { load(); }, [userId]);
+  useEffect(() => {
+    // รีเซ็ตสถานะแก้ไข/ฟอร์มเดิมทุกครั้งที่เปลี่ยนคนที่กำลังดู กันข้อมูลของคนก่อนหน้าค้างทับ
+    setData(null); setForm(null); setEditing(false); setLeave(null); setActivity([]); setLoadError(null);
+    load();
+  }, [userId]);
 
+  if (loadError) return <div className="empty">{loadError}</div>;
   if (!data) return <div className="muted" style={{ padding: 20 }}>กำลังโหลดข้อมูล...</div>;
 
   const { kpi, checklist, auto_stats, can_edit, user } = data;
@@ -192,7 +201,7 @@ export default function KpiPanel({ userId, showHeader = false }) {
                   <div className="kpi-checklist">
                     {items.length ? items.map(item => (
                       <div key={item.id} className={`kpi-checklist-item ${item.is_checked ? 'done' : ''}`}>
-                        <input type="checkbox" checked={!!item.is_checked} onChange={() => toggleCheck(item)} />
+                        <input type="checkbox" checked={!!item.is_checked} disabled={!can_edit} onChange={() => can_edit && toggleCheck(item)} />
                         <span style={{ flex: 1 }}>{item.label}</span>
                         {can_edit && <span style={{ cursor: 'pointer', color: '#d93a30' }} onClick={() => removeChecklist(item.id)}>×</span>}
                       </div>
@@ -236,7 +245,7 @@ export default function KpiPanel({ userId, showHeader = false }) {
         <div className="card-body">
           {activity.length ? activity.map(a => (
             <div key={a.id} className="activity-item">
-              <span className="activity-date">{fmtDate(a.created_at)}</span>
+              <span className="activity-date">{fmtDateTime(a.created_at)}</span>
               <span style={{ flex: 1 }}>{a.details || a.action}</span>
             </div>
           )) : <div className="muted" style={{ fontSize: 12.5 }}>ยังไม่มีกิจกรรม</div>}
