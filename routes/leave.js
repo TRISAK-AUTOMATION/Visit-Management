@@ -6,6 +6,7 @@ const { sendMail } = require('../utils/mailer');
 const { toThaiDate } = require('../utils/dateFormat');
 const { logAction } = require('../utils/systemLog');
 const { approverIdsForDepartments } = require('../utils/userDepartments');
+const { canEditProfile } = require('../utils/profilePermissions');
 
 const router = express.Router();
 
@@ -289,19 +290,19 @@ function notifyLeaveDecision(lrId, status, approverId, note) {
 }
 
 // ===== สรุปวันลา (สำหรับหน้า Profile/Dashboard ของตัวเอง) =====
-router.get('/summary/me', requireAuth, (req, res) => {
-  const bal = ensureBalance(req.session.userId);
+function buildLeaveSummary(userId) {
+  const bal = ensureBalance(userId);
   const approvedThisYear = db.prepare(`
     SELECT leave_type, COUNT(*) AS cnt, SUM(duration_days) AS days, SUM(duration_hours) AS hours
     FROM leave_requests
     WHERE requester_id = ? AND status = 'approved' AND strftime('%Y', date_from) = strftime('%Y', 'now')
     GROUP BY leave_type
-  `).all(req.session.userId);
+  `).all(userId);
   const byType = { 'ลากิจ': { cnt: 0, days: 0, hours: 0 }, 'ลาป่วย': { cnt: 0, days: 0, hours: 0 }, 'ลาพักร้อน': { cnt: 0, days: 0, hours: 0 } };
   approvedThisYear.forEach(r => { byType[r.leave_type] = { cnt: r.cnt, days: r.days || 0, hours: r.hours || 0 }; });
   const totalDays = approvedThisYear.reduce((s, r) => s + (r.days || 0), 0);
   const totalHours = approvedThisYear.reduce((s, r) => s + (r.hours || 0), 0);
-  res.json({
+  return {
     vacation_total: bal.vacation_total,
     vacation_used: bal.vacation_used,
     vacation_remaining: Math.max(0, bal.vacation_total - bal.vacation_used),
@@ -314,7 +315,20 @@ router.get('/summary/me', requireAuth, (req, res) => {
     by_type: byType,
     total_days_used: totalDays,
     total_hours_used: totalHours
-  });
+  };
+}
+
+router.get('/summary/me', requireAuth, (req, res) => {
+  res.json(buildLeaveSummary(req.session.userId));
+});
+
+// ให้หัวหน้า/คนที่มีสิทธิ์แก้ไขโปรไฟล์ดูสรุปวันลาของคนอื่นได้ (ใช้ในหน้าทีมของฉัน)
+router.get('/summary/:userId', requireAuth, (req, res) => {
+  const targetId = req.params.userId;
+  if (Number(req.session.userId) !== Number(targetId) && req.session.role !== 'Admin' && !canEditProfile(req.session.userId, targetId)) {
+    return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ดูข้อมูลนี้' });
+  }
+  res.json(buildLeaveSummary(targetId));
 });
 
 // ===== Admin: จัดการสิทธิ์วันลารายบุคคล =====

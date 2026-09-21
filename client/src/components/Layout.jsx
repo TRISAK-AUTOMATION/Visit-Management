@@ -11,6 +11,8 @@ const MENU = {
     { href: '/my-requests', icon: '\uD83D\uDCCB', label: 'My Requests' },
     { href: '/leave-request', icon: '\uD83C\uDFD6', label: 'สร้างคำขอลา' },
     { href: '/my-leave', icon: '\uD83D\uDCC6', label: 'การลาของฉัน' },
+    { href: '/ot-request', icon: '\u23F0', label: 'สร้างคำขอ OT' },
+    { href: '/my-ot', icon: '\uD83D\uDDD2', label: 'OT ของฉัน' },
   ],
   ApproverAdmin: [
     { href: '/visit-request', icon: '\uD83D\uDCDD', label: 'สร้างคำขอ Visit' },
@@ -19,6 +21,10 @@ const MENU = {
     { href: '/leave-request', icon: '\uD83C\uDFD6', label: 'สร้างคำขอลา' },
     { href: '/my-leave', icon: '\uD83D\uDCC6', label: 'การลาของฉัน' },
     { href: '/approve-leave', icon: '\uD83D\uDDD3', label: 'อนุมัติการลา', badgeKey: 'pendingLeave' },
+    { href: '/ot-request', icon: '\u23F0', label: 'สร้างคำขอ OT' },
+    { href: '/my-ot', icon: '\uD83D\uDDD2', label: 'OT ของฉัน' },
+    { href: '/approve-ot', icon: '\u2611', label: 'อนุมัติ OT', badgeKey: 'pendingOT' },
+    { href: '/my-team', icon: '\uD83C\uDFC5', label: 'ทีมของฉัน' },
   ],
   tail: [
     { href: '/calendar', icon: '\uD83D\uDCC5', label: 'ปฏิทิน' },
@@ -30,6 +36,7 @@ const MENU = {
   admin: [
     { href: '/admin-users', icon: '\uD83D\uDEE1', label: 'จัดการผู้ใช้งาน' },
     { href: '/admin-leave-balances', icon: '\uD83C\uDF34', label: 'จัดการสิทธิ์วันลา' },
+    { href: '/admin-profile-permissions', icon: '\uD83C\uDFC5', label: 'มอบสิทธิ์ผู้ประเมิน' },
     { href: '/admin-form-builder', icon: '\uD83E\uDDF1', label: 'Form Builder' },
     { href: '/admin-page-content', icon: '\uD83D\uDCC4', label: 'จัดการหน้า/หัวข้อ' },
     { href: '/admin-data-retention', icon: '\uD83D\uDDD1', label: 'ตั้งค่าการลบข้อมูลอัตโนมัติ' },
@@ -45,7 +52,7 @@ function buildMenu(me) {
     roleMenu = roleMenu.filter(item => item.href !== '/visit-request' && item.href !== '/my-requests');
   }
   items = items.concat(roleMenu);
-  items = items.concat(MENU.tail);
+  items = items.concat(canAccessVisit(me) ? MENU.tail : MENU.tail.filter(item => item.href !== '/customers'));
   if (me.role === 'Admin') items = items.concat(MENU.admin);
   return items;
 }

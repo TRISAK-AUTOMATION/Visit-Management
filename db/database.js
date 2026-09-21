@@ -75,6 +75,77 @@ CREATE TABLE IF NOT EXISTS leave_balances (
   updated_at       TEXT DEFAULT (datetime('now'))
 );
 
+-- ===== ระบบขอทำงานล่วงเวลา (OT Management) =====
+CREATE TABLE IF NOT EXISTS ot_requests (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  code            TEXT UNIQUE NOT NULL,        -- OT-2026-00001
+  requester_id    INTEGER NOT NULL REFERENCES users(id),
+  ot_date         TEXT NOT NULL,               -- วันที่ทำ OT
+  time_from       TEXT NOT NULL,
+  time_to         TEXT NOT NULL,
+  hours           REAL NOT NULL DEFAULT 0,     -- คำนวณจากเวลาเริ่ม-สิ้นสุดอัตโนมัติ
+  location        TEXT,                        -- สถานที่ปฏิบัติงาน
+  customer_id     INTEGER REFERENCES customers(id), -- ลูกค้า/โปรเจกต์ (ไม่บังคับ - ใช้เมื่อ OT เกี่ยวข้องกับลูกค้า เช่นแผนก Engineer)
+  project_no      TEXT,                        -- เลขที่โปรเจกต์ (ไม่บังคับ)
+  type_service    TEXT,                        -- ประเภทงาน/บริการ (ไม่บังคับ)
+  work_detail     TEXT NOT NULL,               -- รายละเอียดงานที่ทำ
+  reason          TEXT,                        -- เหตุผลในการทำ OT
+  notes           TEXT,                        -- หมายเหตุเพิ่มเติม
+  status          TEXT NOT NULL DEFAULT 'pending', -- draft | pending | approved | rejected | cancelled
+  approver_id     INTEGER REFERENCES users(id),
+  approved_at     TEXT,
+  approval_note   TEXT,
+  created_at      TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS ot_history (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ot_request_id INTEGER NOT NULL REFERENCES ot_requests(id),
+  action_by     INTEGER REFERENCES users(id),
+  action        TEXT NOT NULL,
+  note          TEXT,
+  created_at    TEXT DEFAULT (datetime('now'))
+);
+
+-- ===== ระบบประเมินผลงาน (KPI) และสิทธิ์แก้ไขโปรไฟล์ =====
+-- คะแนนรวม 5 ด้านต่อพนักงาน 1 คน (เป็นค่าล่าสุด/ปัจจุบัน ไม่ได้แยกเป็นรอบประเมินย้อนหลัง)
+CREATE TABLE IF NOT EXISTS employee_kpi (
+  user_id           INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  attendance_score  INTEGER NOT NULL DEFAULT 0,  -- การมาทำงาน /100
+  performance_score INTEGER NOT NULL DEFAULT 0,  -- ผลงาน /100
+  responsibility_score INTEGER NOT NULL DEFAULT 0, -- ความรับผิดชอบ /100
+  teamwork_score    INTEGER NOT NULL DEFAULT 0,  -- การทำงานเป็นทีม /100
+  discipline_score  INTEGER NOT NULL DEFAULT 0,  -- ระเบียบวินัย /100
+  late_count        INTEGER NOT NULL DEFAULT 0,  -- มาสาย (ครั้ง) - กรอกเอง ระบบยังไม่มีเครื่องสแกนนิ้ว
+  absent_count      INTEGER NOT NULL DEFAULT 0,  -- ขาดงาน (ครั้ง) - กรอกเอง
+  pending_tasks     INTEGER NOT NULL DEFAULT 0,  -- งานค้าง - กรอกเอง
+  work_status       TEXT NOT NULL DEFAULT 'ปกติ', -- ป้ายสถานะการทำงานบนสุด เช่น ปกติ/ต้องปรับปรุง/ดีเด่น
+  updated_by        INTEGER REFERENCES users(id),
+  updated_at        TEXT DEFAULT (datetime('now'))
+);
+
+-- เช็คลิสต์ย่อยในแต่ละ KPI ด้าน (หัวหน้าพิมพ์เองได้อิสระ ไม่ผูก template ตายตัว)
+CREATE TABLE IF NOT EXISTS employee_kpi_checklist (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  category      TEXT NOT NULL,  -- attendance | performance | responsibility | teamwork | discipline
+  label         TEXT NOT NULL,
+  is_checked    INTEGER NOT NULL DEFAULT 0,
+  sort_order    INTEGER NOT NULL DEFAULT 0,
+  created_by    INTEGER REFERENCES users(id),
+  created_at    TEXT DEFAULT (datetime('now'))
+);
+
+-- Admin มอบสิทธิ์ "คนนี้แก้โปรไฟล์/คะแนนของคนนั้นได้" เพิ่มเติมนอกเหนือกฎแผนกเริ่มต้น (หัวหน้าแก้ได้เฉพาะแผนกตัวเอง)
+CREATE TABLE IF NOT EXISTS profile_edit_permissions (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  editor_user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  granted_by      INTEGER REFERENCES users(id),
+  created_at      TEXT DEFAULT (datetime('now')),
+  UNIQUE(editor_user_id, target_user_id)
+);
+
 CREATE TABLE IF NOT EXISTS customers (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   code           TEXT NOT NULL,            -- CUS-001 (unique ร่วมกับ company ไม่ใช่ unique เดี่ยว เพราะรหัสจาก SAP ของแต่ละบริษัทอาจซ้ำกันได้)
@@ -405,6 +476,14 @@ db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_code_company ON custome
 // archived_at: วันเวลาที่ลูกค้ารายนี้ถูกเก็บถาวร ใช้คำนวณว่า "เก็บถาวรมานานแค่ไหนแล้ว" สำหรับกฎลบอัตโนมัติ
 if (!db.prepare(`PRAGMA table_info(customers)`).all().map(c => c.name).includes('archived_at')) {
   db.exec(`ALTER TABLE customers ADD COLUMN archived_at TEXT`);
+}
+
+// ot_requests: เพิ่มช่องลูกค้า/โปรเจกต์ (ไม่บังคับ - ใช้เมื่อ OT เกี่ยวข้องกับลูกค้า เช่นแผนก Engineer)
+{
+  const otCols = db.prepare(`PRAGMA table_info(ot_requests)`).all().map(c => c.name);
+  if (!otCols.includes('customer_id')) db.exec(`ALTER TABLE ot_requests ADD COLUMN customer_id INTEGER REFERENCES customers(id)`);
+  if (!otCols.includes('project_no')) db.exec(`ALTER TABLE ot_requests ADD COLUMN project_no TEXT`);
+  if (!otCols.includes('type_service')) db.exec(`ALTER TABLE ot_requests ADD COLUMN type_service TEXT`);
 }
 
 // ---------- Index เพิ่มความเร็วให้คอลัมน์ที่ค้นหา/join บ่อย ----------

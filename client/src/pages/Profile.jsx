@@ -4,6 +4,7 @@ import Layout from '../components/Layout';
 import { useAuth } from '../lib/AuthContext';
 import { api, initials, ROLE_TH } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+import KpiPanel from '../components/KpiPanel';
 
 export default function Profile() {
   const { me, setMe } = useAuth();
@@ -17,11 +18,9 @@ export default function Profile() {
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [pw, setPw] = useState({ current_password: '', new_password: '' });
   const [departments, setDepartments] = useState([]);
-  const [leaveSummary, setLeaveSummary] = useState(null);
 
   useEffect(() => {
     api.get('/api/departments').then(({ departments }) => setDepartments(departments)).catch(() => {});
-    api.get('/api/leave-requests/summary/me').then(setLeaveSummary).catch(() => {});
   }, []);
 
   const set = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
@@ -128,42 +127,9 @@ export default function Profile() {
         </div>
       </div>
 
-      {leaveSummary && (
-        <div className="card" style={{ marginTop: 20 }}>
-          <div className="card-head"><h3>สรุปวันลาของฉัน (ปีนี้)</h3></div>
-          <div className="card-body">
-            <div className="dept-grid">
-              <div className="stat-card sm blue">
-                <div className="label">ลาพักร้อนคงเหลือ</div>
-                <div className="value">{leaveSummary.vacation_remaining}<span className="unit">/ {leaveSummary.vacation_total} วัน</span></div>
-              </div>
-              <div className="stat-card sm orange">
-                <div className="label">ลากิจคงเหลือ</div>
-                <div className="value">{leaveSummary.personal_remaining}<span className="unit">/ {leaveSummary.personal_total} วัน</span></div>
-              </div>
-              <div className="stat-card sm red">
-                <div className="label">ลาป่วยคงเหลือ</div>
-                <div className="value">{leaveSummary.sick_remaining}<span className="unit">/ {leaveSummary.sick_total} วัน</span></div>
-              </div>
-              <div className="stat-card sm teal">
-                <div className="label">รวมวันลาสะสม (ปีนี้)</div>
-                <div className="value">{leaveSummary.total_days_used}<span className="unit">วัน</span></div>
-              </div>
-              <div className="stat-card sm purple">
-                <div className="label">รวมชั่วโมงลาสะสม</div>
-                <div className="value">{leaveSummary.total_hours_used}<span className="unit">ชม.</span></div>
-              </div>
-              <div className="stat-card sm slate">
-                <div className="label">จำนวนครั้งที่ลา (ปีนี้)</div>
-                <div className="value" style={{ fontSize: 15 }}>กิจ {leaveSummary.by_type['ลากิจ'].cnt} · ป่วย {leaveSummary.by_type['ลาป่วย'].cnt}</div>
-              </div>
-            </div>
-            <div className="form-actions" style={{ justifyContent: 'flex-start', marginTop: 4 }}>
-              <a className="btn btn-outline btn-sm" href="/my-leave">ดูประวัติการลาทั้งหมด →</a>
-            </div>
-          </div>
-        </div>
-      )}
+      <div style={{ marginTop: 20 }}>
+        <KpiPanel userId={me.id} showHeader={false} />
+      </div>
     </Layout>
   );
 }

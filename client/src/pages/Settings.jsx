@@ -73,6 +73,11 @@ export default function Settings() {
           <div style={{ fontWeight: 700, marginTop: 8 }}>การลาของฉัน</div>
           <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>สร้างคำขอลา ดูสถานะและประวัติการลา</div>
         </Link>
+        <Link className="card" style={{ padding: 20, display: 'block' }} to="/my-ot">
+          <div style={{ fontSize: 22 }}>&#9200;</div>
+          <div style={{ fontWeight: 700, marginTop: 8 }}>OT ของฉัน</div>
+          <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>สร้างคำขอ OT ดูสถานะและพิมพ์ PDF</div>
+        </Link>
       </div>
     </Layout>
   );
