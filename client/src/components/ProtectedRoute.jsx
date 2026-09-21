@@ -4,7 +4,8 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
 
 // roles: array ของ role ที่อนุญาต ถ้าไม่ระบุ = ทุก role ที่ login แล้วเข้าได้
-export default function ProtectedRoute({ children, roles }) {
+// check: ฟังก์ชันตรวจสิทธิ์แบบกำหนดเอง รับ me แล้วคืน true/false (ใช้กรณีเงื่อนไขซับซ้อนกว่าแค่ role เช่น ต้องดูแผนกด้วย)
+export default function ProtectedRoute({ children, roles, check }) {
   const { me } = useAuth();
 
   if (me === undefined) {
@@ -14,6 +15,9 @@ export default function ProtectedRoute({ children, roles }) {
     return <Navigate to="/login" replace />;
   }
   if (roles && !roles.includes(me.role)) {
+    return <div className="empty">คุณไม่มีสิทธิ์เข้าถึงหน้านี้</div>;
+  }
+  if (check && !check(me)) {
     return <div className="empty">คุณไม่มีสิทธิ์เข้าถึงหน้านี้</div>;
   }
   return children;

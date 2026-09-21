@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
+import TimeInput24 from '../components/TimeInput24';
 import { api, statusLabel } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
@@ -30,6 +31,12 @@ export default function VisitRequest() {
   const [customFieldDefs, setCustomFieldDefs] = useState([]);
   const [customValues, setCustomValues] = useState({});
 
+  // รายชื่อพนักงานแผนก Engineer สำหรับให้เลือกเป็น "ผู้ร่วมงาน" (จำกัดเฉพาะแผนกนี้ตามที่ขอ)
+  const [engineerUsers, setEngineerUsers] = useState([]);
+  useEffect(() => {
+    api.get('/api/users/by-department/Engineer').then(({ users }) => setEngineerUsers(users)).catch(() => {});
+  }, []);
+
   // การตั้งค่าซ่อน/แสดง/เปลี่ยนชื่อ ของ Field เดิมของระบบ (Settings > Form Builder > Field เดิมของระบบ)
   // ค่าเริ่มต้น = แสดงทุก field ด้วยชื่อเดิม (เหมือนพฤติกรรมก่อนมีฟีเจอร์นี้) กันหน้าตาสั่นระหว่างรอโหลด
   const DEFAULT_CORE_LABELS = {
@@ -43,6 +50,96 @@ export default function VisitRequest() {
   };
   const [coreSettings, setCoreSettings] = useState({});
   const cf = (key) => coreSettings[key] || { label: DEFAULT_CORE_LABELS[key], is_visible: true, is_required: false };
+
+  // Label ของ Field พื้นฐานที่จำเป็นต่อระบบ (วันที่/ลูกค้า/เวลา/วัตถุประสงค์) - Admin แก้ได้จาก Form Builder
+  // ต่างจาก coreSettings ตรงที่ field กลุ่มนี้แสดง+บังคับกรอกเสมอ ปรับได้แค่ชื่อหัวข้อ
+  const DEFAULT_ESSENTIAL_LABELS = {
+    visit_date: 'วันที่', customer_id: 'รหัสลูกค้า / บริษัท',
+    time_from: 'เวลาเริ่ม (แผน)', time_to: 'เวลาสิ้นสุด (แผน)', purpose: 'วัตถุประสงค์ / รายละเอียดงาน'
+  };
+  const [essentialLabels, setEssentialLabels] = useState({});
+  const el = (key) => essentialLabels[key] || DEFAULT_ESSENTIAL_LABELS[key];
+
+  // ลำดับ Field เดิมที่เคย hard-code ไว้แต่แรก ใช้เป็น fallback ระหว่างรอโหลดค่าจาก backend เท่านั้น
+  const DEFAULT_CORE_ORDER = ['job_type', 'sales_person', 'location', 'contact_person', 'contact_phone', 'product',
+    'participants', 'transport', 'license_plate', 'mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back',
+    'ot_hours', 'customer_tax_id', 'tax_invoice_date', 'notes'];
+
+  // สเปกวิธี render ของแต่ละ Field เดิม (ชนิด input / placeholder / ตัวเลือก) — ลำดับการแสดงผลจริงมาจาก coreSettings.sort_order ไม่ใช่ลำดับในนี้
+  const CORE_FIELD_INPUT = {
+    job_type: { type: 'select', options: JOB_TYPES },
+    sales_person: { type: 'text', placeholder: 'ปล่อยว่างหากเป็นผู้ขอเอง' },
+    location: { type: 'text', placeholder: 'ที่อยู่ปลายทาง', full: true },
+    contact_person: { type: 'text', placeholder: 'ชื่อผู้ติดต่อฝั่งลูกค้า' },
+    contact_phone: { type: 'text', placeholder: '0xx-xxx-xxxx' },
+    product: { type: 'text', placeholder: 'เช่น เครื่องจักร, อะไหล่, ซอฟต์แวร์' },
+    participants: { type: 'engineer_multiselect', placeholder: 'เลือกผู้ร่วมงาน (เฉพาะแผนก Engineer)' },
+    transport: { type: 'select', options: TRANSPORTS },
+    license_plate: { type: 'text', placeholder: 'กข 1234' },
+    mileage_out: { type: 'number', placeholder: 'เลขไมล์ตอนออกเดินทาง' },
+    mileage_in: { type: 'number', placeholder: 'เลขไมล์ตอนกลับถึง' },
+    actual_time_out: { type: 'time' },
+    actual_time_back: { type: 'time' },
+    ot_hours: { type: 'number', step: '0.5', placeholder: 'เช่น 1.5' },
+    customer_tax_id: { type: 'text', placeholder: '0-XXXX-XXXXX-XX-X' },
+    tax_invoice_date: { type: 'date', full: true },
+    notes: { type: 'textarea', placeholder: 'หมายเหตุเพิ่มเติม (ถ้ามี)', full: true }
+  };
+
+  // เรนเดอร์ Field เดิม 1 ตัว ตามชนิด input ที่กำหนดไว้ + ใช้ label/required/visible จาก coreSettings (Admin ปรับได้จากหลังบ้าน)
+  const renderCoreField = (key) => {
+    const setting = cf(key);
+    if (!setting.is_visible) return null;
+    const spec = CORE_FIELD_INPUT[key];
+    if (!spec) return null;
+    return (
+      <div key={key} className={`form-group ${spec.full ? 'full' : ''}`}>
+        <label>{setting.label} {setting.is_required && <span className="req">*</span>}</label>
+        {spec.type === 'select' && (
+          <select value={form[key]} onChange={set(key)} required={setting.is_required}>
+            {spec.options.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        )}
+        {spec.type === 'text' && (
+          <input type="text" value={form[key]} onChange={set(key)} placeholder={spec.placeholder} required={setting.is_required} />
+        )}
+        {spec.type === 'number' && (
+          <input type="number" step={spec.step} value={form[key]} onChange={set(key)} placeholder={spec.placeholder} required={setting.is_required} />
+        )}
+        {spec.type === 'time' && (
+          <TimeInput24 value={form[key]} onChange={set(key)} required={setting.is_required} />
+        )}
+        {spec.type === 'date' && (
+          <input type="date" value={form[key]} onChange={set(key)} required={setting.is_required} />
+        )}
+        {spec.type === 'textarea' && (
+          <textarea value={form[key]} onChange={set(key)} placeholder={spec.placeholder} required={setting.is_required} />
+        )}
+        {spec.type === 'engineer_multiselect' && (() => {
+          const selected = form[key] ? form[key].split(',').map(s => s.trim()).filter(Boolean) : [];
+          const toggle = (name) => {
+            const next = selected.includes(name) ? selected.filter(n => n !== name) : [...selected, name];
+            setForm(f => ({ ...f, [key]: next.join(', ') }));
+          };
+          return (
+            <div style={{ border: '1px solid var(--border)', borderRadius: 9, padding: '8px 12px', maxHeight: 160, overflowY: 'auto' }}>
+              {engineerUsers.length ? engineerUsers.map(u => (
+                <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 13, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={selected.includes(u.full_name)} onChange={() => toggle(u.full_name)} />
+                  {u.full_name}
+                </label>
+              )) : <div className="muted" style={{ fontSize: 12.5 }}>ยังไม่มีพนักงานในแผนก Engineer</div>}
+            </div>
+          );
+        })()}
+      </div>
+    );
+  };
+
+  // ลำดับ Field เดิมจริงที่จะ render มาจาก sort_order ที่ Admin จัดไว้ (เรียงตาม backend เสมอเมื่อโหลดเสร็จ)
+  const orderedCoreKeys = Object.keys(coreSettings).length
+    ? Object.values(coreSettings).sort((a, b) => a.sort_order - b.sort_order).map(s => s.field_key)
+    : DEFAULT_CORE_ORDER;
 
   // เรนเดอร์ field เดียวที่ Admin สร้างจาก Form Builder (ใช้ทั้งตอนวางไว้กลางฟอร์มและท้ายฟอร์ม)
   const renderCustomField = (f) => (
@@ -69,7 +166,7 @@ export default function VisitRequest() {
         <input type="date" value={customValues[f.field_key] ?? f.default_value ?? ''} onChange={setCustom(f.field_key)} required={f.is_required} />
       )}
       {f.field_type === 'time' && (
-        <input type="time" value={customValues[f.field_key] ?? f.default_value ?? ''} onChange={setCustom(f.field_key)} required={f.is_required} />
+        <TimeInput24 value={customValues[f.field_key] ?? f.default_value ?? ''} onChange={setCustom(f.field_key)} required={f.is_required} />
       )}
       {f.field_type === 'datetime' && (
         <input type="datetime-local" value={customValues[f.field_key] ?? f.default_value ?? ''} onChange={setCustom(f.field_key)} required={f.is_required} />
@@ -133,6 +230,11 @@ export default function VisitRequest() {
       settings.forEach(s => { map[s.field_key] = s; });
       setCoreSettings(map);
     }).catch(() => {});
+    api.get('/api/core-field-settings/essential-labels').then(({ labels }) => {
+      const map = {};
+      labels.forEach(l => { map[l.field_key] = l.label; });
+      setEssentialLabels(map);
+    }).catch(() => {});
   }, []);
 
   const setCustom = (key) => (e) => {
@@ -193,7 +295,8 @@ export default function VisitRequest() {
   useEffect(() => {
     if (!editId) { setEditingRequest(null); setForm(emptyForm); setCustomValues({}); return; }
     api.get(`/api/visit-requests/${editId}`).then(({ request, customFields }) => {
-      if (!['draft', 'revision'].includes(request.status)) {
+      // 'approved' = โหมด "อัปเดตข้อมูลหลังปฏิบัติงาน" (แก้ไขได้ทุก field แต่ไม่ต้องขออนุมัติซ้ำ)
+      if (!['draft', 'revision', 'approved'].includes(request.status)) {
         toast('ไม่สามารถแก้ไขคำขอนี้ได้แล้ว', 'error');
         navigate('/my-requests');
         return;
@@ -277,8 +380,26 @@ export default function VisitRequest() {
     }
   };
 
+  // โหมด "อัปเดตข้อมูลหลังปฏิบัติงาน": คำขอนี้อนุมัติแล้ว แก้ไขได้ทุก field แต่บันทึกแล้วจบเลย ไม่ต้องขออนุมัติซ้ำ
+  const isPostVisitUpdate = editingRequest && editingRequest.status === 'approved';
+
+  const handlePostVisitSave = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await api.put(`/api/visit-requests/${editingRequest.id}`, buildPayload());
+      toast(`บันทึกข้อมูลหลังปฏิบัติงานสำเร็จ (${editingRequest.code})`, 'success');
+      setTimeout(() => navigate('/my-requests'), 600);
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // ส่งคำขอเข้าสู่ระบบอนุมัติ
   const handleSubmit = async (e) => {
+    if (isPostVisitUpdate) return handlePostVisitSave(e);
     e.preventDefault();
     if (!form.customer_id) {
       toast('กรุณาเลือกลูกค้าจากรายการค้นหาก่อนส่งคำขอ', 'error');
@@ -321,7 +442,7 @@ export default function VisitRequest() {
   };
 
   return (
-    <Layout title={editingRequest ? `แก้ไขคำขอ #${editingRequest.code}` : 'สร้างคำขอออกนอกสถานที่ (Visit Request)'}>
+    <Layout title={editingRequest ? (isPostVisitUpdate ? `อัปเดตข้อมูลหลังปฏิบัติงาน #${editingRequest.code}` : `แก้ไขคำขอ #${editingRequest.code}`) : 'สร้างคำขอออกนอกสถานที่ (Visit Request)'}>
       <div className="card" style={{ maxWidth: 900 }}>
         <div className="card-head">
           <h3>ข้อมูลคำขอ</h3>
@@ -333,6 +454,11 @@ export default function VisitRequest() {
               <b>ผู้อนุมัติขอให้แก้ไข:</b> {editingRequest.approval_note}
             </div>
           )}
+          {isPostVisitUpdate && (
+            <div style={{ background: '#e6f4ea', color: '#1a7a3c', borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 13 }}>
+              คำขอนี้อนุมัติแล้ว — แก้ไขข้อมูลให้ตรงกับที่ปฏิบัติงานจริงได้ทุกช่อง แล้วกด "บันทึกข้อมูล" ได้เลย ไม่ต้องขออนุมัติใหม่อีกครั้ง
+            </div>
+          )}
           <form onSubmit={handleSubmit}>
             {renderCustomFieldsAt('TOP').length > 0 && (
               <>
@@ -342,12 +468,12 @@ export default function VisitRequest() {
             )}
             <div className="form-grid">
               <div className="form-group">
-                <label>วันที่ <span className="req">*</span></label>
+                <label>{el('visit_date')} <span className="req">*</span></label>
                 <input type="date" value={form.visit_date} onChange={set('visit_date')} required />
               </div>
               {renderCustomFieldsAt('visit_date')}
               <div className="form-group" style={{ position: 'relative' }}>
-                <label>รหัสลูกค้า / บริษัท <span className="req">*</span></label>
+                <label>{el('customer_id')} <span className="req">*</span></label>
                 <input
                   type="text"
                   value={customerQuery}
@@ -389,143 +515,26 @@ export default function VisitRequest() {
               </div>
               {renderCustomFieldsAt('customer_id')}
               <div className="form-group">
-                <label>เวลาเริ่ม (แผน) <span className="req">*</span></label>
-                <input type="time" value={form.time_from} onChange={set('time_from')} required />
+                <label>{el('time_from')} <span className="req">*</span></label>
+                <TimeInput24 value={form.time_from} onChange={set('time_from')} required />
               </div>
               {renderCustomFieldsAt('time_from')}
               <div className="form-group">
-                <label>เวลาสิ้นสุด (แผน) <span className="req">*</span></label>
-                <input type="time" value={form.time_to} onChange={set('time_to')} required />
+                <label>{el('time_to')} <span className="req">*</span></label>
+                <TimeInput24 value={form.time_to} onChange={set('time_to')} required />
               </div>
               {renderCustomFieldsAt('time_to')}
-              {cf('job_type').is_visible && (
-                <div className="form-group">
-                  <label>{cf('job_type').label} {cf('job_type').is_required && <span className="req">*</span>}</label>
-                  <select value={form.job_type} onChange={set('job_type')} required={cf('job_type').is_required}>
-                    {JOB_TYPES.map(j => <option key={j} value={j}>{j}</option>)}
-                  </select>
-                </div>
-              )}
-              {renderCustomFieldsAt('job_type')}
-              {cf('sales_person').is_visible && (
-                <div className="form-group">
-                  <label>{cf('sales_person').label} {cf('sales_person').is_required && <span className="req">*</span>}</label>
-                  <input type="text" value={form.sales_person} onChange={set('sales_person')} placeholder="ปล่อยว่างหากเป็นผู้ขอเอง" required={cf('sales_person').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('sales_person')}
               <div className="form-group full">
-                <label>วัตถุประสงค์ / รายละเอียดงาน <span className="req">*</span></label>
+                <label>{el('purpose')} <span className="req">*</span></label>
                 <input type="text" value={form.purpose} onChange={set('purpose')} placeholder="เช่น เข้าพบลูกค้า เพื่อนำเสนอสินค้าและบริการ" required />
               </div>
               {renderCustomFieldsAt('purpose')}
-              {cf('location').is_visible && (
-                <div className="form-group full">
-                  <label>{cf('location').label} {cf('location').is_required && <span className="req">*</span>}</label>
-                  <input type="text" value={form.location} onChange={set('location')} placeholder="ที่อยู่ปลายทาง" required={cf('location').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('location')}
-              {cf('contact_person').is_visible && (
-                <div className="form-group">
-                  <label>{cf('contact_person').label} {cf('contact_person').is_required && <span className="req">*</span>}</label>
-                  <input type="text" value={form.contact_person} onChange={set('contact_person')} placeholder="ชื่อผู้ติดต่อฝั่งลูกค้า" required={cf('contact_person').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('contact_person')}
-              {cf('contact_phone').is_visible && (
-                <div className="form-group">
-                  <label>{cf('contact_phone').label} {cf('contact_phone').is_required && <span className="req">*</span>}</label>
-                  <input type="text" value={form.contact_phone} onChange={set('contact_phone')} placeholder="0xx-xxx-xxxx" required={cf('contact_phone').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('contact_phone')}
-              {cf('product').is_visible && (
-                <div className="form-group">
-                  <label>{cf('product').label} {cf('product').is_required && <span className="req">*</span>}</label>
-                  <input type="text" value={form.product} onChange={set('product')} placeholder="เช่น เครื่องจักร, อะไหล่, ซอฟต์แวร์" required={cf('product').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('product')}
-              {cf('participants').is_visible && (
-                <div className="form-group">
-                  <label>{cf('participants').label} {cf('participants').is_required && <span className="req">*</span>}</label>
-                  <input type="text" value={form.participants} onChange={set('participants')} placeholder="ชื่อเพื่อนร่วมทีม (ถ้ามี)" required={cf('participants').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('participants')}
-              {cf('transport').is_visible && (
-                <div className="form-group">
-                  <label>{cf('transport').label} {cf('transport').is_required && <span className="req">*</span>}</label>
-                  <select value={form.transport} onChange={set('transport')} required={cf('transport').is_required}>
-                    {TRANSPORTS.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-              )}
-              {renderCustomFieldsAt('transport')}
-              {cf('license_plate').is_visible && (
-                <div className="form-group">
-                  <label>{cf('license_plate').label} {cf('license_plate').is_required && <span className="req">*</span>}</label>
-                  <input type="text" value={form.license_plate} onChange={set('license_plate')} placeholder="กข 1234" required={cf('license_plate').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('license_plate')}
-              {cf('mileage_out').is_visible && (
-                <div className="form-group">
-                  <label>{cf('mileage_out').label} {cf('mileage_out').is_required && <span className="req">*</span>}</label>
-                  <input type="number" value={form.mileage_out} onChange={set('mileage_out')} placeholder="เลขไมล์ตอนออกเดินทาง" required={cf('mileage_out').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('mileage_out')}
-              {cf('mileage_in').is_visible && (
-                <div className="form-group">
-                  <label>{cf('mileage_in').label} {cf('mileage_in').is_required && <span className="req">*</span>}</label>
-                  <input type="number" value={form.mileage_in} onChange={set('mileage_in')} placeholder="เลขไมล์ตอนกลับถึง" required={cf('mileage_in').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('mileage_in')}
-              {cf('actual_time_out').is_visible && (
-                <div className="form-group">
-                  <label>{cf('actual_time_out').label} {cf('actual_time_out').is_required && <span className="req">*</span>}</label>
-                  <input type="time" value={form.actual_time_out} onChange={set('actual_time_out')} required={cf('actual_time_out').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('actual_time_out')}
-              {cf('actual_time_back').is_visible && (
-                <div className="form-group">
-                  <label>{cf('actual_time_back').label} {cf('actual_time_back').is_required && <span className="req">*</span>}</label>
-                  <input type="time" value={form.actual_time_back} onChange={set('actual_time_back')} required={cf('actual_time_back').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('actual_time_back')}
-              {cf('ot_hours').is_visible && (
-                <div className="form-group">
-                  <label>{cf('ot_hours').label} {cf('ot_hours').is_required && <span className="req">*</span>}</label>
-                  <input type="number" step="0.5" value={form.ot_hours} onChange={set('ot_hours')} placeholder="เช่น 1.5" required={cf('ot_hours').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('ot_hours')}
-              {cf('customer_tax_id').is_visible && (
-                <div className="form-group">
-                  <label>{cf('customer_tax_id').label} {cf('customer_tax_id').is_required && <span className="req">*</span>}</label>
-                  <input type="text" value={form.customer_tax_id} onChange={set('customer_tax_id')} placeholder="0-XXXX-XXXXX-XX-X" required={cf('customer_tax_id').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('customer_tax_id')}
-              {cf('tax_invoice_date').is_visible && (
-                <div className="form-group full">
-                  <label>{cf('tax_invoice_date').label} {cf('tax_invoice_date').is_required && <span className="req">*</span>}</label>
-                  <input type="date" value={form.tax_invoice_date} onChange={set('tax_invoice_date')} required={cf('tax_invoice_date').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('tax_invoice_date')}
-              {cf('notes').is_visible && (
-                <div className="form-group full">
-                  <label>{cf('notes').label} {cf('notes').is_required && <span className="req">*</span>}</label>
-                  <textarea value={form.notes} onChange={set('notes')} placeholder="หมายเหตุเพิ่มเติม (ถ้ามี)" required={cf('notes').is_required} />
-                </div>
-              )}
-              {renderCustomFieldsAt('notes')}
+              {orderedCoreKeys.map(key => (
+                <React.Fragment key={key}>
+                  {renderCoreField(key)}
+                  {renderCustomFieldsAt(key)}
+                </React.Fragment>
+              ))}
             </div>
 
             {renderCustomFieldsAt('').length > 0 && (
@@ -540,7 +549,7 @@ export default function VisitRequest() {
               {(!editingRequest || editingRequest.status === 'draft') && (
                 <button type="button" className="btn btn-outline" disabled={saving} onClick={handleSaveDraft}>บันทึกฉบับร่าง</button>
               )}
-              <button type="submit" className="btn btn-primary" disabled={saving}>ส่งคำขอ</button>
+              <button type="submit" className="btn btn-primary" disabled={saving}>{isPostVisitUpdate ? 'บันทึกข้อมูล' : 'ส่งคำขอ'}</button>
             </div>
           </form>
         </div>

@@ -28,10 +28,55 @@ export default function Settings() {
             <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>เพิ่ม/ลบ/แก้ไข Field ในฟอร์มสร้างคำขอ Visit</div>
           </Link>
         )}
+        {me.role === 'Admin' && (
+          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-page-content">
+            <div style={{ fontSize: 22 }}>&#128196;</div>
+            <div style={{ fontWeight: 700, marginTop: 8 }}>จัดการหน้า/หัวข้อของระบบ</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>แก้ไข Page Title ของแต่ละหน้าได้เอง</div>
+          </Link>
+        )}
+        {me.role === 'Admin' && (
+          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-data-retention">
+            <div style={{ fontSize: 22 }}>&#128465;</div>
+            <div style={{ fontWeight: 700, marginTop: 8 }}>ตั้งค่าการลบข้อมูลอัตโนมัติ</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>กำหนดระยะเวลาเก็บข้อมูลก่อนลบอัตโนมัติ</div>
+          </Link>
+        )}
+        {me.role === 'Admin' && (
+          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-email-settings">
+            <div style={{ fontSize: 22 }}>&#128231;</div>
+            <div style={{ fontWeight: 700, marginTop: 8 }}>ตั้งค่าอีเมล</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>เลือกข้อมูลที่จะแสดงในอีเมลแจ้งอนุมัติ</div>
+          </Link>
+        )}
+        {me.role === 'Admin' && (
+          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-pdf-settings">
+            <div style={{ fontSize: 22 }}>&#127912;</div>
+            <div style={{ fontWeight: 700, marginTop: 8 }}>ออกแบบ PDF</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>ปรับสี/โลโก้/หัวเอกสาร/ลำดับหมวดของใบ PDF</div>
+          </Link>
+        )}
+        {me.role === 'Admin' && (
+          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-leave-balances">
+            <div style={{ fontSize: 22 }}>&#127796;</div>
+            <div style={{ fontWeight: 700, marginTop: 8 }}>จัดการสิทธิ์วันลา</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>ปรับสิทธิ์วันลาพักร้อนรายบุคคล</div>
+          </Link>
+        )}
         <Link className="card" style={{ padding: 20, display: 'block' }} to="/customers">
           <div style={{ fontSize: 22 }}>&#127970;</div>
           <div style={{ fontWeight: 700, marginTop: 8 }}>ข้อมูลลูกค้า</div>
           <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>จัดการรายชื่อลูกค้า/บริษัท</div>
+        </Link>
+        <Link className="card" style={{ padding: 20, display: 'block' }} to="/my-leave">
+          <div style={{ fontSize: 22 }}>&#128198;</div>
+          <div style={{ fontWeight: 700, marginTop: 8 }}>การลาของฉัน</div>
+          <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>สร้างคำขอลา ดูสถานะและประวัติการลา</div>
+        </Link>
+        <Link className="card" style={{ padding: 20, display: 'block' }} to="/my-ot">
+          <div style={{ fontSize: 22 }}>&#9200;</div>
+          <div style={{ fontWeight: 700, marginTop: 8 }}>OT ของฉัน</div>
+          <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>สร้างคำขอ OT ดูสถานะและพิมพ์ PDF</div>
         </Link>
       </div>
     </Layout>

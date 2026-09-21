@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
+import { usePageContent } from '../lib/PageContentContext';
 import RequestModal from '../components/RequestModal';
 import { api, fmtDate } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
@@ -13,6 +14,7 @@ const TABS = [
 ];
 
 export default function ApproveRequests() {
+  const { pc } = usePageContent();
   const toast = useToast();
   const [searchParams] = useSearchParams();
   const [rows, setRows] = useState([]);
@@ -59,7 +61,7 @@ export default function ApproveRequests() {
   };
 
   return (
-    <Layout title="Approve Requests">
+    <Layout title={pc('approve_requests.title', 'Approve Requests')}>
       <div className="tabs">
         {TABS.map(t => (
           <div key={t.f} className={`tab ${filter === t.f ? 'active' : ''}`} onClick={() => setFilter(t.f)}>{t.label}</div>

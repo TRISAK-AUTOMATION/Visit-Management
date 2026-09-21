@@ -61,9 +61,10 @@ input,select,textarea{font-family:inherit;}
 .main{flex:1;display:flex;flex-direction:column;min-width:0;}
 .topbar{
   height:64px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;
-  justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:5;
+  justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:5;gap:10px;
 }
-.topbar h1{font-size:17px;font-weight:700;margin:0;}
+.topbar > div:first-child{display:flex;align-items:center;flex:1;min-width:0;}
+.topbar h1{font-size:17px;font-weight:700;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
 .topbar-right{display:flex;align-items:center;gap:18px;}
 .icon-btn{position:relative;width:36px;height:36px;border-radius:50%;border:none;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:15px;color:var(--text-600);}
 .hamburger-btn{display:none;width:36px;height:36px;border-radius:9px;border:none;background:var(--bg);align-items:center;justify-content:center;font-size:17px;color:var(--text-900);flex-shrink:0;margin-right:8px;}
@@ -83,10 +84,20 @@ input,select,textarea{font-family:inherit;}
 .stat-card.green{background:linear-gradient(135deg,#17a061,#28c67c);}
 .stat-card.orange{background:linear-gradient(135deg,#e9930f,#f5b84a);}
 .stat-card.red{background:linear-gradient(135deg,#e6392f,#f4675e);}
+.stat-card.purple{background:linear-gradient(135deg,#7b3fe4,#a06af0);}
+.stat-card.teal{background:linear-gradient(135deg,#0f9b8e,#2ec4b6);}
+.stat-card.pink{background:linear-gradient(135deg,#e0348c,#f06bb3);}
+.stat-card.indigo{background:linear-gradient(135deg,#4338ca,#6d63e0);}
+.stat-card.slate{background:linear-gradient(135deg,#475569,#7188a3);}
+.stat-card.cyan{background:linear-gradient(135deg,#0891b2,#38c1de);}
 .stat-card .label{font-size:12.5px;opacity:.9;margin-bottom:6px;}
 .stat-card .value{font-size:26px;font-weight:800;}
 .stat-card .unit{font-size:12px;opacity:.85;font-weight:400;margin-left:4px;}
 .stat-card .more{display:block;margin-top:10px;font-size:11.5px;opacity:.9;}
+.dept-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;margin-bottom:20px;}
+.stat-card.sm{padding:14px 16px;}
+.stat-card.sm .value{font-size:22px;}
+.stat-card.sm .label{display:flex;align-items:center;gap:6px;}
 
 .grid-2{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;}
 .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
@@ -95,10 +106,10 @@ input,select,textarea{font-family:inherit;}
 .card-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border);}
 .card-head h3{font-size:14.5px;margin:0;font-weight:700;}
 .card-head a{font-size:12px;color:var(--blue-600);font-weight:600;}
-.card-body{padding:16px 18px;}
+.card-body{padding:16px 18px;overflow-x:auto;}
 
 /* ---------- TABLE ---------- */
-table{width:100%;border-collapse:collapse;font-size:13px;}
+table{width:100%;min-width:640px;border-collapse:collapse;font-size:13px;}
 thead th{text-align:left;color:var(--text-400);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;padding:8px 10px;border-bottom:1px solid var(--border);}
 tbody td{padding:11px 10px;border-bottom:1px solid var(--border);color:var(--text-900);}
 tbody tr:last-child td{border-bottom:none;}
@@ -180,7 +191,7 @@ tbody tr:hover{background:#fafbfe;}
 .login-hint{margin-top:18px;background:#f1f4fd;border-radius:10px;padding:10px 12px;font-size:11.5px;color:var(--text-600);}
 
 /* ---------- CALENDAR ---------- */
-.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;min-width:560px;}
 .cal-head{font-size:11px;color:var(--text-400);text-align:center;font-weight:700;padding-bottom:6px;}
 .cal-cell{min-height:74px;border:1px solid var(--border);border-radius:8px;padding:6px;font-size:11.5px;background:#fff;}
 .cal-cell.other{background:#fafbfe;color:var(--text-400);}
@@ -198,6 +209,85 @@ tbody tr:hover{background:#fafbfe;}
   .sidebar.open{left:0;}
   .hamburger-btn{display:flex;}
   .sidebar-backdrop.open{display:block;position:fixed;inset:0;background:rgba(11,21,48,.5);z-index:45;}
-  .topbar h1{font-size:15px;}
+  .topbar{padding:0 12px;gap:6px;}
+  .topbar h1{font-size:14.5px;}
+  .topbar-right{gap:8px;}
+  .topbar-user{display:none;} /* ชื่อ/ตำแหน่งซ้ำกับที่โชว์ในเมนูด้านข้างอยู่แล้ว ซ่อนบนจอแคบเพื่อกันชนกับปุ่มอื่น */
   .stat-grid{grid-template-columns:1fr;}
+  .content{padding:14px;}
+
+  /* ---------- ตารางข้อมูล -> การ์ดแนวตั้ง (แทนการเลื่อนซ้าย-ขวา ให้เป็นธรรมชาติกับมือถือมากขึ้น) ---------- */
+  /* ขอบเขตเฉพาะตารางหลักที่อยู่ใน .card-body เท่านั้น (ตารางเล็กๆ ใน modal เช่น preview นำเข้าไฟล์ ไม่โดนผลกระทบ) */
+  .card-body{overflow-x:visible;padding:10px;}
+  .card-body table{min-width:0;width:100%;}
+  .card-body thead{display:none;}
+  .card-body table,.card-body tbody,.card-body tr{display:block;width:100%;}
+  .card-body tbody tr{
+    background:#fff;border:1px solid var(--border);border-radius:12px;
+    margin-bottom:10px;padding:2px 14px;box-shadow:var(--shadow);
+  }
+  .card-body tbody tr:last-child{margin-bottom:0;}
+  .card-body tbody td{
+    display:flex;justify-content:space-between;align-items:center;gap:14px;
+    padding:10px 0;border-bottom:1px dashed var(--border);text-align:right;white-space:normal;
+  }
+  .card-body tbody td:last-child{border-bottom:none;}
+  .card-body tbody td::before{
+    content:attr(data-label);color:var(--text-400);font-size:11px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.03em;text-align:left;flex-shrink:0;
+  }
+  /* คอลัมน์ "จัดการ" (data-label ว่าง) ให้ปุ่มกระจายเต็มแถวแทนการชิดขวาแคบๆ */
+  .card-body tbody td[data-label=""]{flex-wrap:wrap;justify-content:flex-start;}
+  .card-body tbody td[data-label=""]::before{display:none;}
+  .card-body tbody td[data-label=""] .btn{flex:1;justify-content:center;min-width:70px;}
+  /* แถวว่าง/loading ที่กิน colSpan ทั้งแถว ไม่ต้องเป็นการ์ด */
+  .card-body tbody tr:has(td.empty){box-shadow:none;border-style:dashed;}
+  .card-body tbody tr:has(td.empty) td{display:block;text-align:center;}
+  .card-body tbody tr:has(td.empty) td::before{content:none;}
+
+  /* ---------- ปฏิทิน: ซ่อนข้อความในช่อง ใช้จุดบอกจำนวนงานแทน แตะเพื่อดูรายละเอียด ---------- */
+  .cal-grid{min-width:0;gap:3px;}
+  .cal-cell{min-height:46px;padding:4px 3px;font-size:10px;}
+  .cal-cell .d{margin-bottom:2px;}
+  .cal-evt{display:none;} /* ข้อความเต็มโชว์แค่จอกว้าง บนมือถือใช้จุดแทน */
+  .cal-evt-dots{display:flex;gap:2px;flex-wrap:wrap;justify-content:center;}
+  .cal-evt-dot{width:5px;height:5px;border-radius:50%;background:var(--blue-600);}
+  .cal-evt-more{font-size:9px;color:var(--blue-600);font-weight:700;}
 }
+@media(min-width:721px){
+  .cal-evt-dots{display:none;} /* จอกว้างใช้ป้ายชื่อเต็มแบบเดิม ไม่ต้องมีจุด */
+}
+
+/* ---------- Print (หน้า Report กด "พิมพ์รายงาน" -> browser print dialog -> เลือก Save as PDF ได้) ---------- */
+.print-only{display:none;}
+@media print{
+  .sidebar, .sidebar-backdrop, .topbar, .no-print{display:none!important;}
+  .app{display:block!important;}
+  .main{margin:0!important;}
+  .content{padding:0!important;}
+  .print-only{display:block!important;}
+  .card{box-shadow:none!important;border:1px solid #ccc!important;break-inside:avoid;}
+  .stat-card{box-shadow:none!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;break-inside:avoid;}
+  .report-section{break-inside:avoid;margin-bottom:14px;}
+  body{background:#fff!important;}
+}
+
+/* ---------- KPI Panel (หน้าโปรไฟล์ / ทีมของฉัน) ---------- */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:16px;}
+.kpi-card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:16px;}
+.kpi-card .kpi-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;color:#fff;margin-bottom:10px;}
+.kpi-card .kpi-title{font-weight:700;font-size:13px;margin-bottom:6px;}
+.kpi-card .kpi-score{font-size:24px;font-weight:800;color:var(--text-900);}
+.kpi-card .kpi-score .kpi-max{font-size:12px;font-weight:600;color:var(--text-600);}
+.kpi-stars{color:#f5a524;font-size:13px;letter-spacing:1px;margin:6px 0;}
+.kpi-tag{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:20px;margin-top:2px;}
+.kpi-checklist{margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);}
+.kpi-checklist-item{display:flex;align-items:center;gap:7px;font-size:12px;padding:3px 0;}
+.kpi-checklist-item input[type=checkbox]{width:14px;height:14px;}
+.kpi-checklist-item.done{color:var(--green-600);}
+.status-pill{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:13px;}
+.status-pill .dot{width:9px;height:9px;border-radius:50%;background:var(--green-600);}
+.activity-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12.5px;}
+.activity-item:last-child{border-bottom:none;}
+.activity-item .activity-date{color:var(--text-600);min-width:80px;}
+.kpi-slider{width:100%;}

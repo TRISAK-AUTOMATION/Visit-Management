@@ -6,7 +6,7 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [me, setMe] = useState(undefined); // undefined = กำลังโหลด, null = ไม่ได้ login, object = user
-  const [badgeCounts, setBadgeCounts] = useState({ pending: 0, unread: 0 });
+  const [badgeCounts, setBadgeCounts] = useState({ pending: 0, unread: 0, pendingLeave: 0, pendingOT: 0 });
 
   const refreshMe = useCallback(async () => {
     try {
@@ -20,11 +20,15 @@ export function AuthProvider({ children }) {
   }, []);
 
   const refreshBadges = useCallback(async (user) => {
-    const counts = { pending: 0, unread: 0 };
+    const counts = { pending: 0, unread: 0, pendingLeave: 0, pendingOT: 0 };
     try {
       if (user && user.role !== 'Employee') {
         const pend = await api.get('/api/visit-requests?scope=pending&status=pending');
         counts.pending = pend.requests.length;
+        const pendLeave = await api.get('/api/leave-requests?scope=pending&status=pending');
+        counts.pendingLeave = pendLeave.requests.length;
+        const pendOT = await api.get('/api/ot-requests?scope=pending&status=pending');
+        counts.pendingOT = pendOT.requests.length;
       }
       const notif = await api.get('/api/notifications');
       counts.unread = notif.unread;

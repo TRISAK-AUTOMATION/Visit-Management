@@ -1,9 +1,10 @@
 // client/src/pages/Profile.jsx - เทียบเท่า public/profile.html
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { useAuth } from '../lib/AuthContext';
 import { api, initials, ROLE_TH } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+import KpiPanel from '../components/KpiPanel';
 
 export default function Profile() {
   const { me, setMe } = useAuth();
@@ -12,12 +13,39 @@ export default function Profile() {
   const [form, setForm] = useState({
     full_name: me.full_name, email: me.email || '', phone: me.phone || '',
     position: me.position || '', department: me.department || '',
-    email_notify: !!me.email_notify
+    email_notify: !!me.email_notify, avatar_url: me.avatar_url || ''
   });
+  const [avatarUploading, setAvatarUploading] = useState(false);
   const [pw, setPw] = useState({ current_password: '', new_password: '' });
+  const [departments, setDepartments] = useState([]);
+
+  useEffect(() => {
+    api.get('/api/departments').then(({ departments }) => setDepartments(departments)).catch(() => {});
+  }, []);
 
   const set = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
   const setCheckbox = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.checked }));
+
+  const handleAvatarChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // เผื่ออยากเลือกไฟล์เดิมซ้ำอีกครั้ง
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast('กรุณาเลือกไฟล์รูปภาพเท่านั้น', 'error'); return; }
+    if (file.size > 2 * 1024 * 1024) { toast('ไฟล์รูปต้องมีขนาดไม่เกิน 2MB', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUrl = reader.result;
+      setForm(f => ({ ...f, avatar_url: dataUrl }));
+      setAvatarUploading(true);
+      try {
+        await api.put('/api/users/me', { ...form, avatar_url: dataUrl });
+        setMe(m => ({ ...m, avatar_url: dataUrl }));
+        toast('อัปเดตรูปโปรไฟล์สำเร็จ', 'success');
+      } catch (err) { toast(err.message, 'error'); }
+      finally { setAvatarUploading(false); }
+    };
+    reader.readAsDataURL(file);
+  };
 
   const saveProfile = async (e) => {
     e.preventDefault();
@@ -44,7 +72,19 @@ export default function Profile() {
           <div className="card-head"><h3>ข้อมูลส่วนตัว</h3></div>
           <div className="card-body">
             <div className="flex gap-12 mb-16">
-              <div className="pill-avatar" style={{ width: 64, height: 64, fontSize: 20 }}>{initials(me.full_name)}</div>
+              <label style={{ position: 'relative', width: 64, height: 64, cursor: 'pointer', flexShrink: 0 }} title="คลิกเพื่อเปลี่ยนรูปโปรไฟล์">
+                <input type="file" accept="image/*" onChange={handleAvatarChange} style={{ display: 'none' }} disabled={avatarUploading} />
+                {form.avatar_url ? (
+                  <img src={form.avatar_url} alt="รูปโปรไฟล์" style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', display: 'block' }} />
+                ) : (
+                  <div className="pill-avatar" style={{ width: 64, height: 64, fontSize: 20 }}>{initials(me.full_name)}</div>
+                )}
+                <div style={{
+                  position: 'absolute', bottom: -2, right: -2, width: 22, height: 22, borderRadius: '50%',
+                  background: 'var(--blue-600)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 11, border: '2px solid #fff'
+                }}>{avatarUploading ? '…' : '📷'}</div>
+              </label>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 15 }}>{me.full_name}</div>
                 <div className="muted">{me.position || '-'} · {ROLE_TH[me.role]}</div>
@@ -55,7 +95,16 @@ export default function Profile() {
               <div className="form-group"><label>อีเมล</label><input value={form.email} onChange={set('email')} /></div>
               <div className="form-group"><label>เบอร์โทร</label><input value={form.phone} onChange={set('phone')} /></div>
               <div className="form-group"><label>ตำแหน่ง</label><input value={form.position} onChange={set('position')} /></div>
-              <div className="form-group"><label>แผนก</label><input value={form.department} onChange={set('department')} /></div>
+              <div className="form-group">
+                <label>แผนก</label>
+                <select value={form.department} onChange={set('department')}>
+                  <option value="">-- เลือกแผนก --</option>
+                  {form.department && !departments.includes(form.department) && (
+                    <option value={form.department}>{form.department} (ไม่ตรงรายการ)</option>
+                  )}
+                  {departments.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
               <div className="form-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                   <input type="checkbox" checked={form.email_notify} onChange={setCheckbox('email_notify')} style={{ width: 16, height: 16 }} />
@@ -76,6 +125,10 @@ export default function Profile() {
             </form>
           </div>
         </div>
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <KpiPanel userId={me.id} showHeader={false} />
       </div>
     </Layout>
   );

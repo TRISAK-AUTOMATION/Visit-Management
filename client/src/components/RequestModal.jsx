@@ -1,7 +1,7 @@
 // client/src/components/RequestModal.jsx - เทียบเท่า viewRequest() modal เดิมในหน้า my-requests.html / approve-requests.html
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fmtDate, statusLabel, channelLabel } from '../lib/api';
+import { fmtDate, fmtDateTime, statusLabel, channelLabel } from '../lib/api';
 
 // mode: 'mine' (แสดงประวัติ+ปุ่มพิมพ์) หรือ 'approve' (แสดงข้อมูลผู้ขอ+ปุ่มอนุมัติ/ไม่อนุมัติ/ส่งกลับแก้ไข)
 // หรือ 'calendar' (แสดงข้อมูลผู้ขอ+ผู้อนุมัติ แบบอ่านอย่างเดียว - ใช้จากหน้าปฏิทิน)
@@ -28,6 +28,11 @@ export default function RequestModal({ request, history, customFields, mode, onC
                 &#9998; แก้ไขคำขอ
               </button>
             )}
+            {mode === 'mine' && request.status === 'approved' && (
+              <button className="btn btn-outline btn-sm" onClick={() => { onClose(); navigate(`/visit-request?id=${request.id}`); }}>
+                &#9998; อัปเดตข้อมูลหลังปฏิบัติงาน
+              </button>
+            )}
           </div>
           {(mode === 'approve' || mode === 'calendar') && (
             <p><b>ผู้ขอ:</b> {request.requester_name} ({request.requester_position || '-'}) {request.requester_department ? `· แผนก ${request.requester_department}` : ''}</p>
@@ -37,6 +42,7 @@ export default function RequestModal({ request, history, customFields, mode, onC
           <p><b>วัตถุประสงค์:</b> {request.purpose || '-'}</p>
           <p><b>สถานที่:</b> {request.location || '-'}</p>
           <p><b>ผู้ติดต่อ:</b> {request.contact_person || '-'} {request.contact_phone ? `(${request.contact_phone})` : ''}</p>
+          {request.participants && <p><b>ผู้ร่วมงาน:</b> {request.participants}</p>}
           {mode === 'mine' && (
             <p><b>ยานพาหนะ:</b> {request.transport || '-'} {request.license_plate ? `· ${request.license_plate}` : ''}</p>
           )}
@@ -81,7 +87,7 @@ export default function RequestModal({ request, history, customFields, mode, onC
               <div style={{ marginTop: 8 }}>
                 {history.map(h => (
                   <div key={h.id} style={{ fontSize: 12.5, padding: '6px 0', borderBottom: '1px dashed var(--border)' }}>
-                    <b>{h.action}</b> โดย {h.actor_name || 'ระบบ'} {h.channel ? `· ผ่าน${channelLabel(h.channel)}` : ''} · {h.created_at}
+                    <b>{h.action}</b> โดย {h.actor_name || 'ระบบ'} {h.channel ? `· ผ่าน${channelLabel(h.channel)}` : ''} · {fmtDateTime(h.created_at)}
                     {h.note && <div className="muted">{h.note}</div>}
                   </div>
                 ))}

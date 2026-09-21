@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
+import { usePageContent } from '../lib/PageContentContext';
 import RequestModal from '../components/RequestModal';
 import { api, fmtDate, statusLabel } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
@@ -16,6 +17,7 @@ const TABS = [
 ];
 
 export default function MyRequests() {
+  const { pc } = usePageContent();
   const toast = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -62,7 +64,7 @@ export default function MyRequests() {
   };
 
   return (
-    <Layout title="My Requests">
+    <Layout title={pc('my_requests.title', 'My Requests')}>
       <div className="flex between mb-16">
         <div className="tabs">
           {TABS.map(t => (
@@ -95,6 +97,11 @@ export default function MyRequests() {
                     )}
                     {v.status !== 'draft' && v.status !== 'revision' && (
                       <a className="btn btn-outline btn-sm" href={`/api/visit-requests/${v.id}/pdf`} target="_blank" rel="noreferrer" title="พิมพ์ PDF">&#128196;</a>
+                    )}{' '}
+                    {v.status === 'approved' && (
+                      <button className="btn btn-outline btn-sm" onClick={() => navigate(`/visit-request?id=${v.id}`)}>
+                        อัปเดตข้อมูลหลังปฏิบัติงาน
+                      </button>
                     )}{' '}
                     {['pending', 'draft', 'revision'].includes(v.status) && (
                       <button className="btn btn-danger btn-sm" onClick={() => cancelRequest(v.id, v.status === 'draft')}>

@@ -1,27 +1,42 @@
 // routes/visitRequests.js
+const { getEmailRows, getShowDocCode } = require('../utils/emailFields');
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db/database');
 const { requireAuth, requireRole } = require('./middleware');
 const { sendNewRequestEmail, sendDecisionEmail, sendRevisionEmail } = require('../utils/mailer');
 const { logAction } = require('../utils/systemLog');
+const { getDepartmentsForUser, approverIdsForDepartments } = require('../utils/userDepartments');
 
 const router = express.Router();
 
 const TOKEN_TTL_DAYS = 7;
 const EDITABLE_STATUSES = ['pending', 'draft', 'revision'];
+// สถานะที่ผู้ขอสามารถกลับมา "อัปเดตข้อมูลหลังปฏิบัติงาน" ได้ (เช่น เวลาออกจริง/เข้าจริง, ไมล์, OT ฯลฯ)
+// อนุญาตเฉพาะคำขอที่อนุมัติแล้ว และการอัปเดตนี้จะไม่เปลี่ยนสถานะ/ไม่ต้องส่งขออนุมัติใหม่ (อนุมัติแค่ครั้งเดียว)
+const POST_VISIT_EDITABLE_STATUSES = ['approved'];
+
+// แปลงวันที่รูปแบบ YYYY-MM-DD (จาก <input type="date">) ให้เป็น วัน/เดือน/ปี ตามรูปแบบไทย
+// ใช้ตอนสร้างข้อความแจ้งเตือน (notifications.message) เพื่อไม่ให้ปนกับรูปแบบสากลที่อ่านสลับกันได้
+function formatDateThai(d) {
+  if (!d) return '-';
+  const [y, m, day] = d.split('-');
+  return `${day}/${m}/${y}`;
+}
 
 function generateToken() {
   return crypto.randomBytes(24).toString('hex');
 }
 
 // สร้างโทเคนอนุมัติ/ไม่อนุมัติผ่านอีเมล ให้ผู้อนุมัติแต่ละคน แล้วส่งอีเมลแจ้งเตือน
-// จำกัดเฉพาะผู้อนุมัติแผนกเดียวกับผู้ขอ + Admin (Admin เห็น/อนุมัติได้ทุกคำขอ)
+// จำกัดเฉพาะผู้อนุมัติที่ดูแลแผนกเดียวกับผู้ขอ (ดูแลได้หลายแผนกก็ได้) + Admin (Admin เห็น/อนุมัติได้ทุกคำขอ)
 async function notifyApproversByEmail(vr, requesterName, requesterDept) {
-  const approvers = db.prepare(`
-    SELECT id, full_name, email, email_notify FROM users
-    WHERE is_active = 1 AND (role = 'Admin' OR (role = 'Approver' AND department = ?))
-  `).all(requesterDept || '');
+  const approverIds = approverIdsForDepartments([requesterDept]);
+  const admins = db.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
+  const ids = Array.from(new Set([...approverIds, ...admins]));
+  if (!ids.length) return;
+  const placeholders = ids.map(() => '?').join(',');
+  const approvers = db.prepare(`SELECT id, full_name, email, email_notify FROM users WHERE id IN (${placeholders})`).all(...ids);
   const expiresAt = new Date(Date.now() + TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const insertToken = db.prepare(`
     INSERT INTO approval_tokens (token, visit_request_id, approver_id, action, expires_at) VALUES (?, ?, ?, ?, ?)
@@ -33,20 +48,23 @@ async function notifyApproversByEmail(vr, requesterName, requesterDept) {
     insertToken.run(approveToken, vr.id, a.id, 'approve', expiresAt);
     insertToken.run(rejectToken, vr.id, a.id, 'reject', expiresAt);
     sendNewRequestEmail({
-      to: a.email, approverName: a.full_name, requesterName, vr, approveToken, rejectToken
-    }).catch(err => console.error('sendNewRequestEmail error:', err.message));
+  to: a.email, approverName: a.full_name, requesterName, vr, approveToken, rejectToken,
+  emailRows: getEmailRows(vr), showDocCode: getShowDocCode()
+  }).catch(err => console.error('sendNewRequestEmail error:', err.message));
   }
 }
 
-// ตรวจสอบสิทธิ์ของผู้อนุมัติกับคำขอเจาะจง: Admin ทำได้ทุกคำขอ, Approver ทำได้เฉพาะคำขอที่ผู้ขออยู่แผนกเดียวกัน
+// ตรวจสอบสิทธิ์ของผู้อนุมัติกับคำขอเจาะจง: Admin ทำได้ทุกคำขอ, Approver ทำได้เฉพาะคำขอที่ผู้ขออยู่แผนก (แผนกใดแผนกหนึ่ง) ที่ตนดูแล
 // ตรวจซ้ำในชั้น backend เสมอ (ไม่พึ่งแค่การกรองรายการฝั่งหน้าเว็บ) เพื่อกันกรณียิง API ตรงๆ ด้วย request ID ของแผนกอื่น
 function isAuthorizedApprover(approverId, requesterId) {
-  const approver = db.prepare('SELECT role, department, is_active FROM users WHERE id = ?').get(approverId);
+  const approver = db.prepare('SELECT role, is_active FROM users WHERE id = ?').get(approverId);
   if (!approver || !approver.is_active) return false;
   if (approver.role === 'Admin') return true;
   if (approver.role !== 'Approver') return false;
   const requester = db.prepare('SELECT department FROM users WHERE id = ?').get(requesterId);
-  return !!requester && !!approver.department && requester.department === approver.department;
+  if (!requester || !requester.department) return false;
+  const approverDepts = getDepartmentsForUser(approverId);
+  return approverDepts.includes(requester.department);
 }
 
 // ตรรกะกลางสำหรับ "อนุมัติ/ไม่อนุมัติ" ใช้ร่วมกันทั้งจากเว็บแอป (ต้อง login) และจากลิงก์อีเมล (ใช้ token)
@@ -128,9 +146,18 @@ function validateRequiredCoreFields(body) {
 }
 
 function generateCode() {
-  const row = db.prepare(`SELECT COUNT(*) c FROM visit_requests`).get();
-  const seq = (row.c + 1).toString().padStart(5, '0');
-  return `VR-2026-${seq}`;
+  const year = new Date().getFullYear();
+  const prefix = `VR-${year}-`;
+  // หาเลขรันสูงสุดที่ "เคยใช้จริง" จาก code ที่มีอยู่ในตาราง (ไม่ใช่นับจำนวนแถว)
+  // ป้องกันรหัสซ้ำเมื่อมีการลบคำขอออกไป หรือย้าย/นำเข้าข้อมูลข้ามฐานข้อมูล
+  const row = db.prepare(`
+    SELECT MAX(CAST(SUBSTR(code, LENGTH(?) + 1) AS INTEGER)) AS maxSeq
+    FROM visit_requests
+    WHERE code LIKE ?
+  `).get(prefix, `${prefix}%`);
+
+  const nextSeq = (row.maxSeq || 0) + 1;
+  return `${prefix}${nextSeq.toString().padStart(5, '0')}`;
 }
 
 // GET /api/visit-requests?scope=mine|pending|all&status=
@@ -151,11 +178,15 @@ router.get('/', requireAuth, (req, res) => {
     }
     where.push(`vr.status != 'draft'`);
     where.push(`vr.status != 'revision'`);
-    // Approver เห็นเฉพาะคำขอของพนักงานแผนกเดียวกัน, Admin เห็นทุกคำขอ
+    // Approver เห็นเฉพาะคำขอของพนักงานแผนกที่ตนดูแล (ดูแลได้หลายแผนก), Admin เห็นทุกคำขอ
     if (role === 'Approver') {
-      const me = db.prepare('SELECT department FROM users WHERE id = ?').get(userId);
-      where.push('u.department = ?');
-      params.push(me ? me.department : '');
+      const myDepts = getDepartmentsForUser(userId);
+      if (!myDepts.length) {
+        where.push('1 = 0'); // ยังไม่ได้ผูกแผนกใดเลย ไม่ให้เห็นคำขอใครทั้งนั้น
+      } else {
+        where.push(`u.department IN (${myDepts.map(() => '?').join(',')})`);
+        params.push(...myDepts);
+      }
     }
   }
   if (status) {
@@ -229,20 +260,33 @@ router.post('/', requireAuth, (req, res) => {
     }
   }
 
-  const code = generateCode();
-  const status = isDraft ? 'draft' : 'pending';
-  const info = db.prepare(`
+   const status = isDraft ? 'draft' : 'pending';
+  const insertStmt = db.prepare(`
     INSERT INTO visit_requests
       (code, requester_id, customer_id, visit_date, time_from, time_to, purpose, location,
        contact_person, contact_phone, transport, license_plate, notes, status,
        job_type, sales_person, mileage_out, mileage_in, actual_time_out, actual_time_back,
        ot_hours, product, participants, customer_tax_id, tax_invoice_date)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(code, userId, customer_id || null, visit_date || '', time_from || '', time_to || '', purpose || '', location || '',
-    contact_person || '', contact_phone || '', transport || '', license_plate || '', notes || '', status,
-    job_type || '', sales_person || '', mileage_out || null, mileage_in || null,
-    actual_time_out || '', actual_time_back || '', ot_hours || null, product || '',
-    participants || '', customer_tax_id || '', tax_invoice_date || '');
+  `);
+
+  // เผื่อกรณี code ชนกันพอดี (เช่นมีคนส่งคำขอพร้อมกัน) ให้ generate ใหม่แล้วลองใหม่
+  let code, info;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    code = generateCode();
+    try {
+      info = insertStmt.run(code, userId, customer_id || null, visit_date || '', time_from || '', time_to || '', purpose || '', location || '',
+        contact_person || '', contact_phone || '', transport || '', license_plate || '', notes || '', status,
+        job_type || '', sales_person || '', mileage_out || null, mileage_in || null,
+        actual_time_out || '', actual_time_back || '', ot_hours || null, product || '',
+        participants || '', customer_tax_id || '', tax_invoice_date || '');
+      break;
+    } catch (err) {
+      const isDupCode = err.code === 'SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed: visit_requests\.code/.test(err.message);
+      if (isDupCode && attempt < 4) continue; // ลองใหม่ด้วยรหัสถัดไป
+      throw err;
+    }
+  }
 
   const vrId = info.lastInsertRowid;
   saveCustomFieldValues(vrId, custom_fields);
@@ -264,13 +308,16 @@ router.post('/', requireAuth, (req, res) => {
 
 // แจ้งเตือนผู้อนุมัติ (ในระบบ + อีเมล) เมื่อมีคำขอเข้าสู่สถานะ pending
 function notifyRequestSubmitted(vrId, requester) {
-  const approvers = db.prepare(`
-    SELECT id FROM users WHERE is_active = 1 AND (role = 'Admin' OR (role = 'Approver' AND department = ?))
-  `).all(requester.department || '');
+  const approverIds = approverIdsForDepartments([requester.department]);
+  const admins = db.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
+  const ids = Array.from(new Set([...approverIds, ...admins]));
+  const approvers = ids.length
+    ? db.prepare(`SELECT id FROM users WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids)
+    : [];
   const notifStmt = db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, 'new_request', ?, ?)`);
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(vrId);
   for (const a of approvers) {
-    notifStmt.run(a.id, `มีคำขอออกนอกสถานที่ใหม่จาก ${requester.full_name} วันที่ ${vr.visit_date} เวลา ${vr.time_from} - ${vr.time_to}`, vrId);
+    notifStmt.run(a.id, `มีคำขอออกนอกสถานที่ใหม่จาก ${requester.full_name} วันที่ ${formatDateThai(vr.visit_date)} เวลา ${vr.time_from} - ${vr.time_to}`, vrId);
   }
   const vrWithCustomer = db.prepare(`
     SELECT vr.*, c.name AS customer_name FROM visit_requests vr LEFT JOIN customers c ON c.id = vr.customer_id WHERE vr.id = ?
@@ -318,7 +365,10 @@ router.put('/:id', requireAuth, (req, res) => {
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
   if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
   if (vr.requester_id !== req.session.userId) return res.status(403).json({ error: 'ไม่มีสิทธิ์แก้ไขคำขอนี้' });
-  if (!EDITABLE_STATUSES.includes(vr.status)) return res.status(400).json({ error: 'ไม่สามารถแก้ไขคำขอที่ดำเนินการแล้วได้' });
+  const isPostVisitUpdate = POST_VISIT_EDITABLE_STATUSES.includes(vr.status);
+  if (!EDITABLE_STATUSES.includes(vr.status) && !isPostVisitUpdate) {
+    return res.status(400).json({ error: 'ไม่สามารถแก้ไขคำขอที่ดำเนินการแล้วได้' });
+  }
 
   const fields = ['customer_id', 'visit_date', 'time_from', 'time_to', 'purpose', 'location',
     'contact_person', 'contact_phone', 'transport', 'license_plate', 'notes',
@@ -334,12 +384,19 @@ router.put('/:id', requireAuth, (req, res) => {
   }
   if (updates.length) {
     values.push(req.params.id);
+    // หมายเหตุ: ไม่แตะคอลัมน์ status เลย ดังนั้นคำขอที่ "อนุมัติแล้ว" จะยังคงเป็น approved อยู่เหมือนเดิมหลังอัปเดต
+    // (ไม่ต้องส่งขออนุมัติซ้ำ - อนุมัติแค่ครั้งเดียวตามที่ต้องการ)
     db.prepare(`UPDATE visit_requests SET ${updates.join(', ')} WHERE id = ?`).run(...values);
   }
   if (req.body.custom_fields) {
     saveCustomFieldValues(req.params.id, req.body.custom_fields);
   }
-  logAction(req.session.userId, 'edit_request', `แก้ไขคำขอ #${vr.code}`);
+  if (isPostVisitUpdate) {
+    db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'อัปเดตข้อมูลหลังปฏิบัติงาน', 'web')`).run(req.params.id, req.session.userId);
+    logAction(req.session.userId, 'update_after_visit', `อัปเดตข้อมูลหลังปฏิบัติงาน #${vr.code}`);
+  } else {
+    logAction(req.session.userId, 'edit_request', `แก้ไขคำขอ #${vr.code}`);
+  }
   res.json({ ok: true });
 });
 
@@ -353,6 +410,37 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
   db.prepare(`UPDATE visit_requests SET status = 'cancelled' WHERE id = ?`).run(req.params.id);
   db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'ยกเลิกคำขอ', 'web')`).run(req.params.id, req.session.userId);
   logAction(req.session.userId, 'cancel_request', `ยกเลิกคำขอ #${vr.code}`);
+  res.json({ ok: true });
+});
+
+// ลบคำขอ Visit ทิ้งถาวร (ไม่ใช่แค่ยกเลิก/เปลี่ยนสถานะ) - เฉพาะ Admin เท่านั้น ใช้สำหรับเคลียร์ข้อมูลทดสอบ
+// ลบข้อมูลลูกผูกทั้งหมดที่อ้างถึงคำขอนี้ด้วย (ไม่มี ON DELETE CASCADE ในสคีมา จึงต้องลบเองให้ครบ)
+function deleteVisitRequestCascade(id) {
+  db.prepare('DELETE FROM approval_history WHERE visit_request_id = ?').run(id);
+  db.prepare('DELETE FROM approval_tokens WHERE visit_request_id = ?').run(id);
+  db.prepare('DELETE FROM visit_custom_values WHERE visit_request_id = ?').run(id);
+  db.prepare('DELETE FROM notifications WHERE related_id = ?').run(id);
+  db.prepare('DELETE FROM visit_requests WHERE id = ?').run(id);
+}
+
+// ลบคำขอ Visit "ทั้งหมด" ในระบบทิ้งถาวร - สำหรับเคลียร์ข้อมูลทดสอบก่อนใช้งานจริง (เฉพาะ Admin)
+// หมายเหตุ: ต้อง define ไว้ "ก่อน" router.delete('/:id') ด้านล่าง เพราะ Express จับเส้นทางตามลำดับที่ประกาศ
+// ถ้า '/:id' อยู่ก่อน จะจับ '/bulk/all' เป็น id='bulk' แทนที่จะไปเส้นทางนี้
+router.delete('/bulk/all', requireAuth, requireRole('Admin'), (req, res) => {
+  const rows = db.prepare('SELECT id FROM visit_requests').all();
+  const tx = db.transaction(() => {
+    rows.forEach(r => deleteVisitRequestCascade(r.id));
+  });
+  tx();
+  logAction(req.session.userId, 'delete_all_requests', `ลบคำขอ Visit ทั้งหมดทิ้งถาวร (${rows.length} รายการ) - ล้างข้อมูลทดสอบ`);
+  res.json({ ok: true, deleted: rows.length });
+});
+
+router.delete('/:id', requireAuth, requireRole('Admin'), (req, res) => {
+  const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
+  if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
+  deleteVisitRequestCascade(req.params.id);
+  logAction(req.session.userId, 'delete_request', `ลบคำขอ #${vr.code} ถาวร`);
   res.json({ ok: true });
 });
 

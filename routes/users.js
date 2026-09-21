@@ -4,6 +4,8 @@ const bcrypt = require('bcryptjs');
 const db = require('../db/database');
 const { requireAuth, requireRole } = require('./middleware');
 const { logAction } = require('../utils/systemLog');
+const { isValidDepartment } = require('../utils/departments');
+const { getDepartmentsForUser, setDepartmentsForUser } = require('../utils/userDepartments');
 
 const router = express.Router();
 
@@ -14,11 +16,14 @@ function sanitize(u) {
 
 // โปรไฟล์ของตัวเอง
 router.put('/me', requireAuth, (req, res) => {
-  const { full_name, email, phone, position, department, email_notify } = req.body;
+  const { full_name, email, phone, position, department, email_notify, avatar_url } = req.body;
+  if (!isValidDepartment(department)) {
+    return res.status(400).json({ error: 'แผนกไม่ถูกต้อง กรุณาเลือกจากรายการ' });
+  }
   db.prepare(`
-    UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, department = ?, email_notify = ?
+    UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, department = ?, email_notify = ?, avatar_url = ?
     WHERE id = ?
-  `).run(full_name, email, phone, position, department, email_notify ? 1 : 0, req.session.userId);
+  `).run(full_name, email, phone, position, department, email_notify ? 1 : 0, avatar_url || null, req.session.userId);
   res.json({ ok: true });
 });
 
@@ -33,16 +38,32 @@ router.put('/me/password', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// รายชื่อผู้ใช้ในแผนกหนึ่งๆ (สำหรับ dropdown เลือกคน เช่น เชิญ Engineer ร่วมทีมไป Visit) - ทุกคนที่ login แล้วดูได้ ไม่ใช่แค่ Admin
+router.get('/by-department/:dept', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT DISTINCT u.id, u.full_name FROM users u
+    JOIN user_departments ud ON ud.user_id = u.id
+    WHERE ud.department = ? AND u.is_active = 1
+    ORDER BY u.full_name
+  `).all(req.params.dept);
+  res.json({ users: rows });
+});
+
 // ---------- ADMIN: จัดการผู้ใช้ ----------
 router.get('/', requireAuth, requireRole('Admin'), (req, res) => {
   const rows = db.prepare('SELECT * FROM users ORDER BY id').all();
-  res.json({ users: rows.map(sanitize) });
+  res.json({ users: rows.map(u => ({ ...sanitize(u), departments: getDepartmentsForUser(u.id) })) });
 });
 
 router.post('/', requireAuth, requireRole('Admin'), (req, res) => {
-  const { username, password, full_name, email, phone, position, department, role } = req.body;
+  const { username, password, full_name, email, phone, position, departments, role } = req.body;
   if (!username || !password || !full_name) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
+  }
+  const deptList = Array.isArray(departments) ? departments.filter(Boolean) : [];
+  const invalidDept = deptList.find(d => !isValidDepartment(d));
+  if (invalidDept) {
+    return res.status(400).json({ error: `แผนก "${invalidDept}" ไม่ถูกต้อง กรุณาเลือกจากรายการ` });
   }
   const dup = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
   if (dup) return res.status(400).json({ error: 'ชื่อผู้ใช้นี้มีอยู่แล้ว' });
@@ -50,19 +71,26 @@ router.post('/', requireAuth, requireRole('Admin'), (req, res) => {
   const info = db.prepare(`
     INSERT INTO users (username, password_hash, full_name, email, phone, position, department, role)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(username, bcrypt.hashSync(password, 10), full_name, email || '', phone || '', position || '', department || '', role || 'Employee');
+  `).run(username, bcrypt.hashSync(password, 10), full_name, email || '', phone || '', position || '', deptList[0] || '', role || 'Employee');
+  setDepartmentsForUser(info.lastInsertRowid, deptList);
   logAction(req.session.userId, 'create_user', `สร้างผู้ใช้ใหม่ ${username} (${full_name})`);
   res.status(201).json({ id: info.lastInsertRowid });
 });
 
 router.put('/:id', requireAuth, requireRole('Admin'), (req, res) => {
-  const { full_name, email, phone, position, department, role } = req.body;
+  const { full_name, email, phone, position, departments, role } = req.body;
   const exists = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
   if (!exists) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+  const deptList = Array.isArray(departments) ? departments.filter(Boolean) : [];
+  const invalidDept = deptList.find(d => !isValidDepartment(d));
+  if (invalidDept) {
+    return res.status(400).json({ error: `แผนก "${invalidDept}" ไม่ถูกต้อง กรุณาเลือกจากรายการ` });
+  }
   db.prepare(`
-    UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, department = ?, role = ?
+    UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, role = ?
     WHERE id = ?
-  `).run(full_name, email || '', phone || '', position || '', department || '', role, req.params.id);
+  `).run(full_name, email || '', phone || '', position || '', role, req.params.id);
+  setDepartmentsForUser(req.params.id, deptList);
   logAction(req.session.userId, 'update_user', `แก้ไขข้อมูลผู้ใช้ #${req.params.id} (${full_name})`);
   res.json({ ok: true });
 });

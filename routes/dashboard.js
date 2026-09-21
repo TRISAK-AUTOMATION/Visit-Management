@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db/database');
 const { requireAuth } = require('./middleware');
+const { getDepartmentsForUser } = require('../utils/userDepartments');
 
 const router = express.Router();
 
@@ -14,10 +15,15 @@ router.get('/stats', requireAuth, (req, res) => {
     scope = 'AND vr.requester_id = ?';
     params = [userId];
   } else if (role === 'Approver') {
-    // Approver เห็นเฉพาะสถิติของคำขอในแผนกตัวเอง (ไม่รวมฉบับร่าง/รอแก้ไข ที่ยังอยู่กับผู้ขอ)
-    const me = db.prepare('SELECT department FROM users WHERE id = ?').get(userId);
-    scope = `AND u.department = ? AND vr.status != 'draft' AND vr.status != 'revision'`;
-    params = [me ? me.department : ''];
+    // Approver เห็นเฉพาะสถิติของคำขอในแผนกที่ตัวเองดูแล (ดูแลได้หลายแผนก) (ไม่รวมฉบับร่าง/รอแก้ไข ที่ยังอยู่กับผู้ขอ)
+    const myDepts = getDepartmentsForUser(userId);
+    if (!myDepts.length) {
+      scope = `AND 1 = 0`;
+      params = [];
+    } else {
+      scope = `AND u.department IN (${myDepts.map(() => '?').join(',')}) AND vr.status != 'draft' AND vr.status != 'revision'`;
+      params = myDepts;
+    }
   }
   // Admin: ไม่มีการกรอง เห็นทุกคำขอ
 
