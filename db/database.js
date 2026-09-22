@@ -276,6 +276,77 @@ CREATE TABLE IF NOT EXISTS core_field_settings (
   updated_at   TEXT DEFAULT (datetime('now')),
   updated_by   INTEGER REFERENCES users(id)
 );
+
+-- ===== ระบบอนุมัติแบบ Template-Based Workflow (V1: เฉพาะโมดูล Leave) =====
+-- Template = 1 workflow ที่ Admin ตั้งไว้ล่วงหน้า (Requester ที่ใช้ได้ + หลาย State + ผู้อนุมัติต่อ State)
+CREATE TABLE IF NOT EXISTS approval_templates (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  module      TEXT NOT NULL,             -- 'leave' (V1 มีแค่โมดูลเดียว เผื่อขยายเป็น ot/visit ภายหลัง)
+  name        TEXT NOT NULL,
+  is_active   INTEGER NOT NULL DEFAULT 1,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT DEFAULT (datetime('now')),
+  updated_at  TEXT DEFAULT (datetime('now'))
+);
+
+-- ใครมีสิทธิ์ใช้ Template นี้ (ผู้ขอ)
+CREATE TABLE IF NOT EXISTS template_requesters (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_id  INTEGER NOT NULL REFERENCES approval_templates(id) ON DELETE CASCADE,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(template_id, user_id)
+);
+
+-- ขั้นตอนการอนุมัติของ Template เรียงลำดับด้วย sort_order
+CREATE TABLE IF NOT EXISTS template_states (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_id  INTEGER NOT NULL REFERENCES approval_templates(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  sort_order   INTEGER NOT NULL DEFAULT 0,
+  mode         TEXT NOT NULL DEFAULT 'ANY'   -- ANY | ALL
+);
+
+-- ผู้อนุมัติของแต่ละ State ใน Template
+CREATE TABLE IF NOT EXISTS template_state_approvers (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  state_id  INTEGER NOT NULL REFERENCES template_states(id) ON DELETE CASCADE,
+  user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(state_id, user_id)
+);
+
+-- Snapshot ของ Workflow ที่ผูกกับ Request จริงแต่ละใบ (คัดลอกตอนสร้าง/ส่งคำขอ กัน Template เปลี่ยนภายหลังกระทบคำขอเก่า)
+-- template_id = NULL หมายถึงใช้ "ระบบเดิม" (อิงแผนก, 1 State/ANY) เป็นค่า fallback เพราะผู้ขอคนนี้ไม่มี Template ครอบคลุม
+CREATE TABLE IF NOT EXISTS request_workflows (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  module               TEXT NOT NULL,
+  request_id           INTEGER NOT NULL,
+  template_id          INTEGER REFERENCES approval_templates(id) ON DELETE SET NULL,
+  template_name        TEXT,             -- เก็บชื่อสำรองไว้ เผื่อ Template ถูกลบทีหลัง ป้ายยังแสดงถูก
+  current_state_index  INTEGER NOT NULL DEFAULT 0,
+  status               TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected | revision
+  created_at           TEXT DEFAULT (datetime('now')),
+  UNIQUE(module, request_id)
+);
+
+-- State ที่คัดลอกมาไว้ในแต่ละ Workflow (ไม่ผูกกับ template_states อีกต่อไปหลัง snapshot)
+CREATE TABLE IF NOT EXISTS request_workflow_states (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_id   INTEGER NOT NULL REFERENCES request_workflows(id) ON DELETE CASCADE,
+  state_index   INTEGER NOT NULL,
+  name          TEXT NOT NULL,
+  mode          TEXT NOT NULL DEFAULT 'ANY',
+  status        TEXT NOT NULL DEFAULT 'waiting'  -- waiting | pending | approved | rejected | revision
+);
+
+-- ผู้อนุมัติของแต่ละ State ใน Workflow + การตัดสินใจของแต่ละคน
+CREATE TABLE IF NOT EXISTS request_workflow_approvers (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_state_id   INTEGER NOT NULL REFERENCES request_workflow_states(id) ON DELETE CASCADE,
+  user_id             INTEGER NOT NULL REFERENCES users(id),
+  decision            TEXT,        -- NULL=ยังไม่ตัดสิน | approve | reject | revision
+  comment              TEXT,
+  decided_at          TEXT
+);
 `);
 
 // เผื่อฐานข้อมูลถูกสร้างจากเวอร์ชันก่อนหน้าที่ยังไม่มีคอลัมน์ sort_order (ตารางมีอยู่แล้วแต่ยังไม่มีคอลัมน์นี้)

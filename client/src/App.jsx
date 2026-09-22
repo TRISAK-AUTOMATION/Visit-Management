@@ -32,6 +32,7 @@ import AdminSystemLogs from './pages/AdminSystemLogs';
 import AdminDataRetention from './pages/AdminDataRetention';
 import AdminEmailSettings from './pages/AdminEmailSettings';
 import AdminPdfSettings from './pages/AdminPdfSettings';
+import AdminApprovalTemplates from './pages/AdminApprovalTemplates';
 
 export default function App() {
   return (
@@ -46,7 +47,7 @@ export default function App() {
       <Route path="/customers" element={<ProtectedRoute check={canAccessVisit}><Customers /></ProtectedRoute>} />
       <Route path="/leave-request" element={<ProtectedRoute><LeaveRequest /></ProtectedRoute>} />
       <Route path="/my-leave" element={<ProtectedRoute><MyLeave /></ProtectedRoute>} />
-      <Route path="/approve-leave" element={<ProtectedRoute roles={['Approver', 'Admin']}><ApproveLeave /></ProtectedRoute>} />
+      <Route path="/approve-leave" element={<ProtectedRoute check={(me) => me.can_approve_leave}><ApproveLeave /></ProtectedRoute>} />
       <Route path="/ot-request" element={<ProtectedRoute><OTRequest /></ProtectedRoute>} />
       <Route path="/my-ot" element={<ProtectedRoute><MyOT /></ProtectedRoute>} />
       <Route path="/approve-ot" element={<ProtectedRoute roles={['Approver', 'Admin']}><ApproveOT /></ProtectedRoute>} />
@@ -65,6 +66,7 @@ export default function App() {
       <Route path="/admin-data-retention" element={<ProtectedRoute roles={['Admin']}><AdminDataRetention /></ProtectedRoute>} />
       <Route path="/admin-email-settings" element={<ProtectedRoute roles={['Admin']}><AdminEmailSettings /></ProtectedRoute>} />
       <Route path="/admin-pdf-settings" element={<ProtectedRoute roles={['Admin']}><AdminPdfSettings /></ProtectedRoute>} />
+      <Route path="/admin-approval-templates" element={<ProtectedRoute roles={['Admin']}><AdminApprovalTemplates /></ProtectedRoute>} />
 
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

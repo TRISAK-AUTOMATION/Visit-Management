@@ -4,7 +4,38 @@ import Layout from '../components/Layout';
 import { api, fmtDate } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
-const TABS = [{ f: 'pending', label: 'รออนุมัติ' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }];
+const TABS = [{ f: 'pending', label: 'รออนุมัติ' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }, { f: 'revision', label: 'ส่งกลับแก้ไข' }];
+
+const WF_STATE_LABEL = { waiting: 'รอคิว', pending: 'กำลังพิจารณา', approved: 'ผ่านแล้ว', rejected: 'ไม่อนุมัติ', revision: 'ส่งกลับแก้ไข' };
+
+function WorkflowTimeline({ workflow }) {
+  if (!workflow) return null;
+  return (
+    <div style={{ marginTop: 4 }}>
+      <div className="muted" style={{ fontSize: 11.5, marginBottom: 6 }}>Workflow: {workflow.templateName || 'ระบบเดิม (อิงแผนก)'}</div>
+      {workflow.states.map((s, i) => (
+        <div key={i} style={{
+          display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0',
+          borderLeft: `3px solid ${s.status === 'approved' ? '#1fae62' : s.status === 'rejected' ? '#d93a30' : s.status === 'revision' ? '#c9670f' : i === workflow.currentStateIndex ? '#2f5bff' : '#dfe3ea'}`,
+          paddingLeft: 10, opacity: s.status === 'waiting' ? 0.6 : 1
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: 12.5 }}>
+              {i + 1}. {s.name} <span className="muted" style={{ fontWeight: 400 }}>({s.mode === 'ALL' ? 'ทุกคนต้องอนุมัติ' : 'คนใดคนหนึ่งอนุมัติ'})</span>
+            </div>
+            <div className="muted" style={{ fontSize: 11.5 }}>{WF_STATE_LABEL[s.status] || s.status}</div>
+            {s.approvers.map(a => (
+              <div key={a.user_id} style={{ fontSize: 11.5, marginTop: 2 }}>
+                {a.full_name}{a.decision ? ` · ${a.decision === 'approve' ? 'อนุมัติ' : a.decision === 'reject' ? 'ไม่อนุมัติ' : 'ส่งกลับแก้ไข'}` : ''}
+                {a.comment && <span className="muted"> — {a.comment}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function durationLabel(r) {
   if (r.leave_mode === 'full_day') return `${r.duration_days} วัน`;
@@ -31,10 +62,12 @@ export default function ApproveLeave() {
   };
 
   const decide = async (id, action) => {
-    const note = prompt(action === 'approve' ? 'ความคิดเห็น (ถ้ามี) ก่อนอนุมัติ:' : 'เหตุผลที่ไม่อนุมัติ:', '') || '';
+    const promptText = action === 'approve' ? 'ความคิดเห็น (ถ้ามี) ก่อนอนุมัติ:' : action === 'revision' ? 'ระบุสิ่งที่ต้องแก้ไข:' : 'เหตุผลที่ไม่อนุมัติ:';
+    const note = prompt(promptText, '') || '';
+    if (action === 'revision' && !note.trim()) { toast('กรุณาระบุสิ่งที่ต้องแก้ไข', 'error'); return; }
     try {
       await api.post(`/api/leave-requests/${id}/${action}`, { note });
-      toast(action === 'approve' ? 'อนุมัติคำขอลาสำเร็จ' : 'บันทึกการไม่อนุมัติแล้ว', 'success');
+      toast(action === 'approve' ? 'บันทึกการอนุมัติแล้ว' : action === 'revision' ? 'ส่งกลับให้แก้ไขแล้ว' : 'บันทึกการไม่อนุมัติแล้ว', 'success');
       setDetail(null);
       load();
     } catch (err) { toast(err.message, 'error'); }
@@ -62,6 +95,7 @@ export default function ApproveLeave() {
                     {r.status === 'pending' && (
                       <>
                         <button className="btn btn-success btn-sm" onClick={() => decide(r.id, 'approve')}>อนุมัติ</button>{' '}
+                        <button className="btn btn-outline btn-sm" onClick={() => decide(r.id, 'revision')}>ส่งกลับแก้ไข</button>{' '}
                         <button className="btn btn-danger btn-sm" onClick={() => decide(r.id, 'reject')}>ไม่อนุมัติ</button>
                       </>
                     )}
@@ -84,9 +118,13 @@ export default function ApproveLeave() {
               <p><b>จำนวน:</b> {durationLabel(detail.request)}</p>
               <p><b>เหตุผล:</b> {detail.request.reason || '-'}</p>
               {detail.request.attachment && <p><a href={detail.request.attachment} download>ดาวน์โหลดเอกสารแนบ</a></p>}
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '14px 0' }} />
+              <b>ขั้นตอนการอนุมัติ</b>
+              <WorkflowTimeline workflow={detail.workflow} />
               {detail.request.status === 'pending' && (
                 <div className="form-actions" style={{ justifyContent: 'flex-start', marginTop: 12 }}>
                   <button className="btn btn-success" onClick={() => decide(detail.request.id, 'approve')}>อนุมัติ</button>
+                  <button className="btn btn-outline" onClick={() => decide(detail.request.id, 'revision')}>ส่งกลับแก้ไข</button>
                   <button className="btn btn-danger" onClick={() => decide(detail.request.id, 'reject')}>ไม่อนุมัติ</button>
                 </div>
               )}

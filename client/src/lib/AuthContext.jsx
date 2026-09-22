@@ -25,10 +25,13 @@ export function AuthProvider({ children }) {
       if (user && user.role !== 'Employee') {
         const pend = await api.get('/api/visit-requests?scope=pending&status=pending');
         counts.pending = pend.requests.length;
-        const pendLeave = await api.get('/api/leave-requests?scope=pending&status=pending');
-        counts.pendingLeave = pendLeave.requests.length;
         const pendOT = await api.get('/api/ot-requests?scope=pending&status=pending');
         counts.pendingOT = pendOT.requests.length;
+      }
+      // แยกเงื่อนไขจาก visit/OT เพราะ leave ใช้ can_approve_leave (Admin อาจตั้งพนักงาน role Employee เป็นผู้อนุมัติผ่าน Template ได้)
+      if (user && (user.role !== 'Employee' || user.can_approve_leave)) {
+        const pendLeave = await api.get('/api/leave-requests?scope=pending&status=pending');
+        counts.pendingLeave = pendLeave.requests.length;
       }
       const notif = await api.get('/api/notifications');
       counts.unread = notif.unread;

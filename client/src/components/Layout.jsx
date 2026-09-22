@@ -20,7 +20,6 @@ const MENU = {
     { href: '/approve-requests', icon: '\u2705', label: 'Approve Requests', badgeKey: 'pending' },
     { href: '/leave-request', icon: '\uD83C\uDFD6', label: 'สร้างคำขอลา' },
     { href: '/my-leave', icon: '\uD83D\uDCC6', label: 'การลาของฉัน' },
-    { href: '/approve-leave', icon: '\uD83D\uDDD3', label: 'อนุมัติการลา', badgeKey: 'pendingLeave' },
     { href: '/ot-request', icon: '\u23F0', label: 'สร้างคำขอ OT' },
     { href: '/my-ot', icon: '\uD83D\uDDD2', label: 'OT ของฉัน' },
     { href: '/approve-ot', icon: '\u2611', label: 'อนุมัติ OT', badgeKey: 'pendingOT' },
@@ -38,6 +37,7 @@ const MENU = {
     { href: '/admin-profile-permissions', icon: '\uD83C\uDFC5', label: 'มอบสิทธิ์ผู้ประเมิน' },
     { href: '/admin-form-builder', icon: '\uD83E\uDDF1', label: 'Form Builder' },
     { href: '/admin-page-content', icon: '\uD83D\uDCC4', label: 'จัดการหน้า/หัวข้อ' },
+    { href: '/admin-approval-templates', icon: '\uD83D\uDDC2', label: 'Template อนุมัติ (การขอลา)' },
     { href: '/admin-data-retention', icon: '\uD83D\uDDD1', label: 'ตั้งค่าการลบข้อมูลอัตโนมัติ' },
     { href: '/admin-system-logs', icon: '\uD83D\uDCDC', label: 'System Logs' }
   ]
@@ -53,6 +53,8 @@ function buildMenu(me) {
   items = items.concat(roleMenu);
   // "ทีมของฉัน" โชว์ตามสิทธิ์จริง (can_evaluate) ไม่ใช่ role ตายตัว เพราะ Admin อาจมอบสิทธิ์พิเศษให้พนักงาน role Employee ก็ได้
   if (me.can_evaluate) items.push({ href: '/my-team', icon: '\uD83C\uDFC5', label: 'ทีมของฉัน' });
+  // "อนุมัติการลา" โชว์ตามสิทธิ์จริง (can_approve_leave) เช่นกัน เพราะ Admin ตั้ง Template ให้พนักงาน role Employee เป็นผู้อนุมัติได้
+  if (me.can_approve_leave) items.push({ href: '/approve-leave', icon: '\uD83D\uDDD3', label: 'อนุมัติการลา', badgeKey: 'pendingLeave' });
   items = items.concat(canAccessVisit(me) ? MENU.tail : MENU.tail.filter(item => item.href !== '/customers'));
   if (me.role === 'Admin') items = items.concat(MENU.admin);
   return items;

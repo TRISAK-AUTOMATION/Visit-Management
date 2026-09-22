@@ -7,15 +7,36 @@ const { toThaiDate } = require('../utils/dateFormat');
 const { logAction } = require('../utils/systemLog');
 const { approverIdsForDepartments } = require('../utils/userDepartments');
 const { canEditProfile } = require('../utils/profilePermissions');
+const approvalEngine = require('../utils/approvalEngine');
 
 const router = express.Router();
 
 const LEAVE_TYPES = ['ลากิจ', 'ลาป่วย', 'ลาพักร้อน'];
 const LEAVE_MODES = ['full_day', 'half_day_morning', 'half_day_afternoon', 'hours'];
-const EDITABLE_STATUSES = ['draft', 'pending'];
+// revision = ถูกส่งกลับให้แก้ไข ยังแก้ไข+ส่งใหม่ได้เหมือน pending
+const EDITABLE_STATUSES = ['draft', 'pending', 'revision'];
 
 function isValidLeaveType(t) { return LEAVE_TYPES.includes(t); }
 function isValidLeaveMode(m) { return LEAVE_MODES.includes(m); }
+
+// เช็คว่าผู้ใช้นี้มี Template อนุมัติของโมดูล "leave" ที่เปิดใช้งานอยู่ (is_active=1) และเลือกเขาไว้เป็น Requester จริงหรือไม่
+// เขียนแยกไว้ในไฟล์นี้เอง (ไม่เรียกผ่าน approvalEngine.js) กันปัญหาไฟล์คนละเวอร์ชันกันแล้วฟังก์ชันหาย ทำให้ server พังตอน restart
+// เงื่อนไข: ต้องมี Template ที่ active + มีเขาอยู่ใน Requester + Template นั้นต้องมีอย่างน้อย 1 State ที่มีผู้อนุมัติจริง (ไม่งั้นถือว่ายังตั้งค่าไม่ครบ ไม่นับว่ามีสิทธิ์)
+function isEligibleLeaveRequester(userId) {
+  const tpl = db.prepare(`
+    SELECT t.id FROM approval_templates t
+    JOIN template_requesters tr ON tr.template_id = t.id
+    WHERE t.module = 'leave' AND t.is_active = 1 AND tr.user_id = ?
+    LIMIT 1
+  `).get(userId);
+  if (!tpl) return false;
+  const stateCount = db.prepare(`
+    SELECT COUNT(*) AS c FROM template_states ts
+    WHERE ts.template_id = ? AND EXISTS (SELECT 1 FROM template_state_approvers a WHERE a.state_id = ts.id)
+  `).get(tpl.id).c;
+  return stateCount > 0;
+}
+const NOT_ELIGIBLE_MSG = 'คุณยังไม่มีสิทธิ์ส่งคำขอลา กรุณาติดต่อผู้ดูแลระบบเพื่อเพิ่มชื่อคุณในรายชื่อผู้มีสิทธิ์ (Requester) ของ Template อนุมัติก่อน';
 
 // นับจำนวนวันปฏิทินระหว่าง date_from - date_to (รวมทั้งสองวัน) แบบง่าย ไม่ตัดวันหยุด/เสาร์-อาทิตย์
 function countCalendarDays(dateFrom, dateTo) {
@@ -74,26 +95,29 @@ router.get('/', requireAuth, (req, res) => {
     return res.json({ requests: rows });
   }
   if (scope === 'pending') {
-    if (!['Approver', 'Admin'].includes(req.session.role)) {
+    if (!['Approver', 'Admin'].includes(req.session.role) && !approvalEngine.hasEverBeenApprover(req.session.userId)) {
       return res.status(403).json({ error: 'คุณไม่มีสิทธิ์เข้าถึงส่วนนี้' });
     }
+    const wantedStatus = status || 'pending';
     let rows;
     if (req.session.role === 'Admin') {
       rows = db.prepare(`
         SELECT lr.*, u.full_name AS requester_name, u.department AS requester_department
         FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
         WHERE lr.status = ? ORDER BY lr.created_at DESC
-      `).all(status || 'pending');
+      `).all(wantedStatus);
     } else {
-      const myDepts = db.prepare('SELECT department FROM user_departments WHERE user_id = ?').all(req.session.userId).map(r => r.department);
-      if (!myDepts.length) return res.json({ requests: [] });
-      const placeholders = myDepts.map(() => '?').join(',');
+      // ใช้ workflow engine หาว่าคำขอไหนเกี่ยวข้องกับตัวเอง แทนการอิงแผนกตรงๆ เพราะตอนนี้บาง request อาจวิ่งอยู่ใน Template ที่ Admin ตั้งไว้
+      // wantedStatus='pending' -> ต้องเป็น state ปัจจุบันที่รอฉันตัดสินใจอยู่จริงๆ เท่านั้น | อื่นๆ (approved/rejected/revision) -> เห็นทุกคำขอที่เคยอยู่ในสายอนุมัติของฉัน
+      const ids = approvalEngine.listRequestIdsForApprover('leave', req.session.userId, { onlyCurrentPending: wantedStatus === 'pending' });
+      if (!ids.length) return res.json({ requests: [] });
+      const placeholders = ids.map(() => '?').join(',');
       rows = db.prepare(`
         SELECT lr.*, u.full_name AS requester_name, u.department AS requester_department
         FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
-        WHERE lr.status = ? AND u.department IN (${placeholders})
+        WHERE lr.status = ? AND lr.id IN (${placeholders})
         ORDER BY lr.created_at DESC
-      `).all(status || 'pending', ...myDepts);
+      `).all(wantedStatus, ...ids);
     }
     return res.json({ requests: rows });
   }
@@ -109,7 +133,10 @@ router.get('/:id', requireAuth, (req, res) => {
     WHERE lr.id = ?
   `).get(req.params.id);
   if (!lr) return res.status(404).json({ error: 'ไม่พบคำขอลา' });
-  if (lr.requester_id !== req.session.userId && !['Approver', 'Admin'].includes(req.session.role)) {
+  const isRequester = lr.requester_id === req.session.userId;
+  const isAdmin = req.session.role === 'Admin';
+  const isParticipant = approvalEngine.isWorkflowParticipant('leave', lr.id, req.session.userId);
+  if (!isRequester && !isAdmin && !isParticipant) {
     return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ดูคำขอนี้' });
   }
   const history = db.prepare(`
@@ -117,7 +144,8 @@ router.get('/:id', requireAuth, (req, res) => {
     LEFT JOIN users u ON u.id = h.action_by
     WHERE h.leave_request_id = ? ORDER BY h.created_at ASC
   `).all(req.params.id);
-  res.json({ request: lr, history });
+  const workflow = approvalEngine.getWorkflow('leave', lr.id);
+  res.json({ request: lr, history, workflow });
 });
 
 // สร้างคำขอลา (save_as: 'draft' หรือส่งเลย)
@@ -132,6 +160,10 @@ router.post('/', requireAuth, (req, res) => {
     if (!reason || !reason.trim()) return res.status(400).json({ error: 'กรุณาระบุเหตุผลการลา' });
     if (leave_mode === 'hours' && (!req.body.time_from || !req.body.time_to)) {
       return res.status(400).json({ error: 'กรุณาระบุเวลาเริ่มต้นและสิ้นสุด' });
+    }
+    // ยังไม่มี Template อนุมัติไหนเซ็ตชื่อผู้ใช้นี้ไว้เป็น Requester เลย -> บล็อกตอนส่งคำขอ (ฟอร์มกรอก/บันทึกร่างได้ปกติ แต่ส่งจริงไม่ได้)
+    if (!isEligibleLeaveRequester(req.session.userId)) {
+      return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
     }
   }
 
@@ -165,6 +197,7 @@ router.post('/', requireAuth, (req, res) => {
 
   db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action) VALUES (?, ?, 'ส่งคำขอ')`).run(lrId, req.session.userId);
   logAction(req.session.userId, 'submit_leave_request', `ส่งคำขอลา #${code}`);
+  approvalEngine.createWorkflow('leave', lrId, req.session.userId);
   notifyLeaveSubmitted(lrId);
   res.status(201).json({ id: lrId, code, status });
 });
@@ -194,9 +227,30 @@ router.post('/:id/submit', requireAuth, (req, res) => {
   if (!isValidLeaveType(lr.leave_type) || !lr.reason) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลให้ครบก่อนส่งคำขอ' });
   }
+  if (!isEligibleLeaveRequester(req.session.userId)) {
+    return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
+  }
   db.prepare(`UPDATE leave_requests SET status = 'pending' WHERE id = ?`).run(req.params.id);
   db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action) VALUES (?, ?, 'ส่งคำขอ')`).run(req.params.id, req.session.userId);
   logAction(req.session.userId, 'submit_leave_request', `ส่งคำขอลา #${lr.code}`);
+  approvalEngine.createWorkflow('leave', lr.id, req.session.userId);
+  notifyLeaveSubmitted(lr.id);
+  res.json({ ok: true });
+});
+
+// ส่งใหม่หลังถูกส่งกลับให้แก้ไข (revision) - แก้ไขข้อมูลผ่าน PUT /:id ก่อนแล้วค่อยเรียกอันนี้ เพื่อรีเซ็ต workflow กลับไปเริ่มที่ State แรก
+router.post('/:id/resubmit', requireAuth, (req, res) => {
+  const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(req.params.id);
+  if (!lr) return res.status(404).json({ error: 'ไม่พบคำขอลา' });
+  if (lr.requester_id !== req.session.userId) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ส่งคำขอนี้' });
+  if (lr.status !== 'revision') return res.status(400).json({ error: 'คำขอนี้ไม่ได้อยู่ในสถานะรอแก้ไข' });
+  if (!isEligibleLeaveRequester(req.session.userId)) {
+    return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
+  }
+  db.prepare(`UPDATE leave_requests SET status = 'pending', approver_id = NULL, approved_at = NULL, approval_note = '' WHERE id = ?`).run(req.params.id);
+  db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action) VALUES (?, ?, 'ส่งคำขอใหม่หลังแก้ไข')`).run(req.params.id, req.session.userId);
+  logAction(req.session.userId, 'resubmit_leave_request', `ส่งคำขอลาใหม่หลังแก้ไข #${lr.code}`);
+  approvalEngine.createWorkflow('leave', lr.id, req.session.userId); // เริ่ม workflow ใหม่จาก State แรกเสมอ (ดึง Template ล่าสุด ณ ตอนนี้)
   notifyLeaveSubmitted(lr.id);
   res.json({ ok: true });
 });
@@ -205,7 +259,7 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
   const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(req.params.id);
   if (!lr) return res.status(404).json({ error: 'ไม่พบคำขอลา' });
   if (lr.requester_id !== req.session.userId) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ยกเลิกคำขอนี้' });
-  if (!['draft', 'pending'].includes(lr.status)) return res.status(400).json({ error: 'ไม่สามารถยกเลิกคำขอนี้ได้แล้ว' });
+  if (!['draft', 'pending', 'revision'].includes(lr.status)) return res.status(400).json({ error: 'ไม่สามารถยกเลิกคำขอนี้ได้แล้ว' });
   db.prepare(`UPDATE leave_requests SET status = 'cancelled' WHERE id = ?`).run(req.params.id);
   db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action) VALUES (?, ?, 'ยกเลิก')`).run(req.params.id, req.session.userId);
   logAction(req.session.userId, 'cancel_leave_request', `ยกเลิกคำขอลา #${lr.code}`);
@@ -213,52 +267,80 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
 });
 
 function requireApproverOrAdmin(req, res, next) {
-  if (!['Approver', 'Admin'].includes(req.session.role)) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์เข้าถึงส่วนนี้' });
+  // อนุญาตทั้งหัวหน้า/Admin โดยตำแหน่ง และคนที่ Admin ตั้งเป็นผู้อนุมัติผ่าน Template (ไม่ว่า role จะเป็นอะไร)
+  // การตรวจว่าเป็นผู้อนุมัติของ "คำขอนี้ใน state ปัจจุบัน" จริงหรือไม่ ทำอีกชั้นใน approvalEngine.decide() อยู่แล้ว
+  if (!['Approver', 'Admin'].includes(req.session.role) && !approvalEngine.hasEverBeenApprover(req.session.userId)) {
+    return res.status(403).json({ error: 'คุณไม่มีสิทธิ์เข้าถึงส่วนนี้' });
+  }
   next();
 }
 
 router.post('/:id/approve', requireAuth, requireApproverOrAdmin, (req, res) => {
-  decide(req, res, 'approved', 'อนุมัติ');
+  decide(req, res, 'approve', 'อนุมัติ');
 });
 router.post('/:id/reject', requireAuth, requireApproverOrAdmin, (req, res) => {
-  decide(req, res, 'rejected', 'ไม่อนุมัติ');
+  decide(req, res, 'reject', 'ไม่อนุมัติ');
+});
+// ส่งกลับให้ผู้ขอแก้ไข (revision) แทนที่จะ reject จบเลย - ผู้ขอแก้ไขแล้ว resubmit วนกลับไปเริ่มที่ State แรกใหม่
+router.post('/:id/revision', requireAuth, requireApproverOrAdmin, (req, res) => {
+  decide(req, res, 'revision', 'ส่งกลับแก้ไข');
 });
 
-function decide(req, res, newStatus, actionLabel) {
+function decide(req, res, action, actionLabel) {
   const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(req.params.id);
   if (!lr) return res.status(404).json({ error: 'ไม่พบคำขอลา' });
   if (lr.status !== 'pending') return res.status(400).json({ error: 'คำขอนี้ถูกดำเนินการไปแล้ว' });
 
   const { note } = req.body;
-  db.prepare(`UPDATE leave_requests SET status = ?, approver_id = ?, approved_at = datetime('now'), approval_note = ? WHERE id = ?`)
-    .run(newStatus, req.session.userId, note || '', req.params.id);
-  db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action, note) VALUES (?, ?, ?, ?)`)
-    .run(req.params.id, req.session.userId, actionLabel, note || '');
-  logAction(req.session.userId, `leave_${newStatus}`, `${actionLabel}คำขอลา #${lr.code}`);
-
-  // อัปเดตยอดวันลาที่ใช้ไป เมื่ออนุมัติแล้ว (นับเป็นวัน - กรณีลาเป็นชั่วโมง/นาทียังไม่หักโควตาวันเต็ม)
-  if (newStatus === 'approved' && lr.duration_days > 0) {
-    ensureBalance(lr.requester_id);
-    const col = lr.leave_type === 'ลาพักร้อน' ? 'vacation_used' : lr.leave_type === 'ลากิจ' ? 'personal_used' : lr.leave_type === 'ลาป่วย' ? 'sick_used' : null;
-    if (col) {
-      db.prepare(`UPDATE leave_balances SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE user_id = ?`)
-        .run(lr.duration_days, lr.requester_id);
-    }
+  const wfBefore = approvalEngine.getWorkflow('leave', lr.id);
+  const stateName = wfBefore && wfBefore.states[wfBefore.currentStateIndex] ? wfBefore.states[wfBefore.currentStateIndex].name : '';
+  let result;
+  try {
+    result = approvalEngine.decide('leave', lr.id, req.session.userId, action, note);
+  } catch (err) {
+    if (err instanceof approvalEngine.ApprovalError) return res.status(400).json({ error: err.message });
+    throw err;
   }
 
-  notifyLeaveDecision(lr.id, newStatus, req.session.userId, note);
+  db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action, note) VALUES (?, ?, ?, ?)`)
+    .run(req.params.id, req.session.userId, `${actionLabel}${stateName ? ` (${stateName})` : ''}`, note || '');
+  logAction(req.session.userId, `leave_${action}`, `${actionLabel}คำขอลา #${lr.code}`);
+
+  if (result.finalStatus) {
+    // workflow จบแล้ว (approved / rejected / revision) - sync กลับไปที่ leave_requests.status
+    db.prepare(`UPDATE leave_requests SET status = ?, approver_id = ?, approved_at = datetime('now'), approval_note = ? WHERE id = ?`)
+      .run(result.finalStatus, req.session.userId, note || '', req.params.id);
+
+    if (result.finalStatus === 'approved' && lr.duration_days > 0) {
+      ensureBalance(lr.requester_id);
+      const col = lr.leave_type === 'ลาพักร้อน' ? 'vacation_used' : lr.leave_type === 'ลากิจ' ? 'personal_used' : lr.leave_type === 'ลาป่วย' ? 'sick_used' : null;
+      if (col) {
+        db.prepare(`UPDATE leave_balances SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE user_id = ?`)
+          .run(lr.duration_days, lr.requester_id);
+      }
+    }
+    notifyLeaveDecision(lr.id, result.finalStatus, req.session.userId, note);
+  } else if (result.advanced) {
+    // ผ่าน state นี้แล้ว ไปรอ state ถัดไป - แจ้งเตือนผู้อนุมัติ state ถัดไปว่าถึงคิวแล้ว
+    notifyLeaveSubmitted(lr.id, true);
+  }
+  // result.finalStatus === null && !advanced -> ยังรอคนอื่นใน state เดียวกัน (โหมด ALL) ไม่ต้องแจ้งอะไรเพิ่ม
+
   res.json({ ok: true });
 }
 
-function notifyLeaveSubmitted(lrId) {
+// isAdvance = true เมื่อเรียกตอน state เลื่อนไปคนถัดไป (ไม่ใช่ตอนส่งคำขอครั้งแรก) - แจ้งเฉพาะผู้อนุมัติของ state ปัจจุบัน ไม่ต้องแจ้ง Admin ซ้ำทุกรอบ
+function notifyLeaveSubmitted(lrId, isAdvance = false) {
   const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(lrId);
   const requester = db.prepare('SELECT full_name, department, email FROM users WHERE id = ?').get(lr.requester_id);
-  const approverIds = approverIdsForDepartments([requester.department]);
-  const admins = db.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
-  const ids = Array.from(new Set([...approverIds, ...admins]));
+  const currentApproverIds = approvalEngine.getCurrentApproverIds('leave', lrId);
+  const admins = isAdvance ? [] : db.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
+  const ids = Array.from(new Set([...currentApproverIds, ...admins]));
   if (!ids.length) return;
   const approvers = db.prepare(`SELECT id, full_name, email, email_notify FROM users WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
-  const msg = `มีคำขอลาใหม่จาก ${requester.full_name} (${lr.leave_type}) วันที่ ${toThaiDate(lr.date_from)}${lr.date_to !== lr.date_from ? ' ถึง ' + toThaiDate(lr.date_to) : ''}`;
+  const msg = isAdvance
+    ? `คำขอลาของ ${requester.full_name} (${lr.leave_type}) วันที่ ${toThaiDate(lr.date_from)}${lr.date_to !== lr.date_from ? ' ถึง ' + toThaiDate(lr.date_to) : ''} ถึงคิวที่ต้องให้คุณอนุมัติแล้ว`
+    : `มีคำขอลาใหม่จาก ${requester.full_name} (${lr.leave_type}) วันที่ ${toThaiDate(lr.date_from)}${lr.date_to !== lr.date_from ? ' ถึง ' + toThaiDate(lr.date_to) : ''}`;
   const notifStmt = db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, 'leave_new_request', ?, ?)`);
   for (const a of approvers) {
     notifStmt.run(a.id, msg, lrId);
@@ -276,10 +358,11 @@ function notifyLeaveDecision(lrId, status, approverId, note) {
   const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(lrId);
   const requester = db.prepare('SELECT full_name, email, email_notify FROM users WHERE id = ?').get(lr.requester_id);
   const approver = db.prepare('SELECT full_name FROM users WHERE id = ?').get(approverId);
-  const label = status === 'approved' ? 'อนุมัติ' : 'ไม่อนุมัติ';
+  const label = status === 'approved' ? 'อนุมัติ' : status === 'revision' ? 'ส่งกลับให้แก้ไข' : 'ไม่อนุมัติ';
   const msg = `คำขอลา #${lr.code} (${lr.leave_type}) ของคุณถูก${label}โดย ${approver ? approver.full_name : '-'}${note ? ' · ' + note : ''}`;
+  const notifType = status === 'approved' ? 'leave_approved' : status === 'revision' ? 'leave_revision' : 'leave_rejected';
   db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, ?, ?, ?)`)
-    .run(lr.requester_id, status === 'approved' ? 'leave_approved' : 'leave_rejected', msg, lrId);
+    .run(lr.requester_id, notifType, msg, lrId);
   if (requester && requester.email && requester.email_notify) {
     sendMail({
       to: requester.email,
