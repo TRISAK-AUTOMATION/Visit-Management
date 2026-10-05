@@ -42,8 +42,8 @@ export function AuthProvider({ children }) {
   useEffect(() => { refreshMe(); }, [refreshMe]);
   useEffect(() => { if (me) refreshBadges(me); }, [me, refreshBadges]);
 
-  const login = async (username, password) => {
-    await api.post('/api/auth/login', { username, password });
+  const login = async (username, password, remember = false) => {
+    await api.post('/api/auth/login', { username, password, remember });
     const user = await refreshMe();
     return user;
   };

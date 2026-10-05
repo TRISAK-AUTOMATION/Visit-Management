@@ -186,13 +186,12 @@ function emailShell(innerRowsHtml) {
   </body>`;
 }
 
-// อีเมลแจ้งผู้อนุมัติ: มีคำขอออกนอกสถานที่ใหม่รออนุมัติ พร้อมปุ่มอนุมัติ/ไม่อนุมัติผ่านอีเมลได้ทันที
+// อีเมลแจ้งผู้อนุมัติ: มีคำขอออกนอกสถานที่ใหม่รออนุมัติ (ต้อง login เข้าเว็บแอปเพื่อกดอนุมัติ - ไม่มีลิงก์อนุมัติแบบไม่ต้อง login ในอีเมลอีกต่อไป
+// เพราะเปลี่ยนไปใช้ระบบ Template Workflow ที่อาจมีหลายขั้นตอน การอนุมัติผ่าน token เดี่ยวๆ ในอีเมลจึงไม่สอดคล้องกับหลายขั้นตอนอีกต่อไป)
 // emailRows: array ของ { label, value } ที่ประกอบมาแล้วจากภายนอก (ฟิลด์พื้นฐาน + Field เดิม + Field ที่สร้างเอง ตามที่ Admin ติ๊กว่า "แสดงใน Email")
 // showDocCode: true/false - จะแสดงเลขที่เอกสาร #VR-code ทั้งใน subject และเนื้อหาหรือไม่ (มาจากค่าตั้งค่าที่ Admin ปรับได้)
-async function sendNewRequestEmail({ to, approverName, requesterName, vr, approveToken, rejectToken, emailRows, showDocCode }) {
+async function sendNewRequestEmail({ to, approverName, requesterName, vr, emailRows, showDocCode }) {
   const detailUrl = `${APP_BASE_URL}/approve-requests?id=${vr.id}`;
-  const approveUrl = `${APP_BASE_URL}/api/visit-requests/email-action/${approveToken}`;
-  const rejectUrl = `${APP_BASE_URL}/api/visit-requests/email-action/${rejectToken}`;
   const codeSuffix = showDocCode ? ` #${vr.code}` : '';
   const accentColor = '#2f5bff';
 
@@ -202,26 +201,16 @@ async function sendNewRequestEmail({ to, approverName, requesterName, vr, approv
     ${introText(`เรียนคุณ ${approverName},<br/><b>${requesterName}</b> ได้ส่งคำขอออกนอกสถานที่นี้เพื่อรอการอนุมัติจากท่าน`)}
     ${detailCard(emailRows)}
     <tr>
-      <td style="padding:22px 32px 6px 32px;">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-          <tr>
-            <td width="50%" style="padding-right:6px;">${ctaButton(approveUrl, '✓ อนุมัติ', '#16a34a')}</td>
-            <td width="50%" style="padding-left:6px;">${ctaButton(rejectUrl, '✕ ไม่อนุมัติ', '#dc2626')}</td>
-          </tr>
-        </table>
-      </td>
+      <td style="padding:22px 32px 6px 32px;">${ctaButton(detailUrl, 'เปิดดูคำขอ / อนุมัติผ่านเว็บแอปพลิเคชัน &rarr;', accentColor)}</td>
     </tr>
-    <tr>
-      <td style="padding:12px 32px 4px 32px;">${ctaOutlineButton(detailUrl, 'ดูรายละเอียด / อนุมัติผ่านเว็บแอปพลิเคชัน', accentColor)}</td>
-    </tr>
-    ${emailFooter('ลิงก์อนุมัติในอีเมลนี้ใช้ได้ครั้งเดียวและหมดอายุใน 7 วัน')}
+    ${emailFooter('กรุณาเข้าสู่ระบบเว็บแอปพลิเคชันเพื่อพิจารณาอนุมัติคำขอนี้')}
   `);
 
   return sendMail({ to, subject: `[รออนุมัติ] คำขอออกนอกสถานที่${codeSuffix} จาก ${requesterName}`, html });
 }
 
 // อีเมลแจ้งผู้ขอ: ผลการอนุมัติ/ไม่อนุมัติ
-async function sendDecisionEmail({ to, requesterName, vr, status, approverName, note, viaChannel, showDocCode }) {
+async function sendDecisionEmail({ to, requesterName, vr, status, approverName, note, showDocCode }) {
   const approved = status === 'approved';
   const detailUrl = `${APP_BASE_URL}/my-requests?id=${vr.id}`;
   const accentColor = approved ? '#16a34a' : '#dc2626';
@@ -233,7 +222,6 @@ async function sendDecisionEmail({ to, requesterName, vr, status, approverName, 
     { label: 'วันที่', value: toThaiDate(vr.visit_date) },
     { label: 'เวลา', value: `${vr.time_from} - ${vr.time_to}` },
     { label: 'ผู้อนุมัติ', value: approverName },
-    { label: 'ช่องทาง', value: viaChannel === 'email' ? 'อีเมล' : 'เว็บแอปพลิเคชัน' },
     { label: 'หมายเหตุ', value: note }
   ];
 

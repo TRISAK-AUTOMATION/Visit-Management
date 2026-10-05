@@ -102,6 +102,7 @@ export default function ApproveRequests() {
           request={modalData.request}
           history={modalData.history}
           customFields={modalData.customFields}
+          workflow={modalData.workflow}
           mode="approve"
           onClose={() => setModalData(null)}
           onDecide={decide}

@@ -1,84 +1,85 @@
 // client/src/pages/Settings.jsx - เทียบเท่า public/settings.html
-import React from 'react';
+// การ์ด Admin ดึงจาก ADMIN_TOOLS ใน Layout.jsx (ครบทุกอัน) + ปุ่มปักหมุดไปเมนูซ้าย (สูงสุด 4 อัน)
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import Layout from '../components/Layout';
+import Layout, { ADMIN_TOOLS } from '../components/Layout';
 import { useAuth } from '../lib/AuthContext';
+import { canAccessVisit } from '../lib/api';
+import { getPinnedAdminTools, togglePinnedAdminTool, MAX_PINNED } from '../lib/pinnedTools';
+
+const cardStyle = { padding: 20, display: 'block', position: 'relative' };
+
+// การ์ดทั่วไปที่ทุกคนเห็น
+const COMMON_CARDS = [
+  { href: '/profile', icon: '\uD83D\uDC64', label: 'โปรไฟล์ของฉัน', desc: 'แก้ไขข้อมูลส่วนตัวและรหัสผ่าน' },
+  { href: '/customers', icon: '\uD83C\uDFE2', label: 'ข้อมูลลูกค้า', desc: 'จัดการรายชื่อลูกค้า/บริษัท', visitOnly: true },
+  { href: '/my-leave', icon: '\uD83D\uDCC6', label: 'การลาของฉัน', desc: 'สร้างคำขอลา ดูสถานะและประวัติการลา' },
+  { href: '/my-ot', icon: '\u23F0', label: 'OT ของฉัน', desc: 'สร้างคำขอ OT ดูสถานะและพิมพ์ PDF' },
+];
 
 export default function Settings() {
   const { me } = useAuth();
+  const isAdmin = me && me.role === 'Admin';
+  const [pinned, setPinned] = useState(() => (isAdmin ? getPinnedAdminTools(me.id) : []));
+
+  const handlePin = (e, href) => {
+    e.preventDefault(); // กันไม่ให้ Link นำทางไปหน้านั้นตอนกดปุ่มหมุด
+    e.stopPropagation();
+    setPinned(togglePinnedAdminTool(me.id, href));
+  };
+
+  const full = pinned.length >= MAX_PINNED;
+
   return (
     <Layout title="ตั้งค่า">
-      <div className="grid-3">
-        <Link className="card" style={{ padding: 20, display: 'block' }} to="/profile">
-          <div style={{ fontSize: 22 }}>&#128100;</div>
-          <div style={{ fontWeight: 700, marginTop: 8 }}>โปรไฟล์ของฉัน</div>
-          <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>แก้ไขข้อมูลส่วนตัวและรหัสผ่าน</div>
-        </Link>
-        {me.role === 'Admin' && (
-          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-users">
-            <div style={{ fontSize: 22 }}>&#128737;</div>
-            <div style={{ fontWeight: 700, marginTop: 8 }}>จัดการผู้ใช้งาน</div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>เพิ่ม/แก้ไข/ลบผู้ใช้ และกำหนดสิทธิ์</div>
-          </Link>
-        )}
-        {me.role === 'Admin' && (
-          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-form-builder">
-            <div style={{ fontSize: 22 }}>&#129521;</div>
-            <div style={{ fontWeight: 700, marginTop: 8 }}>จัดการแบบฟอร์ม Visit</div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>เพิ่ม/ลบ/แก้ไข Field ในฟอร์มสร้างคำขอ Visit</div>
-          </Link>
-        )}
-        {me.role === 'Admin' && (
-          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-page-content">
-            <div style={{ fontSize: 22 }}>&#128196;</div>
-            <div style={{ fontWeight: 700, marginTop: 8 }}>จัดการหน้า/หัวข้อของระบบ</div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>แก้ไข Page Title ของแต่ละหน้าได้เอง</div>
-          </Link>
-        )}
-        {me.role === 'Admin' && (
-          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-data-retention">
-            <div style={{ fontSize: 22 }}>&#128465;</div>
-            <div style={{ fontWeight: 700, marginTop: 8 }}>ตั้งค่าการลบข้อมูลอัตโนมัติ</div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>กำหนดระยะเวลาเก็บข้อมูลก่อนลบอัตโนมัติ</div>
-          </Link>
-        )}
-        {me.role === 'Admin' && (
-          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-email-settings">
-            <div style={{ fontSize: 22 }}>&#128231;</div>
-            <div style={{ fontWeight: 700, marginTop: 8 }}>ตั้งค่าอีเมล</div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>เลือกข้อมูลที่จะแสดงในอีเมลแจ้งอนุมัติ</div>
-          </Link>
-        )}
-        {me.role === 'Admin' && (
-          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-pdf-settings">
-            <div style={{ fontSize: 22 }}>&#127912;</div>
-            <div style={{ fontWeight: 700, marginTop: 8 }}>ออกแบบ PDF</div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>ปรับสี/โลโก้/หัวเอกสาร/ลำดับหมวดของใบ PDF</div>
-          </Link>
-        )}
-        {me.role === 'Admin' && (
-          <Link className="card" style={{ padding: 20, display: 'block' }} to="/admin-leave-balances">
-            <div style={{ fontSize: 22 }}>&#127796;</div>
-            <div style={{ fontWeight: 700, marginTop: 8 }}>จัดการสิทธิ์วันลา</div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>ปรับสิทธิ์วันลาพักร้อนรายบุคคล</div>
-          </Link>
-        )}
-        <Link className="card" style={{ padding: 20, display: 'block' }} to="/customers">
-          <div style={{ fontSize: 22 }}>&#127970;</div>
-          <div style={{ fontWeight: 700, marginTop: 8 }}>ข้อมูลลูกค้า</div>
-          <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>จัดการรายชื่อลูกค้า/บริษัท</div>
-        </Link>
-        <Link className="card" style={{ padding: 20, display: 'block' }} to="/my-leave">
-          <div style={{ fontSize: 22 }}>&#128198;</div>
-          <div style={{ fontWeight: 700, marginTop: 8 }}>การลาของฉัน</div>
-          <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>สร้างคำขอลา ดูสถานะและประวัติการลา</div>
-        </Link>
-        <Link className="card" style={{ padding: 20, display: 'block' }} to="/my-ot">
-          <div style={{ fontSize: 22 }}>&#9200;</div>
-          <div style={{ fontWeight: 700, marginTop: 8 }}>OT ของฉัน</div>
-          <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>สร้างคำขอ OT ดูสถานะและพิมพ์ PDF</div>
-        </Link>
-      </div>
+      {(
+        <div className="grid-3">
+          {COMMON_CARDS.filter(c => !c.visitOnly || canAccessVisit(me)).map(c => (
+            <Link key={c.href} className="card" style={cardStyle} to={c.href}>
+              <div style={{ fontSize: 22 }}>{c.icon}</div>
+              <div style={{ fontWeight: 700, marginTop: 8 }}>{c.label}</div>
+              <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>{c.desc}</div>
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {isAdmin && (
+        <>
+          <div style={{ margin: '24px 0 4px', fontWeight: 700 }}>เครื่องมือผู้ดูแลระบบ</div>
+          <div className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
+            กดปุ่ม {'\uD83D\uDCCC'} เพื่อปักหมุดไว้ที่เมนูซ้าย ({pinned.length}/{MAX_PINNED})
+          </div>
+          <div className="grid-3">
+            {ADMIN_TOOLS.map(t => {
+              const isPinned = pinned.includes(t.href);
+              const disabled = !isPinned && full;
+              return (
+                <Link key={t.href} className="card" style={cardStyle} to={t.href}>
+                  <button
+                    type="button"
+                    onClick={(e) => handlePin(e, t.href)}
+                    disabled={disabled}
+                    title={isPinned ? 'ยกเลิกปักหมุด' : disabled ? `ปักได้สูงสุด ${MAX_PINNED} อัน` : 'ปักหมุดไว้ที่เมนูซ้าย'}
+                    style={{
+                      position: 'absolute', top: 10, right: 10,
+                      border: 'none', borderRadius: 8, padding: '4px 8px', fontSize: 15,
+                      cursor: disabled ? 'not-allowed' : 'pointer',
+                      background: isPinned ? '#dbeafe' : 'transparent',
+                      opacity: isPinned ? 1 : disabled ? 0.25 : 0.5,
+                    }}
+                  >
+                    {'\uD83D\uDCCC'}
+                  </button>
+                  <div style={{ fontSize: 22 }}>{t.icon}</div>
+                  <div style={{ fontWeight: 700, marginTop: 8 }}>{t.label}</div>
+                  <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>{t.desc}</div>
+                </Link>
+              );
+            })}
+          </div>
+        </>
+      )}
     </Layout>
   );
 }

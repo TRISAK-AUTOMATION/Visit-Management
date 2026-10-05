@@ -3,9 +3,40 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fmtDate, fmtDateTime, statusLabel, channelLabel } from '../lib/api';
 
+const WF_STATE_LABEL = { waiting: 'รอคิว', pending: 'กำลังพิจารณา', approved: 'ผ่านแล้ว', rejected: 'ไม่อนุมัติ', revision: 'ส่งกลับแก้ไข' };
+
+function WorkflowTimeline({ workflow }) {
+  if (!workflow) return null;
+  return (
+    <div style={{ marginTop: 4 }}>
+      <div className="muted" style={{ fontSize: 11.5, marginBottom: 6 }}>Workflow: {workflow.templateName || 'ระบบเดิม (อิงแผนก)'}</div>
+      {workflow.states.map((s, i) => (
+        <div key={i} style={{
+          display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0',
+          borderLeft: `3px solid ${s.status === 'approved' ? '#1fae62' : s.status === 'rejected' ? '#d93a30' : s.status === 'revision' ? '#c9670f' : i === workflow.currentStateIndex ? '#2f5bff' : '#dfe3ea'}`,
+          paddingLeft: 10, opacity: s.status === 'waiting' ? 0.6 : 1
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: 12.5 }}>
+              {i + 1}. {s.name} <span className="muted" style={{ fontWeight: 400 }}>({s.mode === 'ALL' ? 'ทุกคนต้องอนุมัติ' : 'คนใดคนหนึ่งอนุมัติ'})</span>
+            </div>
+            <div className="muted" style={{ fontSize: 11.5 }}>{WF_STATE_LABEL[s.status] || s.status}</div>
+            {s.approvers.map(a => (
+              <div key={a.user_id} style={{ fontSize: 11.5, marginTop: 2 }}>
+                {a.full_name}{a.decision ? ` · ${a.decision === 'approve' ? 'อนุมัติ' : a.decision === 'reject' ? 'ไม่อนุมัติ' : 'ส่งกลับแก้ไข'}` : ''}
+                {a.comment && <span className="muted"> — {a.comment}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // mode: 'mine' (แสดงประวัติ+ปุ่มพิมพ์) หรือ 'approve' (แสดงข้อมูลผู้ขอ+ปุ่มอนุมัติ/ไม่อนุมัติ/ส่งกลับแก้ไข)
 // หรือ 'calendar' (แสดงข้อมูลผู้ขอ+ผู้อนุมัติ แบบอ่านอย่างเดียว - ใช้จากหน้าปฏิทิน)
-export default function RequestModal({ request, history, customFields, mode, onClose, onDecide, onRequestRevision }) {
+export default function RequestModal({ request, history, customFields, workflow, mode, onClose, onDecide, onRequestRevision }) {
   const navigate = useNavigate();
   const canPrint = !['draft', 'revision'].includes(request.status);
 
@@ -68,6 +99,14 @@ export default function RequestModal({ request, history, customFields, mode, onC
           )}
           {request.approval_note && (
             <p><b>{request.status === 'revision' ? 'สิ่งที่ต้องแก้ไข' : 'ความคิดเห็นผู้อนุมัติ'}:</b> {request.approval_note}</p>
+          )}
+
+          {workflow && (
+            <>
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '10px 0' }} />
+              <b>ขั้นตอนการอนุมัติ</b>
+              <WorkflowTimeline workflow={workflow} />
+            </>
           )}
 
           {mode === 'approve' && request.status === 'pending' && (

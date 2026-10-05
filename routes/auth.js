@@ -23,7 +23,7 @@ function computeCanApproveLeave(user) {
 }
 
 router.post('/login', (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, remember } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
   }
@@ -36,6 +36,8 @@ router.post('/login', (req, res) => {
   }
   req.session.userId = user.id;
   req.session.role = user.role;
+  // ติ๊ก "จำฉันไว้ในระบบ" = อยู่ได้ 30 วัน, ไม่ติ๊ก = 8 ชั่วโมงเหมือนเดิม
+  req.session.cookie.maxAge = remember ? 1000 * 60 * 60 * 24 * 30 : 1000 * 60 * 60 * 8;
   logAction(user.id, 'login', `เข้าสู่ระบบ (${user.username})`);
   res.json({ user: { ...sanitize(user), departments: getDepartmentsForUser(user.id), can_evaluate: computeCanEvaluate(user), can_approve_leave: computeCanApproveLeave(user) } });
 });

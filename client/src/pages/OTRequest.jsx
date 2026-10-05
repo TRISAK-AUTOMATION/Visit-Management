@@ -23,7 +23,8 @@ export default function OTRequest() {
   useEffect(() => {
     if (!id) { setExisting(null); setForm(initial); return; }
     api.get(`/api/ot-requests/${id}`).then(({ request: r }) => {
-      if (!['draft', 'pending'].includes(r.status)) {
+      // ห้ามแก้ไขตอน pending เพราะกำลังอยู่ระหว่างอนุมัติ (อาจผ่านบาง State ไปแล้ว) - แก้ได้เฉพาะ draft/revision
+      if (!['draft', 'revision'].includes(r.status)) {
         toast('ไม่สามารถแก้ไขคำขอนี้ได้แล้ว', 'error');
         navigate('/my-ot');
         return;

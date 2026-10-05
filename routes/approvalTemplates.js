@@ -5,7 +5,7 @@ const { requireAuth, requireRole } = require('./middleware');
 const { logAction } = require('../utils/systemLog');
 
 const router = express.Router();
-const MODULES = ['leave']; // V1 รองรับแค่ Leave
+const MODULES = ['leave', 'ot', 'visit']; // V1 รองรับแค่ Leave, ตอนนี้ขยายรองรับ OT และ Visit ด้วยแล้ว
 
 router.use(requireAuth, requireRole('Admin'));
 

@@ -159,6 +159,7 @@ export default function CalendarPage() {
           request={modalData.request}
           history={modalData.history}
           customFields={modalData.customFields}
+          workflow={modalData.workflow}
           mode="calendar"
           onClose={() => setModalData(null)}
         />

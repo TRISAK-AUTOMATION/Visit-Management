@@ -13,6 +13,15 @@ const dbModule = require('../db/database');
 const { approverIdsForDepartments } = require('./userDepartments');
 
 const FALLBACK_STATE_NAME = 'อนุมัติ (ระบบเดิม - อิงแผนก)';
+const NO_APPROVER_MSG = 'ไม่พบผู้อนุมัติที่ใช้งานได้สำหรับคำขอนี้ (ผู้อนุมัติอาจเป็นตัวคุณเองหรือถูกระงับการใช้งาน) กรุณาติดต่อผู้ดูแลระบบ';
+
+// กรองรายชื่อผู้อนุมัติ: ต้องยังใช้งานอยู่ (is_active) และต้องไม่ใช่ผู้ขอเอง (กันอนุมัติคำขอของตัวเอง / กันคำขอค้างที่คนลาออก)
+function eligibleApproverIds(ids, requesterId) {
+  const list = Array.from(new Set((ids || []).map(Number))).filter(id => id && id !== Number(requesterId));
+  if (!list.length) return [];
+  const ph = list.map(() => '?').join(',');
+  return dbModule.prepare(`SELECT id FROM users WHERE is_active = 1 AND id IN (${ph})`).all(...list).map(r => r.id);
+}
 
 function findTemplateForRequester(module, userId) {
   const tpl = dbModule.prepare(`
@@ -32,19 +41,38 @@ function findTemplateForRequester(module, userId) {
   return {
     templateId: tpl.id,
     templateName: tpl.name,
-    states: states.map(s => ({ name: s.name, mode: s.mode === 'ALL' ? 'ALL' : 'ANY', approverIds: stateApprovers.get(s.id) || [] }))
+    states: states.map(s => ({ name: s.name, mode: s.mode === 'ALL' ? 'ALL' : 'ANY', approverIds: eligibleApproverIds(stateApprovers.get(s.id) || [], userId) }))
       .filter(s => s.approverIds.length) // State ที่ไม่มีผู้อนุมัติเลยข้ามไป กัน workflow ค้าง
   };
 }
 
 function buildFallbackPlan(userId) {
   const user = dbModule.prepare('SELECT department FROM users WHERE id = ?').get(userId);
-  const approverIds = approverIdsForDepartments([user ? user.department : '']);
+  const approverIds = eligibleApproverIds(approverIdsForDepartments([user ? user.department : '']), userId);
   return {
     templateId: null,
     templateName: null,
     states: [{ name: FALLBACK_STATE_NAME, mode: 'ANY', approverIds }]
   };
+}
+
+// หา "แผน" อนุมัติของผู้ขอ: Template -> fallback ตามแผนก -> Admin คนอื่น (ไม่รวมตัวผู้ขอเอง และเฉพาะคนที่ยังใช้งานอยู่)
+// คืน null ถ้าไม่มีใครอนุมัติได้เลย
+function resolvePlan(module, requesterId) {
+  let plan = findTemplateForRequester(module, requesterId);
+  if (!plan || !plan.states.length) plan = buildFallbackPlan(requesterId);
+  plan.states = plan.states.filter(s => s.approverIds.length);
+  if (!plan.states.length) {
+    const allAdmins = dbModule.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
+    const admins = eligibleApproverIds(allAdmins, requesterId);
+    if (admins.length) plan = { templateId: null, templateName: null, states: [{ name: 'อนุมัติโดย Admin (ไม่พบผู้อนุมัติตามแผนก)', mode: 'ANY', approverIds: admins }] };
+  }
+  return plan.states.length ? plan : null;
+}
+
+// เช็กก่อนบันทึกคำขอว่ามีผู้อนุมัติจริงไหม - คืนข้อความ error หรือ null ถ้าส่งได้ (เรียกก่อนเขียนอะไรลงฐานข้อมูล)
+function checkCanSubmit(module, requesterId) {
+  return resolvePlan(module, requesterId) ? null : NO_APPROVER_MSG;
 }
 
 // สร้าง (หรือสร้างใหม่ทับ) workflow snapshot ให้ request หนึ่งใบ - เรียกตอนส่งคำขอครั้งแรก และตอน resubmit หลังโดนส่งกลับแก้ไข
@@ -54,13 +82,8 @@ function createWorkflow(module, requestId, requesterId) {
     dbModule.prepare(`DELETE FROM request_workflows WHERE id = ?`).run(existing.id); // CASCADE ลบ states/approvers ตามไปด้วย
   }
 
-  let plan = findTemplateForRequester(module, requesterId);
-  if (!plan || !plan.states.length) plan = buildFallbackPlan(requesterId);
-  if (!plan.states.length) {
-    // ไม่มีแม้แต่ผู้อนุมัติตามแผนก (ไม่มีหัวหน้าแผนกในระบบ) - กันพังด้วย state เปล่าที่ไม่มีใครอนุมัติได้ ให้ค้างที่ Admin ทุกคนแทน
-    const admins = dbModule.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
-    plan = { templateId: null, templateName: null, states: [{ name: 'อนุมัติโดย Admin (ไม่พบผู้อนุมัติตามแผนก)', mode: 'ANY', approverIds: admins }] };
-  }
+  const plan = resolvePlan(module, requesterId);
+  if (!plan) throw new ApprovalError(NO_APPROVER_MSG);
 
   const wfInfo = dbModule.prepare(`
     INSERT INTO request_workflows (module, request_id, template_id, template_name, current_state_index, status)
@@ -145,7 +168,11 @@ class ApprovalError extends Error {}
 
 // ตัดสินใจของ userId ต่อ request ในโมดูลนี้ - action: 'approve' | 'reject' | 'revision'
 // คืนค่า { finalStatus } เมื่อ workflow จบแล้ว (approved/rejected/revision) หรือ { finalStatus: null, advanced: true/false } เมื่อยังไม่จบ (state ผ่านแล้วไปต่อ หรือรอคนอื่นในสเตทเดียวกันอยู่)
-function decide(module, requestId, userId, action, comment) {
+function decide(module, requestId, userId, action, comment, requesterId) {
+  // requesterId: ส่งมาจาก route เสมอ — ผู้ขอห้ามอนุมัติ/ปฏิเสธคำขอของตัวเอง
+  if (requesterId != null && Number(requesterId) === Number(userId)) {
+    throw new ApprovalError('ไม่สามารถอนุมัติหรือดำเนินการคำขอของตัวเองได้');
+  }
   const wf = dbModule.prepare(`SELECT * FROM request_workflows WHERE module = ? AND request_id = ?`).get(module, requestId);
   if (!wf) throw new ApprovalError('ไม่พบ workflow ของคำขอนี้');
   if (wf.status !== 'pending') throw new ApprovalError('คำขอนี้ถูกดำเนินการไปแล้ว');
@@ -200,6 +227,7 @@ function hasEverBeenApprover(userId) {
 module.exports = {
   ApprovalError,
   createWorkflow,
+  checkCanSubmit,
   getWorkflow,
   getCurrentApproverIds,
   isWorkflowParticipant,

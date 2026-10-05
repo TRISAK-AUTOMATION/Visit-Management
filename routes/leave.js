@@ -19,6 +19,28 @@ const LEAVE_MODES = ['full_day', 'half_day_morning', 'half_day_afternoon', 'hour
 const EDITABLE_STATUSES = ['draft', 'revision'];
 
 function isValidLeaveType(t) { return LEAVE_TYPES.includes(t); }
+
+// ตรวจโควต้าวันลาตอนส่งคำขอ (นับคำขอที่รออนุมัติอยู่แล้วเป็นวันที่ถูกจองไว้ด้วย กันยื่นหลายใบรวดเดียวเกินสิทธิ์)
+// ปรับ true/false ตามนโยบาย: ลาป่วยตั้งเป็น false เพราะกฎหมายให้ลาป่วยได้เกินสิทธิ์ที่ได้ค่าจ้าง (ส่วนเกินเป็นลาไม่รับค่าจ้าง)
+const QUOTA_RULES = {
+  'ลาพักร้อน': { total: 'vacation_total', used: 'vacation_used', enforce: true },
+  'ลากิจ':     { total: 'personal_total', used: 'personal_used', enforce: true },
+  'ลาป่วย':    { total: 'sick_total',     used: 'sick_used',     enforce: false }
+};
+const fmtDays = (n) => (Math.round(n * 100) / 100).toString();
+function quotaError(userId, leaveType, days, excludeRequestId) {
+  const rule = QUOTA_RULES[leaveType];
+  if (!rule || !rule.enforce || !(days > 0)) return null;
+  const bal = ensureBalance(userId);
+  const reserved = db.prepare(`SELECT COALESCE(SUM(duration_days), 0) AS d FROM leave_requests WHERE requester_id = ? AND leave_type = ? AND status = 'pending' AND id != ?`)
+    .get(userId, leaveType, excludeRequestId || 0).d;
+  const remaining = bal[rule.total] - bal[rule.used] - reserved;
+  if (days > remaining + 1e-9) {
+    return `สิทธิ์${leaveType}คงเหลือ ${fmtDays(Math.max(0, remaining))} วัน` +
+      `${reserved > 0 ? ` (รวมที่รออนุมัติอยู่ ${fmtDays(reserved)} วันแล้ว)` : ''} ไม่พอสำหรับการลา ${fmtDays(days)} วัน กรุณาติดต่อผู้ดูแลระบบหากต้องการปรับสิทธิ์`;
+  }
+  return null;
+}
 function isValidLeaveMode(m) { return LEAVE_MODES.includes(m); }
 
 // เช็คว่าผู้ใช้นี้มี Template อนุมัติของโมดูล "leave" ที่เปิดใช้งานอยู่ (is_active=1) และเลือกเขาไว้เป็น Requester จริงหรือไม่
@@ -167,9 +189,17 @@ router.post('/', requireAuth, (req, res) => {
     if (!isEligibleLeaveRequester(req.session.userId)) {
       return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
     }
+    {
+      const noApprover = approvalEngine.checkCanSubmit('leave', req.session.userId);
+      if (noApprover) return res.status(400).json({ error: noApprover });
+    }
   }
 
   const dur = (leave_mode && date_from) ? computeDuration(req.body) : { duration_days: 0, duration_hours: 0, date_to: date_from || '', time_from: req.body.time_from || '', time_to: req.body.time_to || '' };
+  if (!isDraft) {
+    const qErr = quotaError(req.session.userId, leave_type, dur.duration_days);
+    if (qErr) return res.status(400).json({ error: qErr });
+  }
   const status = isDraft ? 'draft' : 'pending';
 
   let code, info;
@@ -232,6 +262,14 @@ router.post('/:id/submit', requireAuth, (req, res) => {
   if (!isEligibleLeaveRequester(req.session.userId)) {
     return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
   }
+  {
+    const noApprover = approvalEngine.checkCanSubmit('leave', req.session.userId);
+    if (noApprover) return res.status(400).json({ error: noApprover });
+  }
+  {
+    const qErr = quotaError(lr.requester_id, lr.leave_type, lr.duration_days, lr.id);
+    if (qErr) return res.status(400).json({ error: qErr });
+  }
   db.prepare(`UPDATE leave_requests SET status = 'pending' WHERE id = ?`).run(req.params.id);
   db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action) VALUES (?, ?, 'ส่งคำขอ')`).run(req.params.id, req.session.userId);
   logAction(req.session.userId, 'submit_leave_request', `ส่งคำขอลา #${lr.code}`);
@@ -248,6 +286,14 @@ router.post('/:id/resubmit', requireAuth, (req, res) => {
   if (lr.status !== 'revision') return res.status(400).json({ error: 'คำขอนี้ไม่ได้อยู่ในสถานะรอแก้ไข' });
   if (!isEligibleLeaveRequester(req.session.userId)) {
     return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
+  }
+  {
+    const noApprover = approvalEngine.checkCanSubmit('leave', req.session.userId);
+    if (noApprover) return res.status(400).json({ error: noApprover });
+  }
+  {
+    const qErr = quotaError(lr.requester_id, lr.leave_type, lr.duration_days, lr.id);
+    if (qErr) return res.status(400).json({ error: qErr });
   }
   db.prepare(`UPDATE leave_requests SET status = 'pending', approver_id = NULL, approved_at = NULL, approval_note = '' WHERE id = ?`).run(req.params.id);
   db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action) VALUES (?, ?, 'ส่งคำขอใหม่หลังแก้ไข')`).run(req.params.id, req.session.userId);
@@ -298,29 +344,36 @@ function decide(req, res, action, actionLabel) {
   const stateName = wfBefore && wfBefore.states[wfBefore.currentStateIndex] ? wfBefore.states[wfBefore.currentStateIndex].name : '';
   let result;
   try {
-    result = approvalEngine.decide('leave', lr.id, req.session.userId, action, note);
+    // ทุกขั้นตอนที่เขียนฐานข้อมูล (workflow + ประวัติ + สถานะใบลา + หักวันลา) อยู่ใน transaction เดียว: สำเร็จครบหรือย้อนกลับทั้งหมด
+    result = db.transaction(() => {
+      const r = approvalEngine.decide('leave', lr.id, req.session.userId, action, note, lr.requester_id);
+      db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action, note) VALUES (?, ?, ?, ?)`)
+        .run(req.params.id, req.session.userId, `${actionLabel}${stateName ? ` (${stateName})` : ''}`, note || '');
+      logAction(req.session.userId, `leave_${action}`, `${actionLabel}คำขอลา #${lr.code}`);
+
+      if (r.finalStatus) {
+        // workflow จบแล้ว (approved / rejected / revision) - sync กลับไปที่ leave_requests.status
+        db.prepare(`UPDATE leave_requests SET status = ?, approver_id = ?, approved_at = datetime('now'), approval_note = ? WHERE id = ?`)
+          .run(r.finalStatus, req.session.userId, note || '', req.params.id);
+
+        if (r.finalStatus === 'approved' && lr.duration_days > 0) {
+          ensureBalance(lr.requester_id);
+          const col = lr.leave_type === 'ลาพักร้อน' ? 'vacation_used' : lr.leave_type === 'ลากิจ' ? 'personal_used' : lr.leave_type === 'ลาป่วย' ? 'sick_used' : null;
+          if (col) {
+            db.prepare(`UPDATE leave_balances SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE user_id = ?`)
+              .run(lr.duration_days, lr.requester_id);
+          }
+        }
+      }
+      return r;
+    })();
   } catch (err) {
     if (err instanceof approvalEngine.ApprovalError) return res.status(400).json({ error: err.message });
     throw err;
   }
 
-  db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action, note) VALUES (?, ?, ?, ?)`)
-    .run(req.params.id, req.session.userId, `${actionLabel}${stateName ? ` (${stateName})` : ''}`, note || '');
-  logAction(req.session.userId, `leave_${action}`, `${actionLabel}คำขอลา #${lr.code}`);
-
+  // แจ้งเตือน/อีเมลทำหลัง commit แล้วเท่านั้น (ถ้าส่งอีเมลพลาดก็ไม่กระทบข้อมูลที่บันทึกไปแล้ว)
   if (result.finalStatus) {
-    // workflow จบแล้ว (approved / rejected / revision) - sync กลับไปที่ leave_requests.status
-    db.prepare(`UPDATE leave_requests SET status = ?, approver_id = ?, approved_at = datetime('now'), approval_note = ? WHERE id = ?`)
-      .run(result.finalStatus, req.session.userId, note || '', req.params.id);
-
-    if (result.finalStatus === 'approved' && lr.duration_days > 0) {
-      ensureBalance(lr.requester_id);
-      const col = lr.leave_type === 'ลาพักร้อน' ? 'vacation_used' : lr.leave_type === 'ลากิจ' ? 'personal_used' : lr.leave_type === 'ลาป่วย' ? 'sick_used' : null;
-      if (col) {
-        db.prepare(`UPDATE leave_balances SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE user_id = ?`)
-          .run(lr.duration_days, lr.requester_id);
-      }
-    }
     notifyLeaveDecision(lr.id, result.finalStatus, req.session.userId, note);
   } else if (result.advanced) {
     // ผ่าน state นี้แล้ว ไปรอ state ถัดไป - แจ้งเตือนผู้อนุมัติ state ถัดไปว่าถึงคิวแล้ว

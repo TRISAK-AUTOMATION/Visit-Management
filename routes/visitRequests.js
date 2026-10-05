@@ -1,17 +1,20 @@
 // routes/visitRequests.js
 const { getEmailRows, getShowDocCode } = require('../utils/emailFields');
 const express = require('express');
-const crypto = require('crypto');
 const db = require('../db/database');
 const { requireAuth, requireRole } = require('./middleware');
 const { sendNewRequestEmail, sendDecisionEmail, sendRevisionEmail } = require('../utils/mailer');
 const { logAction } = require('../utils/systemLog');
-const { getDepartmentsForUser, approverIdsForDepartments } = require('../utils/userDepartments');
+const approvalEngine = require('../utils/approvalEngine');
 
 const router = express.Router();
 
-const TOKEN_TTL_DAYS = 7;
-const EDITABLE_STATUSES = ['pending', 'draft', 'revision'];
+// ไม่รวม 'pending' เพราะคำขอที่กำลังอยู่ระหว่างอนุมัติ (อาจผ่านบาง State ไปแล้วในกรณี multi-stage)
+// ห้ามแก้ไขข้อมูลตรงๆ โดยไม่ reset workflow — ถ้าจะแก้ ผู้ขอต้องรอถูก "ส่งกลับแก้ไข" (revision) ก่อน
+// ซึ่งตอน resubmit (POST /:id/submit) จะ reset workflow กลับไป State แรกให้เองอยู่แล้ว (เหมือน leave.js)
+const EDITABLE_STATUSES = ['draft', 'revision'];
+// ยกเลิกคำขอ (cancel) เป็นคนละกรณีกับแก้ไขข้อมูล - อนุญาตให้ยกเลิกได้แม้อยู่ระหว่างอนุมัติ (pending)
+const CANCELLABLE_STATUSES = ['draft', 'pending', 'revision'];
 // สถานะที่ผู้ขอสามารถกลับมา "อัปเดตข้อมูลหลังปฏิบัติงาน" ได้ (เช่น เวลาออกจริง/เข้าจริง, ไมล์, OT ฯลฯ)
 // อนุญาตเฉพาะคำขอที่อนุมัติแล้ว และการอัปเดตนี้จะไม่เปลี่ยนสถานะ/ไม่ต้องส่งขออนุมัติใหม่ (อนุมัติแค่ครั้งเดียว)
 const POST_VISIT_EDITABLE_STATUSES = ['approved'];
@@ -24,76 +27,23 @@ function formatDateThai(d) {
   return `${day}/${m}/${y}`;
 }
 
-function generateToken() {
-  return crypto.randomBytes(24).toString('hex');
+// เช็คว่าผู้ใช้นี้มี Template อนุมัติของโมดูล "visit" ที่เปิดใช้งานอยู่ (is_active=1) และเลือกเขาไว้เป็น Requester จริงหรือไม่
+// เงื่อนไข: ต้องมี Template ที่ active + มีเขาอยู่ใน Requester + Template นั้นต้องมีอย่างน้อย 1 State ที่มีผู้อนุมัติจริง (ไม่งั้นถือว่ายังตั้งค่าไม่ครบ ไม่นับว่ามีสิทธิ์)
+function isEligibleVisitRequester(userId) {
+  const tpl = db.prepare(`
+    SELECT t.id FROM approval_templates t
+    JOIN template_requesters tr ON tr.template_id = t.id
+    WHERE t.module = 'visit' AND t.is_active = 1 AND tr.user_id = ?
+    LIMIT 1
+  `).get(userId);
+  if (!tpl) return false;
+  const stateCount = db.prepare(`
+    SELECT COUNT(*) AS c FROM template_states ts
+    WHERE ts.template_id = ? AND EXISTS (SELECT 1 FROM template_state_approvers a WHERE a.state_id = ts.id)
+  `).get(tpl.id).c;
+  return stateCount > 0;
 }
-
-// สร้างโทเคนอนุมัติ/ไม่อนุมัติผ่านอีเมล ให้ผู้อนุมัติแต่ละคน แล้วส่งอีเมลแจ้งเตือน
-// จำกัดเฉพาะผู้อนุมัติที่ดูแลแผนกเดียวกับผู้ขอ (ดูแลได้หลายแผนกก็ได้) + Admin (Admin เห็น/อนุมัติได้ทุกคำขอ)
-async function notifyApproversByEmail(vr, requesterName, requesterDept) {
-  const approverIds = approverIdsForDepartments([requesterDept]);
-  const admins = db.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
-  const ids = Array.from(new Set([...approverIds, ...admins]));
-  if (!ids.length) return;
-  const placeholders = ids.map(() => '?').join(',');
-  const approvers = db.prepare(`SELECT id, full_name, email, email_notify FROM users WHERE id IN (${placeholders})`).all(...ids);
-  const expiresAt = new Date(Date.now() + TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const insertToken = db.prepare(`
-    INSERT INTO approval_tokens (token, visit_request_id, approver_id, action, expires_at) VALUES (?, ?, ?, ?, ?)
-  `);
-  for (const a of approvers) {
-    if (!a.email || !a.email_notify) continue;
-    const approveToken = generateToken();
-    const rejectToken = generateToken();
-    insertToken.run(approveToken, vr.id, a.id, 'approve', expiresAt);
-    insertToken.run(rejectToken, vr.id, a.id, 'reject', expiresAt);
-    sendNewRequestEmail({
-  to: a.email, approverName: a.full_name, requesterName, vr, approveToken, rejectToken,
-  emailRows: getEmailRows(vr), showDocCode: getShowDocCode()
-  }).catch(err => console.error('sendNewRequestEmail error:', err.message));
-  }
-}
-
-// ตรวจสอบสิทธิ์ของผู้อนุมัติกับคำขอเจาะจง: Admin ทำได้ทุกคำขอ, Approver ทำได้เฉพาะคำขอที่ผู้ขออยู่แผนก (แผนกใดแผนกหนึ่ง) ที่ตนดูแล
-// ตรวจซ้ำในชั้น backend เสมอ (ไม่พึ่งแค่การกรองรายการฝั่งหน้าเว็บ) เพื่อกันกรณียิง API ตรงๆ ด้วย request ID ของแผนกอื่น
-function isAuthorizedApprover(approverId, requesterId) {
-  const approver = db.prepare('SELECT role, is_active FROM users WHERE id = ?').get(approverId);
-  if (!approver || !approver.is_active) return false;
-  if (approver.role === 'Admin') return true;
-  if (approver.role !== 'Approver') return false;
-  const requester = db.prepare('SELECT department FROM users WHERE id = ?').get(requesterId);
-  if (!requester || !requester.department) return false;
-  const approverDepts = getDepartmentsForUser(approverId);
-  return approverDepts.includes(requester.department);
-}
-
-// ตรรกะกลางสำหรับ "อนุมัติ/ไม่อนุมัติ" ใช้ร่วมกันทั้งจากเว็บแอป (ต้อง login) และจากลิงก์อีเมล (ใช้ token)
-// คืนค่า { error } เมื่อทำไม่ได้ หรือ { vr, message } เมื่อสำเร็จ
-function applyDecision(visitRequestId, approverId, status, actionLabel, note, channel) {
-  const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(visitRequestId);
-  if (!vr) return { error: 'ไม่พบคำขอ', code: 404 };
-  if (vr.status !== 'pending') return { error: 'คำขอนี้ถูกดำเนินการไปแล้ว', code: 409, vr };
-  if (!isAuthorizedApprover(approverId, vr.requester_id)) {
-    return { error: 'คุณไม่มีสิทธิ์ดำเนินการกับคำขอนี้ (ไม่ใช่แผนกของคุณ)', code: 403, vr };
-  }
-
-  db.prepare(`
-    UPDATE visit_requests
-    SET status = ?, approver_id = ?, approved_at = datetime('now'), approval_note = ?
-    WHERE id = ?
-  `).run(status, approverId, note || '', visitRequestId);
-
-  db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, note, channel) VALUES (?, ?, ?, ?, ?)`)
-    .run(visitRequestId, approverId, actionLabel, note || '', channel || 'web');
-
-  const message = status === 'approved'
-    ? `คำขอออกนอกสถานที่ของคุณ #${vr.code} ได้รับการอนุมัติแล้ว`
-    : `คำขอออกนอกสถานที่ของคุณ #${vr.code} ไม่ได้รับการอนุมัติ`;
-  db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, ?, ?, ?)`)
-    .run(vr.requester_id, status, message, vr.id);
-
-  return { vr: { ...vr, status }, message };
-}
+const NOT_ELIGIBLE_MSG = 'คุณยังไม่มีสิทธิ์ส่งคำขอออกนอกสถานที่ กรุณาติดต่อผู้ดูแลระบบเพื่อเพิ่มชื่อคุณในรายชื่อผู้มีสิทธิ์ (Requester) ของ Template อนุมัติก่อน';
 
 // ---------- Custom Fields (Form Builder) - ไม่กระทบ core fields เดิมเลย ----------
 // บันทึกค่าของ field ที่ Admin สร้างเองสำหรับคำขอ Visit หนึ่งรายการ
@@ -173,20 +123,19 @@ router.get('/', requireAuth, (req, res) => {
     params.push(userId);
   } else if (scope === 'pending') {
     // สำหรับผู้อนุมัติ: ดูคำขอทั้งหมดที่รอ/อนุมัติ/ไม่อนุมัติ (ไม่รวมฉบับร่าง/รอแก้ไข ที่ยังอยู่กับผู้ขอ)
-    if (!['Approver', 'Admin'].includes(role)) {
+    if (!['Approver', 'Admin'].includes(role) && !approvalEngine.hasEverBeenApprover(userId)) {
       return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึง' });
     }
     where.push(`vr.status != 'draft'`);
     where.push(`vr.status != 'revision'`);
-    // Approver เห็นเฉพาะคำขอของพนักงานแผนกที่ตนดูแล (ดูแลได้หลายแผนก), Admin เห็นทุกคำขอ
-    if (role === 'Approver') {
-      const myDepts = getDepartmentsForUser(userId);
-      if (!myDepts.length) {
-        where.push('1 = 0'); // ยังไม่ได้ผูกแผนกใดเลย ไม่ให้เห็นคำขอใครทั้งนั้น
-      } else {
-        where.push(`u.department IN (${myDepts.map(() => '?').join(',')})`);
-        params.push(...myDepts);
-      }
+    // Admin เห็นทุกคำขอ, คนอื่นใช้ workflow engine หาว่าคำขอไหนเกี่ยวข้องกับตัวเอง แทนการอิงแผนกตรงๆ
+    // เพราะตอนนี้บาง request อาจวิ่งอยู่ใน Template ที่ Admin ตั้งไว้ ไม่ใช่แค่หัวหน้าแผนกอย่างเดียว
+    if (role !== 'Admin') {
+      const wantedStatus = status || 'pending';
+      const ids = approvalEngine.listRequestIdsForApprover('visit', userId, { onlyCurrentPending: wantedStatus === 'pending' });
+      if (!ids.length) return res.json({ requests: [] });
+      where.push(`vr.id IN (${ids.map(() => '?').join(',')})`);
+      params.push(...ids);
     }
   }
   if (status) {
@@ -220,6 +169,13 @@ router.get('/:id', requireAuth, (req, res) => {
   `).get(req.params.id);
   if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
 
+  const isRequester = vr.requester_id === req.session.userId;
+  const isAdmin = req.session.role === 'Admin';
+  const isParticipant = approvalEngine.isWorkflowParticipant('visit', vr.id, req.session.userId);
+  if (!isRequester && !isAdmin && !isParticipant) {
+    return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ดูคำขอนี้' });
+  }
+
   const history = db.prepare(`
     SELECT h.*, u.full_name AS actor_name
     FROM approval_history h
@@ -229,8 +185,9 @@ router.get('/:id', requireAuth, (req, res) => {
   `).all(req.params.id);
 
   const customFields = getCustomFieldValues(req.params.id);
+  const workflow = approvalEngine.getWorkflow('visit', vr.id);
 
-  res.json({ request: vr, history, customFields });
+  res.json({ request: vr, history, customFields, workflow });
 });
 
 // CREATE (รองรับ save_as: 'draft' เพื่อบันทึกฉบับร่างโดยยังไม่ส่งเข้าสู่ระบบอนุมัติ)
@@ -257,6 +214,14 @@ router.post('/', requireAuth, (req, res) => {
     const missingCore = validateRequiredCoreFields(req.body);
     if (missingCore.length) {
       return res.status(400).json({ error: `กรุณากรอก: ${missingCore.map(f => f.label).join(', ')}` });
+    }
+    // ยังไม่มี Template อนุมัติไหนเซ็ตชื่อผู้ใช้นี้ไว้เป็น Requester เลย -> บล็อกตอนส่งคำขอ (ฟอร์มกรอก/บันทึกร่างได้ปกติ แต่ส่งจริงไม่ได้)
+    if (!isEligibleVisitRequester(userId)) {
+      return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
+    }
+    {
+      const noApprover = approvalEngine.checkCanSubmit('visit', userId);
+      if (noApprover) return res.status(400).json({ error: noApprover });
     }
   }
 
@@ -301,29 +266,37 @@ router.post('/', requireAuth, (req, res) => {
   db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'ส่งคำขอ', 'web')`).run(vrId, userId);
   logAction(userId, 'submit_request', `ส่งคำขอ #${code}`);
 
+  approvalEngine.createWorkflow('visit', vrId, userId);
   notifyRequestSubmitted(vrId, requester);
 
   res.status(201).json({ id: vrId, code, status });
 });
 
 // แจ้งเตือนผู้อนุมัติ (ในระบบ + อีเมล) เมื่อมีคำขอเข้าสู่สถานะ pending
-function notifyRequestSubmitted(vrId, requester) {
-  const approverIds = approverIdsForDepartments([requester.department]);
-  const admins = db.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
-  const ids = Array.from(new Set([...approverIds, ...admins]));
-  const approvers = ids.length
-    ? db.prepare(`SELECT id FROM users WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids)
-    : [];
-  const notifStmt = db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, 'new_request', ?, ?)`);
+// isAdvance = true เมื่อเรียกตอน state เลื่อนไปคนถัดไป (ไม่ใช่ตอนส่งคำขอครั้งแรก) - แจ้งเฉพาะผู้อนุมัติของ state ปัจจุบัน ไม่ต้องแจ้ง Admin ซ้ำทุกรอบ
+function notifyRequestSubmitted(vrId, requester, isAdvance = false) {
+  const currentApproverIds = approvalEngine.getCurrentApproverIds('visit', vrId);
+  const admins = isAdvance ? [] : db.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
+  const ids = Array.from(new Set([...currentApproverIds, ...admins]));
+  if (!ids.length) return;
+  const approvers = db.prepare(`SELECT id, full_name, email, email_notify FROM users WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(vrId);
-  for (const a of approvers) {
-    notifStmt.run(a.id, `มีคำขอออกนอกสถานที่ใหม่จาก ${requester.full_name} วันที่ ${formatDateThai(vr.visit_date)} เวลา ${vr.time_from} - ${vr.time_to}`, vrId);
-  }
+  const msg = isAdvance
+    ? `คำขอออกนอกสถานที่ของ ${requester.full_name} วันที่ ${formatDateThai(vr.visit_date)} เวลา ${vr.time_from} - ${vr.time_to} ถึงคิวที่ต้องให้คุณอนุมัติแล้ว`
+    : `มีคำขอออกนอกสถานที่ใหม่จาก ${requester.full_name} วันที่ ${formatDateThai(vr.visit_date)} เวลา ${vr.time_from} - ${vr.time_to}`;
+  const notifStmt = db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, 'new_request', ?, ?)`);
   const vrWithCustomer = db.prepare(`
     SELECT vr.*, c.name AS customer_name FROM visit_requests vr LEFT JOIN customers c ON c.id = vr.customer_id WHERE vr.id = ?
   `).get(vrId);
-  notifyApproversByEmail(vrWithCustomer, requester.full_name, requester.department)
-    .catch(err => console.error('notifyApproversByEmail error:', err.message));
+  for (const a of approvers) {
+    notifStmt.run(a.id, msg, vrId);
+    if (a.email && a.email_notify) {
+      sendNewRequestEmail({
+        to: a.email, approverName: a.full_name, requesterName: requester.full_name, vr: vrWithCustomer,
+        emailRows: getEmailRows(vrWithCustomer), showDocCode: getShowDocCode()
+      }).catch(err => console.error('sendNewRequestEmail error:', err.message));
+    }
+  }
 }
 
 // SUBMIT: ส่งฉบับร่าง หรือคำขอที่ถูกส่งกลับแก้ไข เข้าสู่สถานะรออนุมัติ
@@ -347,20 +320,29 @@ router.post('/:id/submit', requireAuth, (req, res) => {
   if (missingCore.length) {
     return res.status(400).json({ error: `กรุณากรอก: ${missingCore.map(f => f.label).join(', ')} ก่อนส่งคำขอ` });
   }
+  // ยังไม่มี Template อนุมัติไหนเซ็ตชื่อผู้ใช้นี้ไว้เป็น Requester เลย -> บล็อกตอนส่งคำขอ
+  if (!isEligibleVisitRequester(req.session.userId)) {
+    return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
+  }
+  {
+    const noApprover = approvalEngine.checkCanSubmit('visit', req.session.userId);
+    if (noApprover) return res.status(400).json({ error: noApprover });
+  }
 
   const wasDraft = vr.status === 'draft';
-  db.prepare(`UPDATE visit_requests SET status = 'pending' WHERE id = ?`).run(req.params.id);
+  db.prepare(`UPDATE visit_requests SET status = 'pending', approver_id = NULL, approved_at = NULL, approval_note = '' WHERE id = ?`).run(req.params.id);
   db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, ?, 'web')`)
     .run(req.params.id, req.session.userId, wasDraft ? 'ส่งคำขอ (จากฉบับร่าง)' : 'ส่งคำขออีกครั้งหลังแก้ไข');
   logAction(req.session.userId, 'submit_request', `ส่งคำขอ #${vr.code}${wasDraft ? ' (จากฉบับร่าง)' : ' (หลังแก้ไข)'}`);
 
   const requester = db.prepare('SELECT full_name, department FROM users WHERE id = ?').get(req.session.userId);
+  approvalEngine.createWorkflow('visit', vr.id, req.session.userId); // เริ่ม workflow ใหม่จาก State แรกเสมอ (ดึง Template ล่าสุด ณ ตอนนี้)
   notifyRequestSubmitted(vr.id, requester);
 
   res.json({ ok: true });
 });
 
-// UPDATE (แก้ไขคำขอ - เฉพาะเจ้าของคำขอ และเฉพาะสถานะที่ยังแก้ไขได้: pending / draft / revision)
+// UPDATE (แก้ไขคำขอ - เฉพาะเจ้าของคำขอ และเฉพาะสถานะที่ยังแก้ไขได้: draft / revision, หรือ post-visit update ตอน approved)
 router.put('/:id', requireAuth, (req, res) => {
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
   if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
@@ -405,7 +387,7 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
   if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
   if (vr.requester_id !== req.session.userId) return res.status(403).json({ error: 'ไม่มีสิทธิ์ยกเลิกคำขอนี้' });
-  if (!EDITABLE_STATUSES.includes(vr.status)) return res.status(400).json({ error: 'ไม่สามารถยกเลิกคำขอที่ดำเนินการแล้วได้' });
+  if (!CANCELLABLE_STATUSES.includes(vr.status)) return res.status(400).json({ error: 'ไม่สามารถยกเลิกคำขอที่ดำเนินการแล้วได้' });
 
   db.prepare(`UPDATE visit_requests SET status = 'cancelled' WHERE id = ?`).run(req.params.id);
   db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'ยกเลิกคำขอ', 'web')`).run(req.params.id, req.session.userId);
@@ -420,6 +402,7 @@ function deleteVisitRequestCascade(id) {
   db.prepare('DELETE FROM approval_tokens WHERE visit_request_id = ?').run(id);
   db.prepare('DELETE FROM visit_custom_values WHERE visit_request_id = ?').run(id);
   db.prepare('DELETE FROM notifications WHERE related_id = ?').run(id);
+  db.prepare(`DELETE FROM request_workflows WHERE module = 'visit' AND request_id = ?`).run(id); // ลบ workflow snapshot ด้วย (CASCADE ลบ states/approvers ตามไปเอง)
   db.prepare('DELETE FROM visit_requests WHERE id = ?').run(id);
 }
 
@@ -444,173 +427,106 @@ router.delete('/:id', requireAuth, requireRole('Admin'), (req, res) => {
   res.json({ ok: true });
 });
 
-// REQUEST REVISION: ผู้อนุมัติส่งคำขอกลับไปให้ผู้ขอแก้ไข (เฉพาะคำขอที่สถานะ pending)
-router.post('/:id/request-revision', requireAuth, requireRole('Approver', 'Admin'), (req, res) => {
-  const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
-  if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
-  if (vr.status !== 'pending') return res.status(400).json({ error: 'คำขอนี้ไม่ได้อยู่ในสถานะรออนุมัติ' });
-  if (!isAuthorizedApprover(req.session.userId, vr.requester_id)) {
-    return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ดำเนินการกับคำขอนี้ (ไม่ใช่แผนกของคุณ)' });
+// อนุญาตทั้ง Approver/Admin โดยตำแหน่ง และคนที่ Admin ตั้งเป็นผู้อนุมัติผ่าน Template (ไม่ว่า role จะเป็นอะไร)
+// การตรวจว่าเป็นผู้อนุมัติของ "คำขอนี้ใน state ปัจจุบัน" จริงหรือไม่ ทำอีกชั้นใน approvalEngine.decide() อยู่แล้ว
+function requireApproverOrAdmin(req, res, next) {
+  if (!['Approver', 'Admin'].includes(req.session.role) && !approvalEngine.hasEverBeenApprover(req.session.userId)) {
+    return res.status(403).json({ error: 'คุณไม่มีสิทธิ์เข้าถึงส่วนนี้' });
   }
+  next();
+}
 
+// ส่งกลับให้ผู้ขอแก้ไข (revision) แทนที่จะ reject จบเลย - ผู้ขอแก้ไขแล้ว resubmit (ผ่าน /:id/submit) วนกลับไปเริ่มที่ State แรกใหม่
+router.post('/:id/request-revision', requireAuth, requireApproverOrAdmin, (req, res) => {
   const note = (req.body.note || '').trim();
   if (!note) return res.status(400).json({ error: 'กรุณาระบุเหตุผล/สิ่งที่ต้องแก้ไข' });
-
-  db.prepare(`UPDATE visit_requests SET status = 'revision', approval_note = ? WHERE id = ?`).run(note, req.params.id);
-  db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, note, channel) VALUES (?, ?, 'ส่งกลับแก้ไข', ?, 'web')`)
-    .run(req.params.id, req.session.userId, note);
-  logAction(req.session.userId, 'request_revision', `ส่งคำขอ #${vr.code} กลับให้แก้ไข`);
-
-  const requester = db.prepare('SELECT full_name, email, email_notify FROM users WHERE id = ?').get(vr.requester_id);
-  const approver = db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.session.userId);
-  db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, 'revision', ?, ?)`)
-    .run(vr.requester_id, `คำขอออกนอกสถานที่ของคุณ #${vr.code} ถูกส่งกลับให้แก้ไข`, vr.id);
-  if (requester && requester.email && requester.email_notify) {
-    sendRevisionEmail({
-      to: requester.email, requesterName: requester.full_name, vr, approverName: approver ? approver.full_name : '-', note
-    }).catch(err => console.error('sendRevisionEmail error:', err.message));
-  }
-
-  res.json({ ok: true });
+  decide(req, res, 'revision', 'ส่งกลับแก้ไข', note);
 });
 
 // APPROVE
-router.post('/:id/approve', requireAuth, requireRole('Approver', 'Admin'), (req, res) => {
-  handleDecision(req, res, 'approved', 'อนุมัติ');
+router.post('/:id/approve', requireAuth, requireApproverOrAdmin, (req, res) => {
+  decide(req, res, 'approve', 'อนุมัติ', req.body.note || '');
 });
 
 // REJECT
-router.post('/:id/reject', requireAuth, requireRole('Approver', 'Admin'), (req, res) => {
-  handleDecision(req, res, 'rejected', 'ไม่อนุมัติ');
+router.post('/:id/reject', requireAuth, requireApproverOrAdmin, (req, res) => {
+  decide(req, res, 'reject', 'ไม่อนุมัติ', req.body.note || '');
 });
 
-function handleDecision(req, res, status, actionLabel) {
-  const note = req.body.note || '';
-  const result = applyDecision(req.params.id, req.session.userId, status, actionLabel, note, 'web');
-  if (result.error) return res.status(result.code || 400).json({ error: result.error });
+function decide(req, res, action, actionLabel, note) {
+  const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
+  if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
+  if (vr.status !== 'pending') return res.status(400).json({ error: 'คำขอนี้ถูกดำเนินการไปแล้ว' });
 
-  // ล้าง (invalidate) ลิงก์อนุมัติทางอีเมลที่ยังไม่ถูกใช้ของคำขอนี้ เพราะถูกตัดสินใจผ่านเว็บแอปแล้ว
-  db.prepare(`UPDATE approval_tokens SET used_at = datetime('now') WHERE visit_request_id = ? AND used_at IS NULL`)
-    .run(req.params.id);
+  const wfBefore = approvalEngine.getWorkflow('visit', vr.id);
+  const stateName = wfBefore && wfBefore.states[wfBefore.currentStateIndex] ? wfBefore.states[wfBefore.currentStateIndex].name : '';
+  let result;
+  try {
+    // workflow + ประวัติ + สถานะคำขอ + แจ้งเตือนในระบบ อยู่ใน transaction เดียว: สำเร็จครบหรือย้อนกลับทั้งหมด
+    result = db.transaction(() => {
+      const r = approvalEngine.decide('visit', vr.id, req.session.userId, action, note, vr.requester_id);
+      db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, note, channel) VALUES (?, ?, ?, ?, 'web')`)
+        .run(req.params.id, req.session.userId, `${actionLabel}${stateName ? ` (${stateName})` : ''}`, note || '');
+      logAction(req.session.userId, `visit_${action}`, `${actionLabel}คำขอ #${vr.code}`);
 
-  logAction(req.session.userId, status === 'approved' ? 'approve_request' : 'reject_request', `${actionLabel}คำขอ #${result.vr.code}`);
-  sendDecisionResultEmail(result.vr, req.session.userId, status, note, 'web');
+      if (r.finalStatus) {
+        // workflow จบแล้ว (approved / rejected / revision) - sync กลับไปที่ visit_requests.status
+        db.prepare(`
+          UPDATE visit_requests SET status = ?, approver_id = ?, approved_at = datetime('now'), approval_note = ? WHERE id = ?
+        `).run(r.finalStatus, req.session.userId, note || '', req.params.id);
+
+        const message = r.finalStatus === 'approved'
+          ? `คำขอออกนอกสถานที่ของคุณ #${vr.code} ได้รับการอนุมัติแล้ว`
+          : r.finalStatus === 'revision'
+            ? `คำขอออกนอกสถานที่ของคุณ #${vr.code} ถูกส่งกลับให้แก้ไข`
+            : `คำขอออกนอกสถานที่ของคุณ #${vr.code} ไม่ได้รับการอนุมัติ`;
+        db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, ?, ?, ?)`)
+          .run(vr.requester_id, r.finalStatus === 'revision' ? 'revision' : r.finalStatus, message, vr.id);
+      }
+      return r;
+    })();
+  } catch (err) {
+    if (err instanceof approvalEngine.ApprovalError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+
+  // อีเมล/แจ้งผู้อนุมัติคนถัดไป ทำหลัง commit แล้วเท่านั้น
+  if (result.finalStatus) {
+    if (result.finalStatus === 'revision') {
+      sendRevisionResultEmail(vr, req.session.userId, note);
+    } else {
+      sendDecisionResultEmail({ ...vr, status: result.finalStatus }, req.session.userId, result.finalStatus, note);
+    }
+  } else if (result.advanced) {
+    // ผ่าน state นี้แล้ว ไปรอ state ถัดไป - แจ้งเตือนผู้อนุมัติ state ถัดไปว่าถึงคิวแล้ว
+    const requester = db.prepare('SELECT full_name, department FROM users WHERE id = ?').get(vr.requester_id);
+    notifyRequestSubmitted(vr.id, requester, true);
+  }
+  // result.finalStatus === null && !advanced -> ยังรอคนอื่นใน state เดียวกัน (โหมด ALL) ไม่ต้องแจ้งอะไรเพิ่ม
 
   res.json({ ok: true });
 }
 
-// ส่งอีเมลแจ้งผลอนุมัติกลับไปยังผู้ขอ (ใช้ทั้งจากเว็บแอปและจากลิงก์อีเมล)
-function sendDecisionResultEmail(vr, approverId, status, note, viaChannel) {
+// ส่งอีเมลแจ้งผลอนุมัติ/ไม่อนุมัติกลับไปยังผู้ขอ
+function sendDecisionResultEmail(vr, approverId, status, note) {
   const requester = db.prepare('SELECT full_name, email, email_notify FROM users WHERE id = ?').get(vr.requester_id);
   const approver = db.prepare('SELECT full_name FROM users WHERE id = ?').get(approverId);
   if (!requester || !requester.email || !requester.email_notify) return;
   sendDecisionEmail({
     to: requester.email, requesterName: requester.full_name, vr, status,
-    approverName: approver ? approver.full_name : '-', note, viaChannel
+    approverName: approver ? approver.full_name : '-', note, showDocCode: getShowDocCode()
   }).catch(err => console.error('sendDecisionEmail error:', err.message));
 }
 
-// ---------- อนุมัติ/ไม่อนุมัติผ่านลิงก์ในอีเมล ----------
-// GET: แสดงหน้ายืนยันก่อน (ไม่กระทำการใดๆ กับข้อมูล) ป้องกันกรณีอีเมล/สแกนเนอร์เปิดลิงก์อัตโนมัติ
-router.get('/email-action/:token', (req, res) => {
-  const row = db.prepare(`
-    SELECT t.*, vr.code, vr.status AS vr_status, vr.visit_date, vr.time_from, vr.time_to, vr.purpose,
-           c.name AS customer_name, u.full_name AS requester_name, a.full_name AS approver_name
-    FROM approval_tokens t
-    JOIN visit_requests vr ON vr.id = t.visit_request_id
-    JOIN users u ON u.id = vr.requester_id
-    JOIN users a ON a.id = t.approver_id
-    LEFT JOIN customers c ON c.id = vr.customer_id
-    WHERE t.token = ?
-  `).get(req.params.token);
-
-  res.set('Content-Type', 'text/html; charset=utf-8');
-  res.send(renderEmailActionPage(row, req.params.token));
-});
-
-// POST: ยืนยันการอนุมัติ/ไม่อนุมัติจริง (ตรวจสอบเงื่อนไขซ้ำทุกครั้งฝั่งเซิร์ฟเวอร์)
-router.post('/email-action/:token', (req, res) => {
-  const row = db.prepare(`SELECT * FROM approval_tokens WHERE token = ?`).get(req.params.token);
-  res.set('Content-Type', 'text/html; charset=utf-8');
-
-  if (!row) return res.status(404).send(renderMessagePage('ไม่พบลิงก์นี้', 'ลิงก์อนุมัตินี้ไม่ถูกต้อง หรืออาจถูกลบไปแล้ว', 'error'));
-  if (row.used_at) return res.send(renderMessagePage('ลิงก์นี้ถูกใช้งานไปแล้ว', 'คำขอนี้ถูกดำเนินการไปแล้วก่อนหน้านี้ (อาจอนุมัติผ่านเว็บแอปหรืออีเมลอื่น)', 'info'));
-  if (new Date(row.expires_at) < new Date()) return res.send(renderMessagePage('ลิงก์หมดอายุ', 'กรุณาเข้าสู่ระบบเว็บแอปพลิเคชันเพื่อดำเนินการแทน', 'error'));
-
-  const note = (req.body && req.body.note) || '';
-  const status = row.action === 'approve' ? 'approved' : 'rejected';
-  const actionLabel = row.action === 'approve' ? 'อนุมัติ' : 'ไม่อนุมัติ';
-
-  const result = applyDecision(row.visit_request_id, row.approver_id, status, actionLabel, note, 'email');
-
-  // ทำเครื่องหมายว่าโทเคนนี้ (และโทเคนคู่ที่เหลือของคำขอเดียวกัน) ถูกใช้ไปแล้ว ไม่ว่าผลลัพธ์จะสำเร็จหรือไม่
-  db.prepare(`UPDATE approval_tokens SET used_at = datetime('now') WHERE visit_request_id = ? AND used_at IS NULL`)
-    .run(row.visit_request_id);
-
-  if (result.error) {
-    return res.send(renderMessagePage('ไม่สามารถดำเนินการได้', result.error, 'info'));
-  }
-
-  logAction(row.approver_id, status === 'approved' ? 'approve_request' : 'reject_request', `${actionLabel}คำขอ #${result.vr.code} (ผ่านอีเมล)`);
-  sendDecisionResultEmail(result.vr, row.approver_id, status, note, 'email');
-
-  res.send(renderMessagePage(
-    status === 'approved' ? '✓ อนุมัติคำขอเรียบร้อยแล้ว' : '✕ ไม่อนุมัติคำขอเรียบร้อยแล้ว',
-    `คำขอ #${result.vr.code} ถูกบันทึกผลในระบบแล้ว และมีการแจ้งเตือนไปยังผู้ขอทั้งในระบบและทางอีเมล`,
-    'success'
-  ));
-});
-
-function pageShell(bodyHtml) {
-  return `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TRISAK Visit Management</title>
-  <style>
-    body{font-family:'Segoe UI',Arial,sans-serif;background:#f3f4f6;margin:0;padding:40px 16px;color:#1f2937;}
-    .card{max-width:480px;margin:0 auto;background:#fff;border-radius:10px;padding:28px 26px;box-shadow:0 1px 4px rgba(0,0,0,.08);}
-    h2{margin-top:0;}
-    table{width:100%;border-collapse:collapse;font-size:14px;margin:16px 0;}
-    td{padding:5px 6px;} td:first-child{color:#6b7280;width:110px;}
-    textarea{width:100%;box-sizing:border-box;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-family:inherit;margin:10px 0;}
-    .btn{display:inline-block;padding:10px 22px;margin:6px 8px 6px 0;border:none;border-radius:6px;font-weight:600;font-size:14px;cursor:pointer;color:#fff;text-decoration:none;}
-    .approve{background:#16a34a;} .reject{background:#dc2626;} .muted{color:#6b7280;font-size:13px;}
-    .badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;}
-    .success{background:#dcfce7;color:#166534;} .error{background:#fee2e2;color:#991b1b;} .info{background:#fef9c3;color:#854d0e;}
-  </style></head><body>${bodyHtml}</body></html>`;
-}
-
-function renderMessagePage(title, desc, tone) {
-  return pageShell(`
-    <div class="card">
-      <span class="badge ${tone}">${tone === 'success' ? 'สำเร็จ' : tone === 'error' ? 'ผิดพลาด' : 'แจ้งเตือน'}</span>
-      <h2>${title}</h2>
-      <p class="muted">${desc}</p>
-      <a class="btn approve" href="/login">ไปที่เว็บแอปพลิเคชัน</a>
-    </div>`);
-}
-
-function renderEmailActionPage(row, token) {
-  if (!row) return renderMessagePage('ไม่พบลิงก์นี้', 'ลิงก์อนุมัตินี้ไม่ถูกต้อง หรืออาจถูกลบไปแล้ว', 'error');
-  if (row.used_at) return renderMessagePage('ลิงก์นี้ถูกใช้งานไปแล้ว', 'คำขอนี้ถูกดำเนินการไปแล้วก่อนหน้านี้ (อาจอนุมัติผ่านเว็บแอปหรืออีเมลอื่น)', 'info');
-  if (new Date(row.expires_at) < new Date()) return renderMessagePage('ลิงก์หมดอายุ', 'กรุณาเข้าสู่ระบบเว็บแอปพลิเคชันเพื่อดำเนินการแทน', 'error');
-  if (row.vr_status !== 'pending') return renderMessagePage('คำขอนี้ถูกดำเนินการไปแล้ว', `สถานะปัจจุบันของคำขอ #${row.code}: ${row.vr_status} (อาจถูกดำเนินการผ่านช่องทางอื่นไปแล้ว)`, 'info');
-
-  const isApprove = row.action === 'approve';
-  return pageShell(`
-    <div class="card">
-      <h2>ยืนยัน${isApprove ? 'การอนุมัติ' : 'การไม่อนุมัติ'}คำขอ #${row.code}</h2>
-      <table>
-        <tr><td>ผู้ขอ</td><td>${row.requester_name}</td></tr>
-        <tr><td>ลูกค้า</td><td>${row.customer_name || '-'}</td></tr>
-        <tr><td>วันที่/เวลา</td><td>${row.visit_date} (${row.time_from} - ${row.time_to})</td></tr>
-        <tr><td>วัตถุประสงค์</td><td>${row.purpose}</td></tr>
-        <tr><td>ผู้อนุมัติ</td><td>${row.approver_name}</td></tr>
-      </table>
-      <form method="POST" action="/api/visit-requests/email-action/${token}">
-        <textarea name="note" rows="3" placeholder="หมายเหตุ (ถ้ามี)"></textarea>
-        <button class="btn ${isApprove ? 'approve' : 'reject'}" type="submit">ยืนยัน${isApprove ? '✓ อนุมัติ' : '✕ ไม่อนุมัติ'}</button>
-      </form>
-      <p class="muted">หรือเข้าสู่ระบบเพื่อดูรายละเอียดและดำเนินการผ่านเว็บแอปพลิเคชันแทนก็ได้</p>
-    </div>`);
+// ส่งอีเมลแจ้งผู้ขอ: ถูกส่งกลับให้แก้ไข (revision)
+function sendRevisionResultEmail(vr, approverId, note) {
+  const requester = db.prepare('SELECT full_name, email, email_notify FROM users WHERE id = ?').get(vr.requester_id);
+  const approver = db.prepare('SELECT full_name FROM users WHERE id = ?').get(approverId);
+  if (!requester || !requester.email || !requester.email_notify) return;
+  sendRevisionEmail({
+    to: requester.email, requesterName: requester.full_name, vr, approverName: approver ? approver.full_name : '-', note,
+    showDocCode: getShowDocCode()
+  }).catch(err => console.error('sendRevisionEmail error:', err.message));
 }
 
 module.exports = router;

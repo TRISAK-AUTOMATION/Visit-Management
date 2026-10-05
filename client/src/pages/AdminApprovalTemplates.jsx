@@ -5,6 +5,11 @@ import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
 const MODE_OPTIONS = ['ANY', 'ALL'];
+const MODULE_TABS = [
+  { v: 'leave', label: 'การลา' },
+  { v: 'ot', label: 'OT' },
+  { v: 'visit', label: 'Visit (ออกนอกสถานที่)' },
+];
 // .form-group input{width:100%;padding:...;border:...} ของทั้งเว็บไซต์จะไปโดน checkbox ด้วย (ทำให้กล่องยืดเต็มแถว บีบข้อความข้าง ๆ จนวรรณยุกต์ตัดบรรทัดมั่ว)
 // ต้อง reset ค่ากลับเป็นของ checkbox ปกติเฉพาะจุดนี้
 const CHECKBOX_STYLE = { width: 16, height: 16, minWidth: 16, flexShrink: 0, padding: 0, border: '1px solid var(--border)', borderRadius: 4, background: '#fff', accentColor: 'var(--blue-500, #2563eb)' };
@@ -33,6 +38,7 @@ function UserPicker({ users, selected, onChange }) {
 
 export default function AdminApprovalTemplates() {
   const toast = useToast();
+  const [module, setModule] = useState('leave');
   const [templates, setTemplates] = useState(null);
   const [users, setUsers] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
@@ -41,14 +47,23 @@ export default function AdminApprovalTemplates() {
   const [states, setStates] = useState([]);
   const [requesterIds, setRequesterIds] = useState([]);
 
-  const loadList = async () => {
-    const { templates } = await api.get('/api/approval-templates?module=leave');
+  const loadList = async (mod = module) => {
+    const { templates } = await api.get(`/api/approval-templates?module=${mod}`);
     setTemplates(templates);
   };
   useEffect(() => {
-    loadList();
+    loadList(module);
+    setSelectedId(null);
+    setDetail(null);
+  }, [module]);
+  useEffect(() => {
     api.get('/api/users').then(({ users }) => setUsers(users)).catch(() => {});
   }, []);
+
+  const changeModule = (mod) => {
+    if (mod === module) return;
+    setModule(mod);
+  };
 
   const openTemplate = async (id) => {
     setSelectedId(id);
@@ -61,7 +76,7 @@ export default function AdminApprovalTemplates() {
   const createTemplate = async () => {
     if (!newName.trim()) { toast('กรุณาระบุชื่อ Template', 'error'); return; }
     try {
-      const r = await api.post('/api/approval-templates', { module: 'leave', name: newName.trim() });
+      const r = await api.post('/api/approval-templates', { module, name: newName.trim() });
       setNewName('');
       toast('สร้าง Template สำเร็จ กรุณาเพิ่มผู้ขอและขั้นตอนอนุมัติต่อ', 'success');
       await loadList();
@@ -150,12 +165,17 @@ export default function AdminApprovalTemplates() {
         กำหนด Workflow การอนุมัติล่วงหน้าเป็น Template — ระบุว่าใครใช้ Template นี้ได้ (Requester), มีกี่ขั้นตอน, และแต่ละขั้นตอนใครอนุมัติได้บ้าง (ANY = คนใดคนหนึ่งพอ, ALL = ต้องครบทุกคน)
         พนักงานที่ไม่มี Template ครอบคลุม จะใช้ระบบเดิม (หัวหน้าแผนกอนุมัติคนเดียวจบ) โดยอัตโนมัติ ไม่ต้องตั้งให้ครบทุกคนก่อนถึงจะใช้งานได้
       </div>
+      <div className="tabs" style={{ marginBottom: 14 }}>
+        {MODULE_TABS.map(t => (
+          <div key={t.v} className={`tab ${module === t.v ? 'active' : ''}`} onClick={() => changeModule(t.v)}>{t.label}</div>
+        ))}
+      </div>
       <div className="grid-2" style={{ alignItems: 'flex-start' }}>
         <div className="card">
-          <div className="card-head"><h3>Template ทั้งหมด (โมดูล: การขอลา)</h3></div>
+          <div className="card-head"><h3>Template ทั้งหมด (โมดูล: {MODULE_TABS.find(t => t.v === module)?.label})</h3></div>
           <div className="card-body">
             <div className="flex gap-8 mb-16">
-              <input type="text" placeholder="ชื่อ Template ใหม่ เช่น การขอลาฝ่ายขาย" value={newName} onChange={e => setNewName(e.target.value)}
+              <input type="text" placeholder="ชื่อ Template ใหม่" value={newName} onChange={e => setNewName(e.target.value)}
                 style={{ flex: 1 }} onKeyDown={e => { if (e.key === 'Enter') createTemplate(); }} />
               <button className="btn btn-primary btn-sm" onClick={createTemplate}>+ สร้าง</button>
             </div>

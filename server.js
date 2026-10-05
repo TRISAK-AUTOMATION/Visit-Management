@@ -3,17 +3,23 @@ require('dotenv').config(); // โหลดค่าคอนฟิกจาก�
 const path = require('path');
 const express = require('express');
 const session = require('express-session');
+const SqliteSessionStore = require('./utils/sqliteSessionStore');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '8mb' })); // เผื่อรองรับ custom field ประเภทแนบไฟล์ (Form Builder) ที่ส่งเป็น base64
 app.use(express.urlencoded({ extended: true })); // สำหรับฟอร์มยืนยันอนุมัติ/ไม่อนุมัติที่ส่งมาจากลิงก์ในอีเมล
+// secret ของ session ควรตั้งใน .env (SESSION_SECRET=ข้อความสุ่มยาวๆ) ไม่ควรเขียนตายตัวในโค้ด
+if (!process.env.SESSION_SECRET) {
+  console.warn('[คำเตือน] ยังไม่ได้ตั้ง SESSION_SECRET ใน .env — ใช้ค่าชั่วคราวซึ่งไม่ปลอดภัยสำหรับใช้งานจริง');
+}
 app.use(session({
-  secret: 'trisak-visit-management-secret-key',
+  secret: process.env.SESSION_SECRET || 'trisak-dev-only-secret-change-me',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 1000 * 60 * 60 * 8 } // 8 ชั่วโมง
+  store: new SqliteSessionStore(require('./db/database')), // เก็บ session ใน SQLite เพื่อให้ "จำฉันไว้" ไม่หายเมื่อรีสตาร์ท server
+  cookie: { maxAge: 1000 * 60 * 60 * 8 } // 8 ชั่วโมง (ค่าเริ่มต้น; ถ้าติ๊ก "จำฉันไว้" จะถูกขยายเป็น 30 วันตอนล็อกอิน ดู routes/auth.js)
 }));
 
 // ---------- API ROUTES ----------

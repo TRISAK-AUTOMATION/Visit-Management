@@ -78,6 +78,16 @@ export default function AdminUsers() {
     } catch (err) { toast(err.message, 'error'); }
   };
 
+  const resetPassword = async (u) => {
+    const pw = prompt(`ตั้งรหัสผ่านใหม่ให้ ${u.full_name} (อย่างน้อย 6 ตัวอักษร)\nแจ้งรหัสนี้ให้เจ้าตัว แล้วให้เปลี่ยนเองที่หน้าโปรไฟล์หลังเข้าสู่ระบบ`);
+    if (pw === null) return;
+    if (pw.length < 6) { toast('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร', 'error'); return; }
+    try {
+      await api.put(`/api/users/${u.id}/password`, { new_password: pw });
+      toast(`รีเซ็ตรหัสผ่านของ ${u.full_name} สำเร็จ`, 'success');
+    } catch (err) { toast(err.message, 'error'); }
+  };
+
   const toggleActive = async (u) => {
     const willActivate = !u.is_active;
     if (!confirm(willActivate ? `ยืนยันเปิดใช้งานบัญชีของ ${u.full_name}?` : `ยืนยันระงับการใช้งานบัญชีของ ${u.full_name}?`)) return;
@@ -142,6 +152,7 @@ export default function AdminUsers() {
                   <td><span className={`badge ${u.is_active ? 'approved' : 'cancelled'}`}>{u.is_active ? 'ใช้งานอยู่' : 'ถูกระงับ'}</span></td>
                   <td>
                     <button className="btn btn-outline btn-sm" onClick={() => openForm(u)}>แก้ไข</button>{' '}
+                    <button className="btn btn-outline btn-sm" onClick={() => resetPassword(u)}>รีเซ็ตรหัส</button>{' '}
                     <button className="btn btn-outline btn-sm" onClick={() => toggleActive(u)}>{u.is_active ? 'ระงับใช้งาน' : 'เปิดใช้งาน'}</button>{' '}
                     <button className="btn btn-danger btn-sm" onClick={() => remove(u.id)}>ลบ</button>
                   </td>

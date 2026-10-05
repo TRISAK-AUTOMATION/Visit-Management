@@ -120,6 +120,7 @@ export default function MyRequests() {
           request={modalData.request}
           history={modalData.history}
           customFields={modalData.customFields}
+          workflow={modalData.workflow}
           mode="mine"
           onClose={() => setModalData(null)}
         />

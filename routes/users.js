@@ -109,6 +109,20 @@ router.patch('/:id/active', requireAuth, requireRole('Admin'), (req, res) => {
   res.json({ ok: true, is_active: !!isActive });
 });
 
+// Admin รีเซ็ตรหัสผ่านให้ผู้ใช้ (ใช้กรณีพนักงานลืมรหัสผ่าน)
+router.put('/:id/password', requireAuth, requireRole('Admin'), (req, res) => {
+  const { new_password } = req.body;
+  if (!new_password || String(new_password).length < 6) {
+    return res.status(400).json({ error: 'รหัสผ่านใหม่ต้องมีอย่างน้อย 6 ตัวอักษร' });
+  }
+  const target = db.prepare('SELECT username, full_name FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(String(new_password), 10), req.params.id);
+  // ไม่ใส่รหัสผ่านลงใน log
+  logAction(req.session.userId, 'reset_password', `รีเซ็ตรหัสผ่านให้ ${target.username} (${target.full_name})`);
+  res.json({ ok: true });
+});
+
 router.delete('/:id', requireAuth, requireRole('Admin'), (req, res) => {
   if (Number(req.params.id) === req.session.userId) {
     return res.status(400).json({ error: 'ไม่สามารถลบบัญชีของตัวเองได้' });
