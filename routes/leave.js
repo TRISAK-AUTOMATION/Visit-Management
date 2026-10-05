@@ -13,8 +13,10 @@ const router = express.Router();
 
 const LEAVE_TYPES = ['ลากิจ', 'ลาป่วย', 'ลาพักร้อน'];
 const LEAVE_MODES = ['full_day', 'half_day_morning', 'half_day_afternoon', 'hours'];
-// revision = ถูกส่งกลับให้แก้ไข ยังแก้ไข+ส่งใหม่ได้เหมือน pending
-const EDITABLE_STATUSES = ['draft', 'pending', 'revision'];
+// ไม่รวม 'pending' เพราะคำขอที่กำลังอยู่ระหว่างอนุมัติ (อาจผ่านบาง State ไปแล้วในกรณี multi-stage)
+// ห้ามแก้ไขข้อมูลตรงๆ โดยไม่ reset workflow — ถ้าจะแก้ ผู้ขอต้องรอถูก "ส่งกลับแก้ไข" (revision) ก่อน
+// ซึ่งตอน resubmit จะ reset workflow กลับไป State แรกให้เองอยู่แล้ว
+const EDITABLE_STATUSES = ['draft', 'revision'];
 
 function isValidLeaveType(t) { return LEAVE_TYPES.includes(t); }
 function isValidLeaveMode(m) { return LEAVE_MODES.includes(m); }

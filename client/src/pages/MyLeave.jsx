@@ -112,7 +112,10 @@ export default function MyLeave() {
                     <button className="btn btn-outline btn-sm" onClick={() => openDetail(r.id)}>ดูรายละเอียด</button>{' '}
                     {['draft', 'pending', 'revision'].includes(r.status) && (
                       <>
-                        <button className="btn btn-outline btn-sm" onClick={() => navigate(`/leave-request?id=${r.id}`)}>แก้ไข</button>{' '}
+                        {/* ห้ามแก้ไขตอน pending เพราะกำลังอยู่ระหว่างอนุมัติ (อาจผ่านบาง State ไปแล้ว) - แก้ได้เฉพาะ draft/revision */}
+                        {['draft', 'revision'].includes(r.status) && (
+                          <button className="btn btn-outline btn-sm" onClick={() => navigate(`/leave-request?id=${r.id}`)}>แก้ไข</button>
+                        )}{' '}
                         {r.status === 'draft' && <button className="btn btn-success btn-sm" onClick={() => submitDraft(r.id)}>ส่งคำขอ</button>}{' '}
                         {r.status === 'revision' && <button className="btn btn-success btn-sm" onClick={() => resubmit(r.id)}>ส่งใหม่</button>}{' '}
                         <button className="btn btn-danger btn-sm" onClick={() => cancelReq(r.id, r.status === 'draft')}>{r.status === 'draft' ? 'ลบ' : 'ยกเลิก'}</button>
