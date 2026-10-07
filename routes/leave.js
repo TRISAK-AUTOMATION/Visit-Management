@@ -8,6 +8,7 @@ const { logAction } = require('../utils/systemLog');
 const { approverIdsForDepartments } = require('../utils/userDepartments');
 const { canEditProfile } = require('../utils/profilePermissions');
 const approvalEngine = require('../utils/approvalEngine');
+const { canViewAll } = require('../utils/viewScope');
 
 const router = express.Router();
 
@@ -124,28 +125,40 @@ router.get('/', requireAuth, (req, res) => {
     }
     const wantedStatus = status || 'pending';
     let rows;
-    if (req.session.role === 'Admin') {
-      rows = db.prepare(`
-        SELECT lr.*, u.full_name AS requester_name, u.department AS requester_department
-        FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
-        WHERE lr.status = ? ORDER BY lr.created_at DESC
-      `).all(wantedStatus);
-    } else {
-      // ใช้ workflow engine หาว่าคำขอไหนเกี่ยวข้องกับตัวเอง แทนการอิงแผนกตรงๆ เพราะตอนนี้บาง request อาจวิ่งอยู่ใน Template ที่ Admin ตั้งไว้
-      // wantedStatus='pending' -> ต้องเป็น state ปัจจุบันที่รอฉันตัดสินใจอยู่จริงๆ เท่านั้น | อื่นๆ (approved/rejected/revision) -> เห็นทุกคำขอที่เคยอยู่ในสายอนุมัติของฉัน
-      const ids = approvalEngine.listRequestIdsForApprover('leave', req.session.userId, { onlyCurrentPending: wantedStatus === 'pending' });
-      if (!ids.length) return res.json({ requests: [] });
-      const placeholders = ids.map(() => '?').join(',');
-      rows = db.prepare(`
-        SELECT lr.*, u.full_name AS requester_name, u.department AS requester_department
-        FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
-        WHERE lr.status = ? AND lr.id IN (${placeholders})
-        ORDER BY lr.created_at DESC
-      `).all(wantedStatus, ...ids);
-    }
+    // ผู้มีสิทธิ์อนุมัติ (ผ่านด่านด้านบนแล้ว) เห็นคำขอของทุกคนตามสถานะ เพื่อให้ตรงกับตัวเลขบน Dashboard
+    // ฉบับร่างของคนอื่นยังเป็นส่วนตัว (เฉพาะ Admin ที่เห็นได้เหมือนเดิม)
+    if (wantedStatus === 'draft' && req.session.role !== 'Admin') return res.json({ requests: [] });
+    rows = db.prepare(`
+      SELECT lr.*, u.full_name AS requester_name, u.department AS requester_department
+      FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
+      WHERE lr.status = ? ORDER BY lr.created_at DESC
+    `).all(wantedStatus);
     return res.json({ requests: rows });
   }
   res.status(400).json({ error: 'scope ไม่ถูกต้อง' });
+});
+
+// ข้อมูลการลาสำหรับหน้าปฏิทิน: แสดงเฉพาะคำขอที่ยัง "รออนุมัติ" หรือ "อนุมัติแล้ว" (ไม่รวมฉบับร่าง/ส่งกลับแก้ไข/ไม่อนุมัติ/ยกเลิก)
+// สิทธิ์การมองเห็น: Admin เห็นทุกคน | คนอื่นเห็นของตัวเอง + คำขอที่ตัวเองอยู่ในสายอนุมัติ (ใช้ workflow engine เหมือนหน้าอนุมัติ)
+// ต้องวางก่อน '/:id' ไม่งั้น "calendar" จะถูกตีเป็น id
+router.get('/calendar/events', requireAuth, (req, res) => {
+  const { userId, role } = req.session;
+  const baseSql = `
+    SELECT lr.id, lr.code, lr.requester_id, lr.leave_type, lr.leave_mode, lr.date_from, lr.date_to,
+           lr.time_from, lr.time_to, lr.duration_days, lr.duration_hours, lr.reason, lr.status,
+           u.full_name AS requester_name, u.department AS requester_department
+    FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
+    WHERE lr.status IN ('pending', 'approved')`;
+  let rows;
+  if (role === 'Admin') {
+    rows = db.prepare(`${baseSql} ORDER BY lr.date_from ASC`).all();
+  } else if (canViewAll(req.session)) {
+    // ผู้มีสิทธิ์อนุมัติเห็นของทุกคน (ตรงกับ Dashboard และหน้าอนุมัติ)
+    rows = db.prepare(`${baseSql} ORDER BY lr.date_from ASC`).all();
+  } else {
+    rows = db.prepare(`${baseSql} AND lr.requester_id = ? ORDER BY lr.date_from ASC`).all(userId);
+  }
+  res.json({ requests: rows });
 });
 
 router.get('/:id', requireAuth, (req, res) => {
@@ -160,7 +173,8 @@ router.get('/:id', requireAuth, (req, res) => {
   const isRequester = lr.requester_id === req.session.userId;
   const isAdmin = req.session.role === 'Admin';
   const isParticipant = approvalEngine.isWorkflowParticipant('leave', lr.id, req.session.userId);
-  if (!isRequester && !isAdmin && !isParticipant) {
+  const isViewer = canViewAll(req.session) && lr.status !== 'draft'; // ผู้มีสิทธิ์อนุมัติดูได้ทุกคำขอ (ยกเว้นฉบับร่างของคนอื่น)
+  if (!isRequester && !isAdmin && !isParticipant && !isViewer) {
     return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ดูคำขอนี้' });
   }
   const history = db.prepare(`

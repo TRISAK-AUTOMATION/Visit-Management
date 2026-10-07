@@ -80,6 +80,14 @@ input,select,textarea{font-family:inherit;}
   50%{transform:scale(1.12);}
 }
 
+.side-profile{display:flex;align-items:center;gap:10px;margin:0 10px 14px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.08);color:#fff;text-decoration:none;transition:.15s;}
+.side-profile:hover{background:rgba(255,255,255,.12);}
+.side-profile img{width:40px;height:40px;border-radius:50%;object-fit:cover;background:#3b4a78;flex-shrink:0;}
+.side-profile-text{min-width:0;flex:1;}
+.side-profile-text b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.side-profile-text span{display:block;font-size:11px;color:#9db0e8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.side-profile-text em{display:block;font-style:normal;font-size:10px;color:#7f93cf;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.side-profile-go{color:#9db0e8;font-size:16px;}
 .side-user{display:flex;align-items:center;gap:10px;padding:14px 16px;border-top:1px solid rgba(255,255,255,.08);margin-top:8px;}
 .side-user img{width:34px;height:34px;border-radius:50%;object-fit:cover;background:#3b4a78;}
 .side-user b{display:block;font-size:12.5px;}
@@ -204,6 +212,8 @@ tbody tr:hover{background:#fafbfe;}
 }
 .form-group input:focus,.form-group select:focus,.form-group textarea:focus{outline:2px solid #c6d3ff;border-color:var(--blue-500);}
 .form-group textarea{resize:vertical;min-height:70px;}
+/* checkbox/radio ใน .form-group (เช่น ผู้ร่วมงาน, ตัวเลือกจาก Form Builder) ต้องไม่โดนกฎ input ด้านบนที่ยืดเต็มความกว้าง + padding */
+.form-group input[type=checkbox],.form-group input[type=radio]{width:16px;height:16px;padding:0;margin:0;flex:0 0 auto;accent-color:var(--blue-600);background:#fff;}
 .form-actions{display:flex;justify-content:flex-end;gap:10px;padding-top:6px;}
 
 /* ---------- TABS / FILTER PILLS ---------- */
@@ -256,6 +266,13 @@ tbody tr:hover{background:#fafbfe;}
 .cal-cell.today{border-color:var(--blue-600);box-shadow:inset 0 0 0 1px var(--blue-600);}
 .cal-cell .d{font-weight:700;margin-bottom:4px;}
 .cal-evt{background:#e7edff;color:var(--blue-600);border-radius:5px;padding:1px 5px;font-size:10px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cal-evt.leave{background:#fff1d6;color:#b86e00;}
+.cal-filter{display:flex;gap:6px;flex-wrap:wrap;}
+.cal-filter-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid var(--border);border-radius:999px;background:#fff;color:var(--text-600);font-size:12.5px;cursor:pointer;}
+.cal-filter-btn.active{background:var(--navy-800);border-color:var(--navy-800);color:#fff;}
+.cal-legend-dot{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;}
+.cal-legend-dot.visit{background:var(--blue-600);}
+.cal-legend-dot.leave{background:var(--orange-600);}
 
 @media(max-width:1100px){
   .stat-grid{grid-template-columns:repeat(2,1fr);}
@@ -310,6 +327,7 @@ tbody tr:hover{background:#fafbfe;}
   .cal-evt{display:none;} /* ข้อความเต็มโชว์แค่จอกว้าง บนมือถือใช้จุดแทน */
   .cal-evt-dots{display:flex;gap:2px;flex-wrap:wrap;justify-content:center;}
   .cal-evt-dot{width:5px;height:5px;border-radius:50%;background:var(--blue-600);}
+  .cal-evt-dot.leave{background:var(--orange-600);}
   .cal-evt-more{font-size:9px;color:var(--blue-600);font-weight:700;}
 }
 @media(min-width:721px){

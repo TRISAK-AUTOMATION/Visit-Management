@@ -6,6 +6,7 @@ const { requireAuth, requireRole } = require('./middleware');
 const { sendNewRequestEmail, sendDecisionEmail, sendRevisionEmail } = require('../utils/mailer');
 const { logAction } = require('../utils/systemLog');
 const approvalEngine = require('../utils/approvalEngine');
+const { canViewAll } = require('../utils/viewScope');
 
 const router = express.Router();
 
@@ -128,15 +129,7 @@ router.get('/', requireAuth, (req, res) => {
     }
     where.push(`vr.status != 'draft'`);
     where.push(`vr.status != 'revision'`);
-    // Admin เห็นทุกคำขอ, คนอื่นใช้ workflow engine หาว่าคำขอไหนเกี่ยวข้องกับตัวเอง แทนการอิงแผนกตรงๆ
-    // เพราะตอนนี้บาง request อาจวิ่งอยู่ใน Template ที่ Admin ตั้งไว้ ไม่ใช่แค่หัวหน้าแผนกอย่างเดียว
-    if (role !== 'Admin') {
-      const wantedStatus = status || 'pending';
-      const ids = approvalEngine.listRequestIdsForApprover('visit', userId, { onlyCurrentPending: wantedStatus === 'pending' });
-      if (!ids.length) return res.json({ requests: [] });
-      where.push(`vr.id IN (${ids.map(() => '?').join(',')})`);
-      params.push(...ids);
-    }
+    // ผู้มีสิทธิ์อนุมัติ (ผ่านด่านด้านบนแล้ว) เห็นคำขอของทุกคน เพื่อให้ตรงกับตัวเลขบน Dashboard
   }
   if (status) {
     where.push('vr.status = ?');
@@ -172,7 +165,8 @@ router.get('/:id', requireAuth, (req, res) => {
   const isRequester = vr.requester_id === req.session.userId;
   const isAdmin = req.session.role === 'Admin';
   const isParticipant = approvalEngine.isWorkflowParticipant('visit', vr.id, req.session.userId);
-  if (!isRequester && !isAdmin && !isParticipant) {
+  const isViewer = canViewAll(req.session) && vr.status !== 'draft'; // ผู้มีสิทธิ์อนุมัติดูได้ทุกคำขอ (ยกเว้นฉบับร่างของคนอื่น)
+  if (!isRequester && !isAdmin && !isParticipant && !isViewer) {
     return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ดูคำขอนี้' });
   }
 

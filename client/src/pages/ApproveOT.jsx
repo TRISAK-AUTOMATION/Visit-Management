@@ -1,7 +1,7 @@
 // client/src/pages/ApproveOT.jsx - หน้าอนุมัติคำขอ OT (Approver/Admin)
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
-import { api, fmtDate } from '../lib/api';
+import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
 const TABS = [{ f: 'pending', label: 'รออนุมัติ' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }, { f: 'revision', label: 'ส่งกลับแก้ไข' }];
@@ -40,7 +40,7 @@ function WorkflowTimeline({ workflow }) {
 export default function ApproveOT() {
   const toast = useToast();
   const [rows, setRows] = useState([]);
-  const [tab, setTab] = useState('pending');
+  const [tab, setTab] = useState(() => { const s = new URLSearchParams(window.location.search).get('status'); return ['pending','approved','rejected','revision'].includes(s) ? s : 'pending'; });
   const [detail, setDetail] = useState(null);
 
   const load = async (status = tab) => {
@@ -78,7 +78,7 @@ export default function ApproveOT() {
             <tbody>
               {rows.length ? rows.map(r => (
                 <tr key={r.id}>
-                  <td>{fmtDate(r.created_at)}</td>
+                  <td>{fmtDateTime(r.created_at)}</td>
                   <td>{r.requester_name} {r.requester_department ? `· ${r.requester_department}` : ''}</td>
                   <td>{fmtDate(r.ot_date)}</td>
                   <td>{r.time_from} - {r.time_to}</td>
@@ -109,6 +109,9 @@ export default function ApproveOT() {
               <p><b>วันที่:</b> {fmtDate(detail.request.ot_date)}</p>
               <p><b>เวลา:</b> {detail.request.time_from} - {detail.request.time_to} ({detail.request.hours} ชม.)</p>
               <p><b>สถานที่:</b> {detail.request.location || '-'}</p>
+              <p><b>OT Type:</b> {detail.request.ot_type || '-'}</p>
+              <p><b>ลูกค้า:</b> {detail.request.customer_name ? `${detail.request.customer_code || ''} - ${detail.request.customer_name}` : '-'}</p>
+              <p><b>Project No.:</b> {detail.request.project_no || '-'} &nbsp; <b>Job No.:</b> {detail.request.job_no || '-'}</p>
               <p><b>รายละเอียดงาน:</b> {detail.request.work_detail || '-'}</p>
               <p><b>เหตุผล:</b> {detail.request.reason || '-'}</p>
               {detail.request.notes && <p><b>หมายเหตุ:</b> {detail.request.notes}</p>}

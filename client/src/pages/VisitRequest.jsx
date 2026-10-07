@@ -3,14 +3,17 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import TimeInput24 from '../components/TimeInput24';
-import { api, statusLabel } from '../lib/api';
+import { api, statusLabel, todayLocal } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+
+// checkbox/radio: รีเซ็ตสไตล์ของกฎ `.form-group input` (กว้างเต็มแถว + padding) แบบ inline เพื่อไม่ขึ้นกับ CSS ไฟล์อื่น/cache
+const CHECK_STYLE = { width: 16, height: 16, padding: 0, margin: 0, flex: '0 0 auto' };
 
 const JOB_TYPES = ['เข้าพบลูกค้า', 'ติดตั้ง/บริการ', 'นำเสนอสินค้า', 'ติดตามงาน', 'ประชุมงาน', 'อื่นๆ'];
 const TRANSPORTS = ['รถยนต์ส่วนตัว', 'รถบริษัท', 'รถสาธารณะ', 'แท็กซี่/แอปเรียกรถ', 'อื่นๆ'];
 
 const emptyForm = {
-  visit_date: new Date().toISOString().slice(0, 10),
+  visit_date: todayLocal(),
   customer_id: '', time_from: '09:00', time_to: '16:00', job_type: JOB_TYPES[0], sales_person: '',
   purpose: '', location: '', contact_person: '', contact_phone: '', product: '', participants: '',
   transport: TRANSPORTS[0], license_plate: '', mileage_out: '', mileage_in: '', actual_time_out: '',
@@ -36,6 +39,16 @@ export default function VisitRequest() {
   useEffect(() => {
     api.get('/api/users/by-department/Engineer').then(({ users }) => setEngineerUsers(users)).catch(() => {});
   }, []);
+
+  // ช่องผู้ร่วมงาน: ค้นหาชื่อ + ตัวเลือก "รวมแผนกอื่น" (โหลดรายชื่อทุกแผนกเมื่อกดเปิดเท่านั้น)
+  const [participantSearch, setParticipantSearch] = useState('');
+  const [includeOtherDepts, setIncludeOtherDepts] = useState(false);
+  const [allUsers, setAllUsers] = useState(null);
+  useEffect(() => {
+    if (includeOtherDepts && allUsers === null) {
+      api.get('/api/users/directory').then(({ users }) => setAllUsers(users)).catch(() => setAllUsers([]));
+    }
+  }, [includeOtherDepts, allUsers]);
 
   // การตั้งค่าซ่อน/แสดง/เปลี่ยนชื่อ ของ Field เดิมของระบบ (Settings > Form Builder > Field เดิมของระบบ)
   // ค่าเริ่มต้น = แสดงทุก field ด้วยชื่อเดิม (เหมือนพฤติกรรมก่อนมีฟีเจอร์นี้) กันหน้าตาสั่นระหว่างรอโหลด
@@ -73,7 +86,7 @@ export default function VisitRequest() {
     contact_person: { type: 'text', placeholder: 'ชื่อผู้ติดต่อฝั่งลูกค้า' },
     contact_phone: { type: 'text', placeholder: '0xx-xxx-xxxx' },
     product: { type: 'text', placeholder: 'เช่น เครื่องจักร, อะไหล่, ซอฟต์แวร์' },
-    participants: { type: 'engineer_multiselect', placeholder: 'เลือกผู้ร่วมงาน (เฉพาะแผนก Engineer)' },
+    participants: { type: 'engineer_multiselect', placeholder: 'เลือกผู้ร่วมงาน' },
     transport: { type: 'select', options: TRANSPORTS },
     license_plate: { type: 'text', placeholder: 'กข 1234' },
     mileage_out: { type: 'number', placeholder: 'เลขไมล์ตอนออกเดินทาง' },
@@ -121,14 +134,67 @@ export default function VisitRequest() {
             const next = selected.includes(name) ? selected.filter(n => n !== name) : [...selected, name];
             setForm(f => ({ ...f, [key]: next.join(', ') }));
           };
+          // ค่าเริ่มต้น = เฉพาะ Engineer | เปิด "รวมแผนกอื่น" = ทุกแผนก (Engineer ขึ้นก่อน)
+          const pool = includeOtherDepts
+            ? (allUsers || []).map(u => ({ id: u.id, full_name: u.full_name, dept: u.department }))
+                .sort((a, b) => (a.dept === 'Engineer' ? 0 : 1) - (b.dept === 'Engineer' ? 0 : 1) || a.full_name.localeCompare(b.full_name))
+            : engineerUsers.map(u => ({ id: u.id, full_name: u.full_name, dept: 'Engineer' }));
+          const q = participantSearch.trim().toLowerCase();
+          const shown = q ? pool.filter(u => u.full_name.toLowerCase().includes(q)) : pool;
+          // พิมพ์ชื่อเองได้ (เช่น คนนอกบริษัท/ไม่มีในระบบ) - ตัดเครื่องหมาย , ออก เพราะระบบเก็บรายชื่อแบบคั่นด้วย ,
+          const typedName = participantSearch.replace(/,/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+          const canAddTyped = typedName && !selected.some(n => n.toLowerCase() === typedName.toLowerCase());
+          const addTyped = () => {
+            if (!canAddTyped) return;
+            setForm(f => ({ ...f, [key]: [...selected, typedName].join(', ') }));
+            setParticipantSearch('');
+          };
           return (
-            <div style={{ border: '1px solid var(--border)', borderRadius: 9, padding: '8px 12px', maxHeight: 160, overflowY: 'auto' }}>
-              {engineerUsers.length ? engineerUsers.map(u => (
-                <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 13, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={selected.includes(u.full_name)} onChange={() => toggle(u.full_name)} />
-                  {u.full_name}
-                </label>
-              )) : <div className="muted" style={{ fontSize: 12.5 }}>ยังไม่มีพนักงานในแผนก Engineer</div>}
+            <div>
+              {selected.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                  {selected.map(name => (
+                    <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#e7edff', color: 'var(--blue-600)', borderRadius: 999, padding: '3px 6px 3px 10px', fontSize: 12.5, fontWeight: 600 }}>
+                      {name}
+                      <button type="button" onClick={() => toggle(name)} aria-label={`เอา ${name} ออก`}
+                        style={{ border: 'none', background: 'none', color: 'inherit', cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: '0 2px' }}>&times;</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <input type="text" value={participantSearch} onChange={e => setParticipantSearch(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (!shown.length) addTyped(); } }}
+                placeholder="ค้นหาชื่อ หรือพิมพ์ชื่อเอง..." style={{ marginBottom: 6 }} />
+              <div style={{ border: '1px solid var(--border)', borderRadius: 9, padding: '6px 10px', maxHeight: 150, overflowY: 'auto' }}>
+                {shown.length ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', columnGap: 10 }}>
+                    {shown.map(u => (
+                      <label key={u.id} title={u.dept && u.dept !== 'Engineer' ? `${u.full_name} (${u.dept})` : u.full_name}
+                        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 13, cursor: 'pointer', minWidth: 0 }}>
+                        <input type="checkbox" style={CHECK_STYLE} checked={selected.includes(u.full_name)} onChange={() => toggle(u.full_name)} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {u.full_name}
+                          {includeOtherDepts && u.dept && u.dept !== 'Engineer' ? <span className="muted" style={{ fontSize: 11 }}> · {u.dept}</span> : null}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="muted" style={{ fontSize: 12.5 }}>
+                    {includeOtherDepts && allUsers === null ? 'กำลังโหลดรายชื่อ...' : q ? 'ไม่พบชื่อที่ค้นหา' : 'ยังไม่มีพนักงานในแผนก Engineer'}
+                  </div>
+                )}
+              </div>
+              {canAddTyped && (
+                <button type="button" onClick={addTyped}
+                  style={{ display: 'block', marginTop: 6, background: 'none', border: 'none', padding: 0, color: 'var(--blue-600)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}>
+                  + เพิ่ม "{typedName}" เป็นผู้ร่วมงาน (พิมพ์เอง)
+                </button>
+              )}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, marginBottom: 0, fontSize: 12.5, fontWeight: 400, cursor: 'pointer' }}>
+                <input type="checkbox" style={CHECK_STYLE} checked={includeOtherDepts} onChange={e => setIncludeOtherDepts(e.target.checked)} />
+                รวมพนักงานแผนกอื่นด้วย
+              </label>
             </div>
           );
         })()}
@@ -181,7 +247,7 @@ export default function VisitRequest() {
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 4 }}>
           {f.options.map(o => (
             <label key={o} style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400 }}>
-              <input type="radio" name={`custom_${f.field_key}`} value={o} style={{ width: 'auto' }}
+              <input type="radio" name={`custom_${f.field_key}`} value={o} style={CHECK_STYLE}
                 checked={customValues[f.field_key] === o} onChange={setCustom(f.field_key)} required={f.is_required} />
               {o}
             </label>
@@ -192,7 +258,7 @@ export default function VisitRequest() {
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 4 }}>
           {f.options.map(o => (
             <label key={o} style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400 }}>
-              <input type="checkbox" style={{ width: 'auto' }}
+              <input type="checkbox" style={CHECK_STYLE}
                 checked={Array.isArray(customValues[f.field_key]) && customValues[f.field_key].includes(o)}
                 onChange={toggleMultiselect(f.field_key, o)} />
               {o}
@@ -202,7 +268,7 @@ export default function VisitRequest() {
       )}
       {f.field_type === 'checkbox' && (
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 400 }}>
-          <input type="checkbox" style={{ width: 'auto' }} checked={!!customValues[f.field_key]} onChange={setCustom(f.field_key)} /> ใช่ / ตกลง
+          <input type="checkbox" style={CHECK_STYLE} checked={!!customValues[f.field_key]} onChange={setCustom(f.field_key)} /> ใช่ / ตกลง
         </label>
       )}
       {f.field_type === 'file' && (
@@ -278,6 +344,39 @@ export default function VisitRequest() {
     }, 250); // debounce กันยิง API ถี่เกินไปตอนพิมพ์
     return () => clearTimeout(t);
   }, [customerQuery]);
+
+  // เพิ่มลูกค้าใหม่ (รอตรวจสอบ) กรณีไป Visit ที่ยังไม่อยู่ในฐานข้อมูลลูกค้า - Admin จะตรวจสอบ/ใส่รหัสจริง/รวมเข้ากับลูกค้าเดิมภายหลัง
+  const [newCustOpen, setNewCustOpen] = useState(false);
+  const [newCust, setNewCust] = useState({ name: '', contact_person: '', phone: '', tax_id: '' });
+  const [savingNewCust, setSavingNewCust] = useState(false);
+
+  const openNewCustomer = () => {
+    setNewCust({ name: customerQuery.trim(), contact_person: '', phone: '', tax_id: '' });
+    setCustomerOpen(false);
+    setNewCustOpen(true);
+  };
+
+  const createPendingCustomer = async () => {
+    if (!newCust.name.trim()) { toast('กรุณากรอกชื่อลูกค้า/บริษัท', 'error'); return; }
+    setSavingNewCust(true);
+    try {
+      const { customer } = await api.post('/api/customers/pending', newCust);
+      pickCustomer(customer);
+      setNewCustOpen(false);
+      toast(`เพิ่มลูกค้าใหม่แล้ว (${customer.code}) รอผู้ดูแลระบบตรวจสอบ`, 'success');
+    } catch (err) {
+      if (err.status === 409 && err.data && err.data.duplicate) {
+        // มีลูกค้าชื่อเดียวกันอยู่แล้ว -> ใช้รายเดิมแทนการสร้างซ้ำ
+        pickCustomer(err.data.duplicate);
+        setNewCustOpen(false);
+        toast('มีลูกค้าชื่อนี้อยู่ในระบบแล้ว ระบบเลือกรายเดิมให้แล้ว', 'success');
+      } else {
+        toast(err.message, 'error');
+      }
+    } finally {
+      setSavingNewCust(false);
+    }
+  };
 
   const pickCustomer = (c) => {
     setSelectedCustomer(c);
@@ -492,8 +591,17 @@ export default function VisitRequest() {
                   required
                 />
                 {customerQuery && !form.customer_id && (
-                  <div style={{ fontSize: 12, color: '#c0392b', marginTop: 4 }}>กรุณาเลือกลูกค้าจากรายการค้นหา</div>
+                  <div style={{ fontSize: 12, color: '#c0392b', marginTop: 4 }}>
+                    กรุณาเลือกลูกค้าจากรายการค้นหา{' '}
+                    <button type="button" onClick={openNewCustomer}
+                      style={{ background: 'none', border: 'none', padding: 0, color: 'var(--blue-600)', fontSize: 12, fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}>
+                      ไม่พบลูกค้า? + เพิ่มลูกค้าใหม่
+                    </button>
+                  </div>
                 )}
+                {selectedCustomer && selectedCustomer.is_pending ? (
+                  <div style={{ fontSize: 12, color: '#c9861a', marginTop: 4 }}>ลูกค้าใหม่ — รอผู้ดูแลระบบตรวจสอบ ({selectedCustomer.code})</div>
+                ) : null}
                 {customerOpen && customerResults.length > 0 && (
                   <div style={{
                     position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20,
@@ -506,7 +614,7 @@ export default function VisitRequest() {
                         onMouseDown={() => pickCustomer(c)}
                         style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid #f2f2f2' }}
                       >
-                        <div style={{ fontWeight: 600 }}>{c.code} — {c.name}</div>
+                        <div style={{ fontWeight: 600 }}>{c.code} — {c.name}{c.is_pending ? <span style={{ marginLeft: 6, fontSize: 11, color: '#c9861a', fontWeight: 500 }}>(ใหม่ · รอตรวจสอบ)</span> : null}</div>
                         {c.contact_person && <div style={{ color: '#888' }}>Sales: {c.contact_person}</div>}
                       </div>
                     ))}
@@ -554,6 +662,44 @@ export default function VisitRequest() {
           </form>
         </div>
       </div>
+
+      {newCustOpen && (
+        <div className="modal-bg" onClick={(e) => { if (e.target === e.currentTarget) setNewCustOpen(false); }}>
+          <div className="modal">
+            <div className="modal-head">
+              <h3>เพิ่มลูกค้าใหม่</h3>
+              <button type="button" className="modal-close" onClick={() => setNewCustOpen(false)}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+                ใช้เมื่อไป Visit ลูกค้าที่ยังไม่อยู่ในระบบ ระบบจะสร้างรหัสชั่วคราว (NEW-xxxx) และเลือกให้ในคำขอทันที โดยผู้ดูแลระบบจะตรวจสอบและใส่รหัสจริงภายหลัง
+              </p>
+              <div className="form-group">
+                <label>ชื่อลูกค้า / บริษัท <span className="req">*</span></label>
+                <input type="text" value={newCust.name} onChange={e => setNewCust(c => ({ ...c, name: e.target.value }))} autoFocus />
+              </div>
+              <div className="form-group">
+                <label>ผู้ติดต่อ</label>
+                <input type="text" value={newCust.contact_person} onChange={e => setNewCust(c => ({ ...c, contact_person: e.target.value }))} />
+              </div>
+              <div className="form-group">
+                <label>เบอร์โทร</label>
+                <input type="text" value={newCust.phone} onChange={e => setNewCust(c => ({ ...c, phone: e.target.value }))} />
+              </div>
+              <div className="form-group">
+                <label>เลขประจำตัวผู้เสียภาษี</label>
+                <input type="text" value={newCust.tax_id} onChange={e => setNewCust(c => ({ ...c, tax_id: e.target.value }))} placeholder="ถ้าทราบ" />
+              </div>
+              <div className="form-actions">
+                <button type="button" className="btn btn-outline" onClick={() => setNewCustOpen(false)}>ยกเลิก</button>
+                <button type="button" className="btn btn-primary" disabled={savingNewCust} onClick={createPendingCustomer}>
+                  {savingNewCust ? 'กำลังบันทึก...' : 'เพิ่มและเลือกลูกค้านี้'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

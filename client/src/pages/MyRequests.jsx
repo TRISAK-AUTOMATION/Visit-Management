@@ -22,7 +22,7 @@ export default function MyRequests() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [all, setAll] = useState([]);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState(() => { const s = searchParams.get('status'); return ['all','draft','pending','revision','approved','rejected'].includes(s) ? s : 'all'; });
   const [modalData, setModalData] = useState(null); // { request, history }
 
   const load = async () => {

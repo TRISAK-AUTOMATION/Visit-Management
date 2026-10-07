@@ -138,6 +138,15 @@ export default function Layout({ title, children }) {
           <div className="brand-mark">T</div>
           <div className="brand-text"><b>TRISAK</b><span>VISIT MANAGEMENT</span></div>
         </div>
+        <Link to="/profile" className="side-profile" onClick={closeSidebar} title="ดูโปรไฟล์ของฉัน">
+          <img src={me.avatar_url || '/img/avatar1.png'} onError={(e) => { e.target.style.visibility = 'hidden'; }} />
+          <div className="side-profile-text">
+            <b>{me.full_name}</b>
+            <span>{me.position || ROLE_TH[me.role]}</span>
+            <em>{ROLE_TH[me.role]}{me.department ? ` · ${me.department}` : ''}</em>
+          </div>
+          <span className="side-profile-go">{'\u203A'}</span>
+        </Link>
         <ul className="nav">
           {items.map((it, i) => {
             if (it.divider) return <li key={`div-${i}`} className="nav-divider">{it.divider}</li>;
@@ -186,13 +195,6 @@ export default function Layout({ title, children }) {
             );
           })}
         </ul>
-        <div className="side-user">
-          <img src={me.avatar_url || '/img/avatar1.png'} onError={(e) => { e.target.style.display = 'none'; }} />
-          <div>
-            <b>{me.full_name}</b>
-            <span>{me.position || ROLE_TH[me.role]}</span>
-          </div>
-        </div>
       </aside>
       <div className="main">
         <div className="topbar">

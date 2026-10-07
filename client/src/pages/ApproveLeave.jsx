@@ -1,7 +1,7 @@
 // client/src/pages/ApproveLeave.jsx - หน้าอนุมัติคำขอลา (Approver/Admin)
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
-import { api, fmtDate } from '../lib/api';
+import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
 const TABS = [{ f: 'pending', label: 'รออนุมัติ' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }, { f: 'revision', label: 'ส่งกลับแก้ไข' }];
@@ -47,7 +47,7 @@ function durationLabel(r) {
 export default function ApproveLeave() {
   const toast = useToast();
   const [rows, setRows] = useState([]);
-  const [tab, setTab] = useState('pending');
+  const [tab, setTab] = useState(() => { const s = new URLSearchParams(window.location.search).get('status'); return ['pending','approved','rejected','revision'].includes(s) ? s : 'pending'; });
   const [detail, setDetail] = useState(null);
 
   const load = async (status = tab) => {
@@ -85,7 +85,7 @@ export default function ApproveLeave() {
             <tbody>
               {rows.length ? rows.map(r => (
                 <tr key={r.id}>
-                  <td>{fmtDate(r.created_at)}</td>
+                  <td>{fmtDateTime(r.created_at)}</td>
                   <td>{r.requester_name} {r.requester_department ? `· ${r.requester_department}` : ''}</td>
                   <td>{r.leave_type}</td>
                   <td>{fmtDate(r.date_from)}{r.date_to !== r.date_from ? ` - ${fmtDate(r.date_to)}` : ''}</td>

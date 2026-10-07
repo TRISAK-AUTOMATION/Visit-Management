@@ -1,6 +1,6 @@
 // client/src/pages/MyOT.jsx - รายการคำขอ OT ของตัวเอง
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
@@ -45,7 +45,8 @@ export default function MyOT() {
   const navigate = useNavigate();
   const toast = useToast();
   const [rows, setRows] = useState([]);
-  const [tab, setTab] = useState('all');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => { const s = searchParams.get('status'); return ['all','draft','pending','revision','approved','rejected'].includes(s) ? s : 'all'; });
   const [detail, setDetail] = useState(null);
 
   const load = async () => {
@@ -133,6 +134,9 @@ export default function MyOT() {
               <p><b>วันที่:</b> {fmtDate(detail.request.ot_date)}</p>
               <p><b>เวลา:</b> {detail.request.time_from} - {detail.request.time_to} ({detail.request.hours} ชม.)</p>
               <p><b>สถานที่:</b> {detail.request.location || '-'}</p>
+              <p><b>OT Type:</b> {detail.request.ot_type || '-'}</p>
+              <p><b>ลูกค้า:</b> {detail.request.customer_name ? `${detail.request.customer_code || ''} - ${detail.request.customer_name}` : '-'}</p>
+              <p><b>Project No.:</b> {detail.request.project_no || '-'} &nbsp; <b>Job No.:</b> {detail.request.job_no || '-'}</p>
               <p><b>รายละเอียดงาน:</b> {detail.request.work_detail || '-'}</p>
               <p><b>เหตุผล:</b> {detail.request.reason || '-'}</p>
               {detail.request.notes && <p><b>หมายเหตุ:</b> {detail.request.notes}</p>}

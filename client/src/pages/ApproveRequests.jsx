@@ -18,7 +18,7 @@ export default function ApproveRequests() {
   const toast = useToast();
   const [searchParams] = useSearchParams();
   const [rows, setRows] = useState([]);
-  const [filter, setFilter] = useState('pending');
+  const [filter, setFilter] = useState(() => { const s = new URLSearchParams(window.location.search).get('status'); return ['pending','approved','rejected','revision'].includes(s) ? s : 'pending'; });
   const [modalData, setModalData] = useState(null);
 
   const load = async (f = filter) => {
@@ -71,7 +71,7 @@ export default function ApproveRequests() {
         <div className="card-body" style={{ padding: 0 }}>
           <table>
             <thead>
-              <tr><th>วันที่ยื่น</th><th>ผู้ขอ</th><th>ลูกค้า / บริษัท</th><th>เวลา</th><th>วัตถุประสงค์</th><th>จัดการ</th></tr>
+              <tr><th>วันที่</th><th>ผู้ขอ</th><th>ลูกค้า / บริษัท</th><th>เวลา</th><th>วัตถุประสงค์</th><th>จัดการ</th></tr>
             </thead>
             <tbody>
               {rows.length ? rows.map(v => (

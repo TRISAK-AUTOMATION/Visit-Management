@@ -6,6 +6,7 @@ const { sendMail } = require('../utils/mailer');
 const { toThaiDate } = require('../utils/dateFormat');
 const { logAction } = require('../utils/systemLog');
 const approvalEngine = require('../utils/approvalEngine');
+const { canViewAll } = require('../utils/viewScope');
 
 const router = express.Router();
 
@@ -33,12 +34,59 @@ const EDITABLE_STATUSES = ['draft', 'revision'];
 // ยกเลิกคำขอ (cancel) เป็นคนละกรณีกับแก้ไขข้อมูล - อนุญาตให้ยกเลิกได้แม้อยู่ระหว่างอนุมัติ (pending)
 const CANCELLABLE_STATUSES = ['draft', 'pending', 'revision'];
 
+const OT_TYPES = ['Project', 'Service', 'Visit', 'Site Survey', 'Internal'];
+const MAX_REF_LEN = 50; // Project No. / Job No.
+
+function toMinutes(t) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '').trim());
+  if (!m) return null;
+  const h = Number(m[1]), mi = Number(m[2]);
+  return h > 23 || mi > 59 ? null : h * 60 + mi;
+}
+
+// คำนวณชั่วโมง OT จากเวลาเริ่ม-สิ้นสุดที่ server เสมอ (ไม่เชื่อค่าที่ client ส่งมา) — คืน 0 ถ้าเวลาไม่ครบหรือสิ้นสุดไม่มากกว่าเริ่ม
 function hoursBetween(timeFrom, timeTo) {
-  const [fh, fm] = (timeFrom || '0:0').split(':').map(Number);
-  const [th, tm] = (timeTo || '0:0').split(':').map(Number);
-  let mins = (th * 60 + tm) - (fh * 60 + fm);
-  if (mins < 0) mins += 24 * 60; // เผื่อกรณี OT ข้ามเที่ยงคืน
-  return Math.round((mins / 60) * 100) / 100;
+  const from = toMinutes(timeFrom), to = toMinutes(timeTo);
+  if (from === null || to === null || to <= from) return 0;
+  return Math.round(((to - from) / 60) * 100) / 100;
+}
+
+// ตรวจข้อมูลคำขอ OT — คืนข้อความ error ภาษาไทย หรือ null ถ้าผ่าน (ใช้ร่วมกันทั้งสร้าง/แก้ไข/ส่ง/ส่งใหม่)
+// isDraft = true: ฉบับร่างไม่บังคับกรอกครบ แต่ค่าที่กรอกมาแล้วต้องถูกต้อง
+function validateOT(f, isDraft) {
+  const otType = String(f.ot_type || '').trim();
+  if (otType && !OT_TYPES.includes(otType)) return 'OT Type ไม่ถูกต้อง';
+  for (const [key, label] of [['project_no', 'Project No.'], ['job_no', 'Job No.']]) {
+    if (String(f[key] || '').trim().length > MAX_REF_LEN) return `${label} ยาวเกินไป (ไม่เกิน ${MAX_REF_LEN} ตัวอักษร)`;
+  }
+  if (f.customer_id !== undefined && f.customer_id !== null && f.customer_id !== '') {
+    const cid = Number(f.customer_id);
+    if (!Number.isInteger(cid) || !db.prepare('SELECT 1 FROM customers WHERE id = ?').get(cid)) return 'ไม่พบข้อมูลลูกค้าที่เลือก กรุณาเลือกลูกค้าใหม่จากรายการ';
+  }
+  const from = toMinutes(f.time_from), to = toMinutes(f.time_to);
+  if ((f.time_from && from === null) || (f.time_to && to === null)) return 'รูปแบบเวลาไม่ถูกต้อง';
+
+  if (!isDraft) {
+    if (!f.ot_date) return 'กรุณาระบุวันที่ทำ OT';
+    if (!otType) return 'กรุณาเลือก OT Type';
+    if (!f.location || !String(f.location).trim()) return 'กรุณาระบุสถานที่ปฏิบัติงาน';
+    if (!f.time_from || !f.time_to) return 'กรุณาระบุเวลาเริ่มต้นและสิ้นสุด';
+    if (!f.work_detail || !String(f.work_detail).trim()) return 'กรุณาระบุรายละเอียดงานที่ทำ';
+  }
+  if (from !== null && to !== null && from >= to) return 'เวลาสิ้นสุดต้องมากกว่าเวลาเริ่มต้น กรุณาตรวจสอบเวลาอีกครั้ง';
+  return null;
+}
+const FILL_HINT = ' — กรุณากดแก้ไขคำขอเพื่อกรอกข้อมูลให้ครบก่อนส่ง';
+
+// แปลงค่าจากฟอร์มเป็นค่าที่เก็บลงฐานข้อมูล (ตัดช่องว่าง, ช่องว่างเปล่า = NULL)
+function otFields(b) {
+  const blank = (v) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim());
+  return {
+    ot_type: blank(b.ot_type),
+    customer_id: blank(b.customer_id) === null ? null : Number(b.customer_id),
+    project_no: blank(b.project_no),
+    job_no: blank(b.job_no)
+  };
 }
 
 function generateCode() {
@@ -68,24 +116,14 @@ router.get('/', requireAuth, (req, res) => {
     }
     const wantedStatus = status || 'pending';
     let rows;
-    if (req.session.role === 'Admin') {
-      rows = db.prepare(`
-        SELECT o.*, u.full_name AS requester_name, u.department AS requester_department
-        FROM ot_requests o JOIN users u ON u.id = o.requester_id
-        WHERE o.status = ? ORDER BY o.created_at DESC
-      `).all(wantedStatus);
-    } else {
-      // ใช้ workflow engine หาว่าคำขอไหนเกี่ยวข้องกับตัวเอง แทนการอิงแผนกตรงๆ เพราะตอนนี้บาง request อาจวิ่งอยู่ใน Template ที่ Admin ตั้งไว้
-      const ids = approvalEngine.listRequestIdsForApprover('ot', req.session.userId, { onlyCurrentPending: wantedStatus === 'pending' });
-      if (!ids.length) return res.json({ requests: [] });
-      const placeholders = ids.map(() => '?').join(',');
-      rows = db.prepare(`
-        SELECT o.*, u.full_name AS requester_name, u.department AS requester_department
-        FROM ot_requests o JOIN users u ON u.id = o.requester_id
-        WHERE o.status = ? AND o.id IN (${placeholders})
-        ORDER BY o.created_at DESC
-      `).all(wantedStatus, ...ids);
-    }
+    // ผู้มีสิทธิ์อนุมัติ (ผ่านด่านด้านบนแล้ว) เห็นคำขอของทุกคนตามสถานะ เพื่อให้ตรงกับตัวเลขบน Dashboard
+    // ฉบับร่างของคนอื่นยังเป็นส่วนตัว (เฉพาะ Admin ที่เห็นได้เหมือนเดิม)
+    if (wantedStatus === 'draft' && req.session.role !== 'Admin') return res.json({ requests: [] });
+    rows = db.prepare(`
+      SELECT o.*, u.full_name AS requester_name, u.department AS requester_department
+      FROM ot_requests o JOIN users u ON u.id = o.requester_id
+      WHERE o.status = ? ORDER BY o.created_at DESC
+    `).all(wantedStatus);
     return res.json({ requests: rows });
   }
   res.status(400).json({ error: 'scope ไม่ถูกต้อง' });
@@ -94,17 +132,20 @@ router.get('/', requireAuth, (req, res) => {
 router.get('/:id', requireAuth, (req, res) => {
   const ot = db.prepare(`
     SELECT o.*, u.full_name AS requester_name, u.position AS requester_position, u.department AS requester_department,
-           a.full_name AS approver_name
+           a.full_name AS approver_name,
+           c.code AS customer_code, c.name AS customer_name, c.company AS customer_company
     FROM ot_requests o
     JOIN users u ON u.id = o.requester_id
     LEFT JOIN users a ON a.id = o.approver_id
+    LEFT JOIN customers c ON c.id = o.customer_id
     WHERE o.id = ?
   `).get(req.params.id);
   if (!ot) return res.status(404).json({ error: 'ไม่พบคำขอ OT' });
   const isRequester = ot.requester_id === req.session.userId;
   const isAdmin = req.session.role === 'Admin';
   const isParticipant = approvalEngine.isWorkflowParticipant('ot', ot.id, req.session.userId);
-  if (!isRequester && !isAdmin && !isParticipant) {
+  const isViewer = canViewAll(req.session) && ot.status !== 'draft'; // ผู้มีสิทธิ์อนุมัติดูได้ทุกคำขอ (ยกเว้นฉบับร่างของคนอื่น)
+  if (!isRequester && !isAdmin && !isParticipant && !isViewer) {
     return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ดูคำขอนี้' });
   }
   const history = db.prepare(`
@@ -120,10 +161,11 @@ router.post('/', requireAuth, (req, res) => {
   const { ot_date, time_from, time_to, location, work_detail, reason, notes, save_as } = req.body;
   const isDraft = save_as === 'draft';
 
+  const invalid = validateOT(req.body, isDraft);
+  if (invalid) return res.status(400).json({ error: invalid });
+  const x = otFields(req.body);
+
   if (!isDraft) {
-    if (!ot_date) return res.status(400).json({ error: 'กรุณาระบุวันที่ทำ OT' });
-    if (!time_from || !time_to) return res.status(400).json({ error: 'กรุณาระบุเวลาเริ่มต้นและสิ้นสุด' });
-    if (!work_detail || !work_detail.trim()) return res.status(400).json({ error: 'กรุณาระบุรายละเอียดงานที่ทำ' });
     // ยังไม่มี Template อนุมัติไหนเซ็ตชื่อผู้ใช้นี้ไว้เป็น Requester เลย -> บล็อกตอนส่งคำขอ (ฟอร์มกรอก/บันทึกร่างได้ปกติ แต่ส่งจริงไม่ได้)
     if (!isEligibleOTRequester(req.session.userId)) {
       return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
@@ -139,14 +181,16 @@ router.post('/', requireAuth, (req, res) => {
 
   let code, info;
   const insertStmt = db.prepare(`
-    INSERT INTO ot_requests (code, requester_id, ot_date, time_from, time_to, hours, location, work_detail, reason, notes, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO ot_requests (code, requester_id, ot_date, time_from, time_to, hours, location, work_detail, reason, notes, status,
+                             ot_type, customer_id, project_no, job_no)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (let attempt = 0; attempt < 5; attempt++) {
     code = generateCode();
     try {
       info = insertStmt.run(code, req.session.userId, ot_date || '', time_from || '', time_to || '', hours,
-        location || '', work_detail || '', reason || '', notes || '', status);
+        location || '', work_detail || '', reason || '', notes || '', status,
+        x.ot_type, x.customer_id, x.project_no, x.job_no);
       break;
     } catch (err) {
       const isDup = err.code === 'SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed: ot_requests\.code/.test(err.message);
@@ -176,11 +220,17 @@ router.put('/:id', requireAuth, (req, res) => {
   if (!EDITABLE_STATUSES.includes(ot.status)) return res.status(400).json({ error: 'ไม่สามารถแก้ไขคำขอนี้ได้แล้ว' });
 
   const { ot_date, time_from, time_to, location, work_detail, reason, notes } = req.body;
-  const hours = (time_from && time_to) ? hoursBetween(time_from, time_to) : 0;
+  // บันทึกฉบับร่างไม่บังคับกรอกครบ; แก้ไขเพื่อส่ง (รวมกรณีส่งกลับแก้ไข) ต้องครบเหมือนตอนสร้าง
+  const invalid = validateOT(req.body, req.body.save_as === 'draft');
+  if (invalid) return res.status(400).json({ error: invalid });
+  const x = otFields(req.body);
+  const hours = hoursBetween(time_from, time_to);
   db.prepare(`
-    UPDATE ot_requests SET ot_date = ?, time_from = ?, time_to = ?, hours = ?, location = ?, work_detail = ?, reason = ?, notes = ?
+    UPDATE ot_requests SET ot_date = ?, time_from = ?, time_to = ?, hours = ?, location = ?, work_detail = ?, reason = ?, notes = ?,
+                           ot_type = ?, customer_id = ?, project_no = ?, job_no = ?
     WHERE id = ?
-  `).run(ot_date || '', time_from || '', time_to || '', hours, location || '', work_detail || '', reason || '', notes || '', req.params.id);
+  `).run(ot_date || '', time_from || '', time_to || '', hours, location || '', work_detail || '', reason || '', notes || '',
+    x.ot_type, x.customer_id, x.project_no, x.job_no, req.params.id);
   res.json({ ok: true });
 });
 
@@ -189,7 +239,11 @@ router.post('/:id/submit', requireAuth, (req, res) => {
   if (!ot) return res.status(404).json({ error: 'ไม่พบคำขอ OT' });
   if (ot.requester_id !== req.session.userId) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ส่งคำขอนี้' });
   if (ot.status !== 'draft') return res.status(400).json({ error: 'คำขอนี้ถูกส่งไปแล้ว' });
-  if (!ot.work_detail || !ot.ot_date) return res.status(400).json({ error: 'กรุณากรอกข้อมูลให้ครบก่อนส่งคำขอ' });
+  {
+    // ฉบับร่างเก่าที่สร้างก่อนมี field ใหม่ (OT Type ฯลฯ) ต้องกรอกให้ครบก่อนจึงส่งได้
+    const invalid = validateOT(ot, false);
+    if (invalid) return res.status(400).json({ error: invalid + FILL_HINT });
+  }
   if (!isEligibleOTRequester(req.session.userId)) {
     return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
   }
@@ -211,6 +265,10 @@ router.post('/:id/resubmit', requireAuth, (req, res) => {
   if (!ot) return res.status(404).json({ error: 'ไม่พบคำขอ OT' });
   if (ot.requester_id !== req.session.userId) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ส่งคำขอนี้' });
   if (ot.status !== 'revision') return res.status(400).json({ error: 'คำขอนี้ไม่ได้อยู่ในสถานะรอแก้ไข' });
+  {
+    const invalid = validateOT(ot, false);
+    if (invalid) return res.status(400).json({ error: invalid + FILL_HINT });
+  }
   if (!isEligibleOTRequester(req.session.userId)) {
     return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
   }

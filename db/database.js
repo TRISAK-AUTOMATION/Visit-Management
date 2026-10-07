@@ -549,12 +549,25 @@ if (!db.prepare(`PRAGMA table_info(customers)`).all().map(c => c.name).includes(
   db.exec(`ALTER TABLE customers ADD COLUMN archived_at TEXT`);
 }
 
+// is_pending: ลูกค้าใหม่ที่พนักงานเพิ่มเองจากหน้าสร้างคำขอ Visit (ยังไม่อยู่ในฐานข้อมูลหลัก/SAP) รอ Admin ตรวจสอบ
+//   - ใช้รหัสชั่วคราวรูปแบบ NEW-0001 จนกว่า Admin จะใส่รหัสจริง (แล้ว is_pending จะเป็น 0) หรือรวมเข้ากับลูกค้าเดิม
+//   - ไม่ถูกลบ/เก็บถาวรโดยการนำเข้าไฟล์หรือ "ลบข้อมูลทั้งหมด"
+// created_by: ผู้ใช้ที่สร้างลูกค้ารายนี้ (ใช้เฉพาะลูกค้ารอตรวจสอบ)
+{
+  const custCols2 = db.prepare(`PRAGMA table_info(customers)`).all().map(c => c.name);
+  if (!custCols2.includes('is_pending')) db.exec(`ALTER TABLE customers ADD COLUMN is_pending INTEGER NOT NULL DEFAULT 0`);
+  if (!custCols2.includes('created_by')) db.exec(`ALTER TABLE customers ADD COLUMN created_by INTEGER`);
+}
+
 // ot_requests: เพิ่มช่องลูกค้า/โปรเจกต์ (ไม่บังคับ - ใช้เมื่อ OT เกี่ยวข้องกับลูกค้า เช่นแผนก Engineer)
 {
   const otCols = db.prepare(`PRAGMA table_info(ot_requests)`).all().map(c => c.name);
   if (!otCols.includes('customer_id')) db.exec(`ALTER TABLE ot_requests ADD COLUMN customer_id INTEGER REFERENCES customers(id)`);
   if (!otCols.includes('project_no')) db.exec(`ALTER TABLE ot_requests ADD COLUMN project_no TEXT`);
   if (!otCols.includes('type_service')) db.exec(`ALTER TABLE ot_requests ADD COLUMN type_service TEXT`);
+  // OT Type (Project | Service | Visit | Site Survey | Internal) และ Job No. — customer_id / project_no ใช้ช่องที่มีอยู่แล้วข้างบน
+  if (!otCols.includes('ot_type')) db.exec(`ALTER TABLE ot_requests ADD COLUMN ot_type TEXT`);
+  if (!otCols.includes('job_no')) db.exec(`ALTER TABLE ot_requests ADD COLUMN job_no TEXT`);
 }
 
 // ---------- Index เพิ่มความเร็วให้คอลัมน์ที่ค้นหา/join บ่อย ----------

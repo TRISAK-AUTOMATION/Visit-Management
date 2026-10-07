@@ -49,6 +49,14 @@ router.get('/by-department/:dept', requireAuth, (req, res) => {
   res.json({ users: rows });
 });
 
+// รายชื่อพนักงานทุกแผนก (เฉพาะชื่อ + แผนก) สำหรับช่อง "ผู้ร่วมงาน" เมื่อต้องการเลือกคนนอกแผนก Engineer - ทุกคนที่ login แล้วดูได้
+router.get('/directory', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, full_name, department FROM users WHERE is_active = 1 ORDER BY full_name
+  `).all();
+  res.json({ users: rows });
+});
+
 // ---------- ADMIN: จัดการผู้ใช้ ----------
 router.get('/', requireAuth, requireRole('Admin'), (req, res) => {
   const rows = db.prepare('SELECT * FROM users ORDER BY id').all();

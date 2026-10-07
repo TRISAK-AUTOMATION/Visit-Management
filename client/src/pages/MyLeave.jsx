@@ -1,6 +1,6 @@
 // client/src/pages/MyLeave.jsx - รายการคำขอลาของตัวเอง
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
@@ -52,7 +52,8 @@ export default function MyLeave() {
   const navigate = useNavigate();
   const toast = useToast();
   const [rows, setRows] = useState([]);
-  const [tab, setTab] = useState('all');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => { const s = searchParams.get('status'); return ['all','draft','pending','revision','approved','rejected'].includes(s) ? s : 'all'; });
   const [detail, setDetail] = useState(null);
 
   const load = async () => {
