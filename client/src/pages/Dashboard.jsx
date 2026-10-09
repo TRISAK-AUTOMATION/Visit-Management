@@ -47,6 +47,8 @@ export default function Dashboard() {
     // ผู้ใช้ทั่วไปเห็นเฉพาะของตัวเอง -> พาไปหน้า "ของฉัน" พร้อมกรองสถานะ
     const isApprover = !isEmployee || (kind === 'leave' && me.can_approve_leave);
     if (isApprover) return `${APPROVE_PATH[kind]}?status=${status && status !== 'total' ? status : 'pending'}`;
+    // Visit: การ์ด "อนุมัติแล้ว" นับรวมที่เสร็จสิ้นแล้วด้วย จึงใช้ approved_all (หน้า My Requests จะแสดงทั้งกำลังดำเนินการ + เสร็จสิ้น)
+    if (kind === 'visit' && status === 'approved') return `${MY_PATH.visit}?status=approved_all`;
     return status ? `${MY_PATH[kind]}?status=${status}` : MY_PATH[kind];
   };
 

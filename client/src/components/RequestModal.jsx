@@ -2,6 +2,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fmtDate, fmtDateTime, statusLabel, channelLabel } from '../lib/api';
+import VisitExtraDetails, { hasVisitExtras } from './VisitExtraDetails';
 
 const WF_STATE_LABEL = { waiting: 'รอคิว', pending: 'กำลังพิจารณา', approved: 'ผ่านแล้ว', rejected: 'ไม่อนุมัติ', revision: 'ส่งกลับแก้ไข' };
 
@@ -42,7 +43,7 @@ export default function RequestModal({ request, history, customFields, workflow,
 
   return (
     <div className="modal-bg" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal">
+      <div className="modal" style={hasVisitExtras(request) ? { width: 720 } : undefined}>
         <div className="modal-head">
           <h3>{mode === 'mine' ? `รายละเอียดคำขอ #${request.code}` : `คำขอ #${request.code}`}</h3>
           <button className="modal-close" onClick={onClose}>&times;</button>
@@ -68,6 +69,11 @@ export default function RequestModal({ request, history, customFields, workflow,
           {(mode === 'approve' || mode === 'calendar') && (
             <p><b>ผู้ขอ:</b> {request.requester_name} ({request.requester_position || '-'}) {request.requester_department ? `· แผนก ${request.requester_department}` : ''}</p>
           )}
+          {request.status === 'approved' && request.completed_at && (
+            <p style={{ background: '#d5f5f0', color: '#0f766e', padding: '6px 10px', borderRadius: 8 }}>
+              <b>Visit เสร็จสิ้น</b> · {fmtDateTime(request.completed_at)}{request.completion_note ? ` — ${request.completion_note}` : ''}
+            </p>
+          )}
           <p><b>ลูกค้า/บริษัท:</b> {request.customer_name || '-'}</p>
           <p><b>วันที่:</b> {fmtDate(request.visit_date)} &nbsp; <b>เวลา:</b> {request.time_from} - {request.time_to}</p>
           <p><b>วัตถุประสงค์:</b> {request.purpose || '-'}</p>
@@ -81,6 +87,7 @@ export default function RequestModal({ request, history, customFields, workflow,
           {mode === 'calendar' && request.approver_name && (
             <p><b>ผู้อนุมัติ:</b> {request.approver_name}</p>
           )}
+          <VisitExtraDetails request={request} />
           {customFields && customFields.length > 0 && (
             <>
               <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '10px 0' }} />

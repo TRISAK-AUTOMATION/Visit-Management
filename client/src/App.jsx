@@ -1,6 +1,7 @@
 // client/src/App.jsx
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
+import { useAuth } from './lib/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import { canAccessVisit } from './lib/api';
 
@@ -18,7 +19,8 @@ import OTRequest from './pages/OTRequest';
 import MyOT from './pages/MyOT';
 import ApproveOT from './pages/ApproveOT';
 import AdminLeaveBalances from './pages/AdminLeaveBalances';
-import Report from './pages/Report';
+import ReportDashboard from './pages/ReportDashboard';
+import ReportEmployee from './pages/ReportEmployee';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
@@ -32,7 +34,22 @@ import AdminSystemLogs from './pages/AdminSystemLogs';
 import AdminDataRetention from './pages/AdminDataRetention';
 import AdminEmailSettings from './pages/AdminEmailSettings';
 import AdminPdfSettings from './pages/AdminPdfSettings';
+import AdminBrands from './pages/AdminBrands';
 import AdminApprovalTemplates from './pages/AdminApprovalTemplates';
+
+// /report: Approver/Admin เห็นภาพรวมทุกคน, พนักงานทั่วไปเข้ารายงานของตัวเองโดยตรง
+function ReportHome() {
+  const { me } = useAuth();
+  if (me && me.role !== 'Approver' && me.role !== 'Admin') return <Navigate to={`/report/employee/${me.id}`} replace />;
+  return <ReportDashboard />;
+}
+
+function ReportEmployeeGuard() {
+  const { me } = useAuth();
+  const { id } = useParams();
+  const ok = me && (me.role === 'Approver' || me.role === 'Admin' || String(me.id) === String(id));
+  return ok ? <ReportEmployee /> : <div className="empty">คุณดูได้เฉพาะรายงานของตัวเอง</div>;
+}
 
 export default function App() {
   return (
@@ -52,7 +69,8 @@ export default function App() {
       <Route path="/my-ot" element={<ProtectedRoute><MyOT /></ProtectedRoute>} />
       <Route path="/approve-ot" element={<ProtectedRoute roles={['Approver', 'Admin']}><ApproveOT /></ProtectedRoute>} />
       <Route path="/admin-leave-balances" element={<ProtectedRoute roles={['Admin']}><AdminLeaveBalances /></ProtectedRoute>} />
-      <Route path="/report" element={<ProtectedRoute><Report /></ProtectedRoute>} />
+      <Route path="/report" element={<ProtectedRoute><ReportHome /></ProtectedRoute>} />
+      <Route path="/report/employee/:id" element={<ProtectedRoute><ReportEmployeeGuard /></ProtectedRoute>} />
       <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
@@ -66,6 +84,7 @@ export default function App() {
       <Route path="/admin-data-retention" element={<ProtectedRoute roles={['Admin']}><AdminDataRetention /></ProtectedRoute>} />
       <Route path="/admin-email-settings" element={<ProtectedRoute roles={['Admin']}><AdminEmailSettings /></ProtectedRoute>} />
       <Route path="/admin-pdf-settings" element={<ProtectedRoute roles={['Admin']}><AdminPdfSettings /></ProtectedRoute>} />
+      <Route path="/admin-brands" element={<ProtectedRoute roles={['Admin']}><AdminBrands /></ProtectedRoute>} />
       <Route path="/admin-approval-templates" element={<ProtectedRoute roles={['Admin']}><AdminApprovalTemplates /></ProtectedRoute>} />
 
       <Route path="/" element={<Navigate to="/dashboard" replace />} />

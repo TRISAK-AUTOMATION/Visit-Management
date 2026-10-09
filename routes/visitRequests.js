@@ -96,6 +96,46 @@ function validateRequiredCoreFields(body) {
   });
 }
 
+
+// ---------- ฟิลด์ใหม่ของฟอร์ม Visit แบบ Single Page ----------
+// คอลัมน์ธรรมดา + คอลัมน์ JSON (ผู้ติดต่อหลายคน, Objective, During Visit, Opportunity, Action Plan, Customer Level, Next Visit)
+const EXTRA_TEXT_FIELDS = ['request_date', 'company', 'customer_type', 'meeting_start', 'meeting_end'];
+const EXTRA_JSON_FIELDS = ['contacts_json', 'objective_json', 'during_visit_json', 'opportunity_json',
+  'action_plan_json', 'customer_level_json', 'next_visit_json'];
+const MAX_JSON_LEN = 200000;
+
+// เขียนฟิลด์ใหม่ลงคำขอ — รับเฉพาะ key ที่ส่งมา (ไม่ส่ง = ไม่แตะ) และตรวจว่า JSON ถูกต้อง/ไม่ใหญ่เกินไป
+// คืนข้อความ error (string) ถ้าข้อมูลไม่ถูกต้อง
+function saveVisitExtras(id, body) {
+  const sets = [];
+  const vals = [];
+  for (const f of EXTRA_TEXT_FIELDS) {
+    if (body[f] !== undefined) { sets.push(`${f} = ?`); vals.push(body[f] === null ? '' : String(body[f]).slice(0, 200)); }
+  }
+  for (const f of EXTRA_JSON_FIELDS) {
+    if (body[f] === undefined) continue;
+    let str = body[f];
+    if (str === null || str === '') { sets.push(`${f} = ?`); vals.push(null); continue; }
+    if (typeof str !== 'string') str = JSON.stringify(str);
+    if (str.length > MAX_JSON_LEN) return `ข้อมูลส่วน ${f} ใหญ่เกินไป`;
+    try { JSON.parse(str); } catch (e) { return `ข้อมูลส่วน ${f} ไม่ถูกต้อง`; }
+    sets.push(`${f} = ?`); vals.push(str);
+  }
+  if (sets.length) db.prepare(`UPDATE visit_requests SET ${sets.join(', ')} WHERE id = ?`).run(...vals, id);
+  return null;
+}
+
+// ตอนส่งคำขอจริง: ผู้ติดต่อที่มีข้อมูลต้องมีชื่อ (Contact Name *)
+function validateContactsJson(raw) {
+  if (!raw) return null;
+  try {
+    const list = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!Array.isArray(list)) return null;
+    const bad = list.some(c => c && (c.position || c.telephone || c.mobile || c.email) && !String(c.name || '').trim());
+    return bad ? 'กรุณากรอกชื่อผู้ติดต่อ (Contact Name) ให้ครบทุกคน' : null;
+  } catch (e) { return null; }
+}
+
 function generateCode() {
   const year = new Date().getFullYear();
   const prefix = `VR-${year}-`;
@@ -110,6 +150,18 @@ function generateCode() {
   const nextSeq = (row.maxSeq || 0) + 1;
   return `${prefix}${nextSeq.toString().padStart(5, '0')}`;
 }
+
+// GET /api/visit-requests/my-status-counts  -> จำนวนคำขอ Visit ของฉัน แยกตามขั้นตอน (ใช้โชว์ตัวเลขที่เมนูข้างซ้าย)
+// ต้องอยู่ก่อน route '/:id' ไม่งั้นจะถูกตีความว่า id = 'my-status-counts'
+router.get('/my-status-counts', requireAuth, (req, res) => {
+  // approved = อนุมัติแล้วแต่ยังไม่แจ้งเสร็จสิ้น (กำลังดำเนินการ), completed = ผู้ขอกด "Visit เสร็จสิ้น" แล้ว
+  const rows = db.prepare(`
+    SELECT CASE WHEN status = 'approved' AND completed_at IS NOT NULL THEN 'completed' ELSE status END AS st, COUNT(*) AS c
+    FROM visit_requests WHERE requester_id = ? GROUP BY st`).all(req.session.userId);
+  const counts = { draft: 0, pending: 0, revision: 0, approved: 0, completed: 0, rejected: 0 };
+  rows.forEach(r => { if (r.st in counts) counts[r.st] = r.c; });
+  res.json({ counts });
+});
 
 // GET /api/visit-requests?scope=mine|pending|all&status=
 router.get('/', requireAuth, (req, res) => {
@@ -201,6 +253,8 @@ router.post('/', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน' });
   }
   if (!isDraft) {
+    const contactErr = validateContactsJson(req.body.contacts_json);
+    if (contactErr) return res.status(400).json({ error: contactErr });
     const missing = validateRequiredCustomFields(custom_fields);
     if (missing.length) {
       return res.status(400).json({ error: `กรุณากรอก: ${missing.map(f => f.label).join(', ')}` });
@@ -249,6 +303,13 @@ router.post('/', requireAuth, (req, res) => {
 
   const vrId = info.lastInsertRowid;
   saveCustomFieldValues(vrId, custom_fields);
+  const extrasErr = saveVisitExtras(vrId, req.body);
+  if (extrasErr) {
+    // ข้อมูลส่วนใหม่ไม่ถูกต้อง -> ยกเลิกคำขอที่เพิ่งสร้าง (ยังไม่มี workflow/ประวัติ) แล้วแจ้งผู้ใช้
+    db.prepare('DELETE FROM visit_custom_values WHERE visit_request_id = ?').run(vrId);
+    db.prepare('DELETE FROM visit_requests WHERE id = ?').run(vrId);
+    return res.status(400).json({ error: extrasErr });
+  }
   const requester = db.prepare('SELECT full_name, department FROM users WHERE id = ?').get(userId);
 
   if (isDraft) {
@@ -304,6 +365,8 @@ router.post('/:id/submit', requireAuth, (req, res) => {
   if (!vr.customer_id || !vr.visit_date || !vr.time_from || !vr.time_to || !vr.purpose) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วนก่อนส่งคำขอ' });
   }
+  const contactErr = validateContactsJson(vr.contacts_json);
+  if (contactErr) return res.status(400).json({ error: contactErr });
   const existingCustomValues = {};
   getCustomFieldValues(vr.id).forEach(f => { existingCustomValues[f.field_key] = f.value; });
   const missingCustom = validateRequiredCustomFields(existingCustomValues);
@@ -367,12 +430,47 @@ router.put('/:id', requireAuth, (req, res) => {
   if (req.body.custom_fields) {
     saveCustomFieldValues(req.params.id, req.body.custom_fields);
   }
+  const extrasErr = saveVisitExtras(req.params.id, req.body);
+  if (extrasErr) return res.status(400).json({ error: extrasErr });
   if (isPostVisitUpdate) {
     db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'อัปเดตข้อมูลหลังปฏิบัติงาน', 'web')`).run(req.params.id, req.session.userId);
     logAction(req.session.userId, 'update_after_visit', `อัปเดตข้อมูลหลังปฏิบัติงาน #${vr.code}`);
   } else {
     logAction(req.session.userId, 'edit_request', `แก้ไขคำขอ #${vr.code}`);
   }
+  res.json({ ok: true });
+});
+
+// วันนี้ตามเวลาไทย (YYYY-MM-DD) — ใช้เทียบกับวันที่ไป Visit
+function todayBangkok() {
+  return new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+// COMPLETE: ผู้ขอแจ้งว่า "Visit เสร็จสิ้น" หลังไปพบลูกค้าแล้ว -> คำขอย้ายไปขั้น "Visit เสร็จสิ้น"
+// ทำได้เฉพาะคำขอที่อนุมัติแล้ว และถึงวันที่ไป Visit แล้ว (ไม่เปลี่ยนสถานะอนุมัติ ไม่ต้องขออนุมัติใหม่)
+router.post('/:id/complete', requireAuth, (req, res) => {
+  const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
+  if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
+  if (vr.requester_id !== req.session.userId) return res.status(403).json({ error: 'ไม่มีสิทธิ์ปรับสถานะคำขอนี้' });
+  if (vr.status !== 'approved') return res.status(400).json({ error: 'แจ้งเสร็จสิ้นได้เฉพาะคำขอที่อนุมัติแล้ว' });
+  if (vr.completed_at) return res.status(400).json({ error: 'คำขอนี้แจ้งเสร็จสิ้นไปแล้ว' });
+  if (vr.visit_date > todayBangkok()) return res.status(400).json({ error: 'ยังไม่ถึงวันที่ไป Visit จึงยังแจ้งเสร็จสิ้นไม่ได้' });
+  const note = String(req.body.note || '').trim().slice(0, 1000);
+  db.prepare(`UPDATE visit_requests SET completed_at = CURRENT_TIMESTAMP, completion_note = ? WHERE id = ?`).run(note || null, vr.id);
+  db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, note, channel) VALUES (?, ?, 'แจ้ง Visit เสร็จสิ้น', ?, 'web')`).run(vr.id, req.session.userId, note || null);
+  logAction(req.session.userId, 'complete_visit', `แจ้ง Visit เสร็จสิ้น #${vr.code}`);
+  res.json({ ok: true });
+});
+
+// REOPEN: ผู้ขอย้อนกลับจาก "Visit เสร็จสิ้น" มาเป็น "อนุมัติแล้ว (กำลังดำเนินการ)" เผื่อกดผิด
+router.post('/:id/reopen', requireAuth, (req, res) => {
+  const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
+  if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
+  if (vr.requester_id !== req.session.userId) return res.status(403).json({ error: 'ไม่มีสิทธิ์ปรับสถานะคำขอนี้' });
+  if (vr.status !== 'approved' || !vr.completed_at) return res.status(400).json({ error: 'คำขอนี้ยังไม่ได้แจ้งเสร็จสิ้น' });
+  db.prepare(`UPDATE visit_requests SET completed_at = NULL, completion_note = NULL WHERE id = ?`).run(vr.id);
+  db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'ย้อนกลับเป็นกำลังดำเนินการ', 'web')`).run(vr.id, req.session.userId);
+  logAction(req.session.userId, 'reopen_visit', `ย้อนสถานะ Visit เป็นกำลังดำเนินการ #${vr.code}`);
   res.json({ ok: true });
 });
 

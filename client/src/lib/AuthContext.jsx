@@ -1,12 +1,21 @@
 // client/src/lib/AuthContext.jsx
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { api } from './api';
+import { api, canAccessVisit } from './api';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [me, setMe] = useState(undefined); // undefined = กำลังโหลด, null = ไม่ได้ login, object = user
   const [badgeCounts, setBadgeCounts] = useState({ pending: 0, unread: 0, pendingLeave: 0, pendingOT: 0 });
+
+  // จำนวนคำขอ Visit ของฉันแยกตามขั้นตอน (ฉบับร่าง/รออนุมัติ/รอแก้ไข/อนุมัติแล้ว/ไม่อนุมัติ) สำหรับเมนูข้างซ้าย
+  const refreshMyVisit = useCallback(async (user) => {
+    if (!user || !canAccessVisit(user)) return;
+    try {
+      const { counts } = await api.get('/api/visit-requests/my-status-counts');
+      setBadgeCounts(prev => ({ ...prev, vDraft: counts.draft, vPending: counts.pending, vRevision: counts.revision, vApproved: counts.approved, vCompleted: counts.completed, vRejected: counts.rejected }));
+    } catch (e) { /* ignore */ }
+  }, []);
 
   const refreshMe = useCallback(async () => {
     try {
@@ -36,11 +45,11 @@ export function AuthProvider({ children }) {
       const notif = await api.get('/api/notifications');
       counts.unread = notif.unread;
     } catch (e) { /* ignore */ }
-    setBadgeCounts(counts);
+    setBadgeCounts(prev => ({ ...prev, ...counts }));
   }, []);
 
   useEffect(() => { refreshMe(); }, [refreshMe]);
-  useEffect(() => { if (me) refreshBadges(me); }, [me, refreshBadges]);
+  useEffect(() => { if (me) { refreshBadges(me); refreshMyVisit(me); } }, [me, refreshBadges, refreshMyVisit]);
 
   const login = async (username, password, remember = false) => {
     await api.post('/api/auth/login', { username, password, remember });
@@ -54,7 +63,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ me, setMe, badgeCounts, refreshBadges: () => refreshBadges(me), login, logout }}>
+    <AuthContext.Provider value={{ me, setMe, badgeCounts, refreshBadges: () => refreshBadges(me), refreshMyVisit: () => refreshMyVisit(me), login, logout }}>
       {children}
     </AuthContext.Provider>
   );

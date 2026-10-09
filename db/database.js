@@ -559,6 +559,41 @@ if (!db.prepare(`PRAGMA table_info(customers)`).all().map(c => c.name).includes(
   if (!custCols2.includes('created_by')) db.exec(`ALTER TABLE customers ADD COLUMN created_by INTEGER`);
 }
 
+// ===== Visit Request ฟอร์มใหม่ (Single Page): คอลัมน์เพิ่มเติม — ไม่แตะ/ไม่ลบคอลัมน์เดิมของ visit_requests เลย =====
+// ส่วนที่เป็นรายการซ้อน (ผู้ติดต่อหลายคน, แผนงาน ฯลฯ) เก็บเป็น JSON ในคอลัมน์ *_json
+{
+  const vrCols = db.prepare(`PRAGMA table_info(visit_requests)`).all().map(c => c.name);
+  const newVrCols = {
+    request_date: 'TEXT', company: 'TEXT', customer_type: 'TEXT', meeting_start: 'TEXT', meeting_end: 'TEXT',
+    contacts_json: 'TEXT', objective_json: 'TEXT', during_visit_json: 'TEXT', opportunity_json: 'TEXT',
+    action_plan_json: 'TEXT', customer_level_json: 'TEXT', next_visit_json: 'TEXT',
+    // ผู้ขอกด "Visit เสร็จสิ้น" หลังไปพบลูกค้าแล้ว (สถานะอนุมัติยังเป็น approved เหมือนเดิม เพื่อไม่กระทบรายงาน/ปฏิทิน/Dashboard)
+    completed_at: 'TEXT', completion_note: 'TEXT'
+  };
+  for (const [name, type] of Object.entries(newVrCols)) {
+    if (!vrCols.includes(name)) db.exec(`ALTER TABLE visit_requests ADD COLUMN ${name} ${type}`);
+  }
+  const custCols3 = db.prepare(`PRAGMA table_info(customers)`).all().map(c => c.name);
+  for (const name of ['sso', 'website', 'industry']) {
+    if (!custCols3.includes(name)) db.exec(`ALTER TABLE customers ADD COLUMN ${name} TEXT`);
+  }
+}
+
+// Brand Master: รายการยี่ห้อสำหรับช่อง "Current Products / Brands" ในฟอร์ม Visit (Admin จัดการได้ที่ Settings > Brand Master)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS brands (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE,
+    is_active  INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+if (db.prepare('SELECT COUNT(*) AS c FROM brands').get().c === 0) {
+  const ins = db.prepare('INSERT OR IGNORE INTO brands (name, sort_order) VALUES (?, ?)');
+  ['Omron', 'Yaskawa', 'Mitsubishi', 'Panasonic', 'Keyence', 'Siemens', 'Schneider', 'ABB'].forEach((n, i) => ins.run(n, i + 1));
+}
+
 // ot_requests: เพิ่มช่องลูกค้า/โปรเจกต์ (ไม่บังคับ - ใช้เมื่อ OT เกี่ยวข้องกับลูกค้า เช่นแผนก Engineer)
 {
   const otCols = db.prepare(`PRAGMA table_info(ot_requests)`).all().map(c => c.name);
