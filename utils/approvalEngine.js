@@ -15,9 +15,17 @@ const { approverIdsForDepartments } = require('./userDepartments');
 const FALLBACK_STATE_NAME = 'อนุมัติ (ระบบเดิม - อิงแผนก)';
 const NO_APPROVER_MSG = 'ไม่พบผู้อนุมัติที่ใช้งานได้สำหรับคำขอนี้ (ผู้อนุมัติอาจเป็นตัวคุณเองหรือถูกระงับการใช้งาน) กรุณาติดต่อผู้ดูแลระบบ';
 
-// กรองรายชื่อผู้อนุมัติ: ต้องยังใช้งานอยู่ (is_active) และต้องไม่ใช่ผู้ขอเอง (กันอนุมัติคำขอของตัวเอง / กันคำขอค้างที่คนลาออก)
-function eligibleApproverIds(ids, requesterId) {
-  const list = Array.from(new Set((ids || []).map(Number))).filter(id => id && id !== Number(requesterId));
+// โมดูลที่ "ผู้ขอที่เป็นผู้อนุมัติอยู่แล้ว (หัวหน้า/ผู้อนุมัติ)" อนุมัติคำขอของตัวเองได้
+// - visit: หัวหน้าขอไป Visit เอง ถ้าอนุมัติตัวเองไม่ได้ก็ออกไปไม่ได้ จึงอนุญาต
+// - leave / ot: เปิดให้เช่นเดียวกัน (ผู้ขอที่เป็นผู้อนุมัติอยู่แล้ว เช่น หัวหน้า อนุมัติใบลา/OT ของตัวเองได้ — ประวัติจะระบุว่า "โดยผู้ขอเอง")
+//   ถ้าอยากกลับไปห้ามเฉพาะโมดูลไหน ให้เอาชื่อโมดูลนั้นออกจากรายการนี้
+// หมายเหตุ: คนที่ไม่ได้อยู่ในสายอนุมัติ (พนักงานทั่วไป) ยังอนุมัติของตัวเองไม่ได้เหมือนเดิม เพราะไม่มีชื่อเป็นผู้อนุมัติ
+const SELF_APPROVE_MODULES = ['visit', 'leave', 'ot'];
+const canSelfApprove = (module) => SELF_APPROVE_MODULES.includes(module);
+
+// กรองรายชื่อผู้อนุมัติ: ต้องยังใช้งานอยู่ (is_active) และ (ยกเว้นโมดูลที่อนุญาต) ต้องไม่ใช่ผู้ขอเอง (กันอนุมัติคำขอของตัวเอง / กันคำขอค้างที่คนลาออก)
+function eligibleApproverIds(ids, requesterId, module) {
+  const list = Array.from(new Set((ids || []).map(Number))).filter(id => id && (canSelfApprove(module) || id !== Number(requesterId)));
   if (!list.length) return [];
   const ph = list.map(() => '?').join(',');
   return dbModule.prepare(`SELECT id FROM users WHERE is_active = 1 AND id IN (${ph})`).all(...list).map(r => r.id);
@@ -41,14 +49,14 @@ function findTemplateForRequester(module, userId) {
   return {
     templateId: tpl.id,
     templateName: tpl.name,
-    states: states.map(s => ({ name: s.name, mode: s.mode === 'ALL' ? 'ALL' : 'ANY', approverIds: eligibleApproverIds(stateApprovers.get(s.id) || [], userId) }))
+    states: states.map(s => ({ name: s.name, mode: s.mode === 'ALL' ? 'ALL' : 'ANY', approverIds: eligibleApproverIds(stateApprovers.get(s.id) || [], userId, module) }))
       .filter(s => s.approverIds.length) // State ที่ไม่มีผู้อนุมัติเลยข้ามไป กัน workflow ค้าง
   };
 }
 
-function buildFallbackPlan(userId) {
+function buildFallbackPlan(userId, module) {
   const user = dbModule.prepare('SELECT department FROM users WHERE id = ?').get(userId);
-  const approverIds = eligibleApproverIds(approverIdsForDepartments([user ? user.department : '']), userId);
+  const approverIds = eligibleApproverIds(approverIdsForDepartments([user ? user.department : '']), userId, module);
   return {
     templateId: null,
     templateName: null,
@@ -60,11 +68,11 @@ function buildFallbackPlan(userId) {
 // คืน null ถ้าไม่มีใครอนุมัติได้เลย
 function resolvePlan(module, requesterId) {
   let plan = findTemplateForRequester(module, requesterId);
-  if (!plan || !plan.states.length) plan = buildFallbackPlan(requesterId);
+  if (!plan || !plan.states.length) plan = buildFallbackPlan(requesterId, module);
   plan.states = plan.states.filter(s => s.approverIds.length);
   if (!plan.states.length) {
     const allAdmins = dbModule.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
-    const admins = eligibleApproverIds(allAdmins, requesterId);
+    const admins = eligibleApproverIds(allAdmins, requesterId, module);
     if (admins.length) plan = { templateId: null, templateName: null, states: [{ name: 'อนุมัติโดย Admin (ไม่พบผู้อนุมัติตามแผนก)', mode: 'ANY', approverIds: admins }] };
   }
   return plan.states.length ? plan : null;
@@ -166,11 +174,75 @@ function listRequestIdsForApprover(module, userId, { onlyCurrentPending = false 
 
 class ApprovalError extends Error {}
 
+// userId ตัดสินใจคำขอนี้ได้ "ตอนนี้" ไหม: workflow ยัง pending + อยู่ในรายชื่อผู้อนุมัติของ State ปัจจุบัน + ยังไม่ได้ตัดสินใจ
+// (ใช้ซ่อนปุ่มอนุมัติ/ไม่อนุมัติสำหรับคนที่กดแล้วจะถูกปฏิเสธอยู่ดี)
+function canActOn(module, requestId, userId) {
+  const row = dbModule.prepare(`
+    SELECT a.decision FROM request_workflows w
+    JOIN request_workflow_states s ON s.workflow_id = w.id AND s.state_index = w.current_state_index
+    JOIN request_workflow_approvers a ON a.workflow_state_id = s.id
+    WHERE w.module = ? AND w.request_id = ? AND w.status = 'pending' AND a.user_id = ?
+  `).get(module, requestId, userId);
+  return !!row && !row.decision;
+}
+
+// ชื่อผู้อนุมัติที่ "ยังไม่ตัดสินใจ" ใน State ปัจจุบัน (ไว้โชว์ว่า "รอ ... อนุมัติ")
+function currentApproverNames(module, requestId) {
+  return dbModule.prepare(`
+    SELECT u.full_name FROM request_workflows w
+    JOIN request_workflow_states s ON s.workflow_id = w.id AND s.state_index = w.current_state_index
+    JOIN request_workflow_approvers a ON a.workflow_state_id = s.id
+    JOIN users u ON u.id = a.user_id
+    WHERE w.module = ? AND w.request_id = ? AND w.status = 'pending' AND a.decision IS NULL
+    ORDER BY u.full_name
+  `).all(module, requestId).map(r => r.full_name);
+}
+
+// รีเซ็ตสายอนุมัติได้ไหม: workflow ต้อง pending, อยู่ State แรก และยังไม่มีใครตัดสินใจเลย
+// (ถ้ามีคนอนุมัติไปแล้วบางส่วน การรีเซ็ตจะทำให้การตัดสินใจนั้นหาย - ให้ใช้ "ส่งกลับแก้ไข" แล้วส่งใหม่แทน)
+function canResync(module, requestId) {
+  const wf = dbModule.prepare(`SELECT id, status, current_state_index FROM request_workflows WHERE module = ? AND request_id = ?`).get(module, requestId);
+  if (!wf || wf.status !== 'pending' || wf.current_state_index !== 0) return false;
+  const decided = dbModule.prepare(`
+    SELECT 1 FROM request_workflow_approvers a
+    JOIN request_workflow_states s ON s.id = a.workflow_state_id
+    WHERE s.workflow_id = ? AND a.decision IS NOT NULL LIMIT 1
+  `).get(wf.id);
+  return !decided;
+}
+
+// สร้าง workflow snapshot ใหม่จาก Template/รายชื่อผู้อนุมัติ "ล่าสุด" ให้คำขอที่ยังรออนุมัติ (สำหรับ Admin: เพิ่มผู้อนุมัติใน Template หลังส่งคำขอไปแล้ว)
+function resyncWorkflow(module, requestId, requesterId) {
+  if (!canResync(module, requestId)) {
+    throw new ApprovalError('รีเซ็ตสายอนุมัติไม่ได้: คำขอนี้ไม่ได้รออนุมัติอยู่ หรือมีผู้อนุมัติตัดสินใจไปแล้ว (ให้ใช้ "ส่งกลับแก้ไข" แล้วส่งใหม่แทน)');
+  }
+  return createWorkflow(module, requestId, requesterId);
+}
+
+// หลัง Admin แก้ขั้นตอนของ Template: ซิงก์คำขอที่ยังรออนุมัติ "และยังไม่มีใครตัดสินใจ" ของ Template นี้ให้ใช้รายชื่อล่าสุดอัตโนมัติ
+// คืนรายการ { module, requestId, requesterId } ที่ซิงก์สำเร็จ (ใบที่มีคนตัดสินใจไปแล้วจะไม่ถูกแตะ)
+const REQUEST_TABLE = { visit: 'visit_requests', leave: 'leave_requests', ot: 'ot_requests' };
+function autoResyncForTemplate(templateId) {
+  const wfs = dbModule.prepare(`SELECT module, request_id FROM request_workflows WHERE template_id = ? AND status = 'pending'`).all(templateId);
+  const done = [];
+  for (const w of wfs) {
+    const table = REQUEST_TABLE[w.module];
+    if (!table || !canResync(w.module, w.request_id)) continue;
+    const row = dbModule.prepare(`SELECT requester_id, status FROM ${table} WHERE id = ?`).get(w.request_id);
+    if (!row || row.status !== 'pending') continue;
+    try {
+      createWorkflow(w.module, w.request_id, row.requester_id);
+      done.push({ module: w.module, requestId: w.request_id, requesterId: row.requester_id });
+    } catch (e) { if (!(e instanceof ApprovalError)) throw e; }
+  }
+  return done;
+}
+
 // ตัดสินใจของ userId ต่อ request ในโมดูลนี้ - action: 'approve' | 'reject' | 'revision'
 // คืนค่า { finalStatus } เมื่อ workflow จบแล้ว (approved/rejected/revision) หรือ { finalStatus: null, advanced: true/false } เมื่อยังไม่จบ (state ผ่านแล้วไปต่อ หรือรอคนอื่นในสเตทเดียวกันอยู่)
 function decide(module, requestId, userId, action, comment, requesterId) {
-  // requesterId: ส่งมาจาก route เสมอ — ผู้ขอห้ามอนุมัติ/ปฏิเสธคำขอของตัวเอง
-  if (requesterId != null && Number(requesterId) === Number(userId)) {
+  // requesterId: ส่งมาจาก route เสมอ — ผู้ขอห้ามอนุมัติ/ปฏิเสธคำขอของตัวเอง (ยกเว้นโมดูลใน SELF_APPROVE_MODULES และต้องเป็นผู้อนุมัติของขั้นตอนนั้นจริง)
+  if (!canSelfApprove(module) && requesterId != null && Number(requesterId) === Number(userId)) {
     throw new ApprovalError('ไม่สามารถอนุมัติหรือดำเนินการคำขอของตัวเองได้');
   }
   const wf = dbModule.prepare(`SELECT * FROM request_workflows WHERE module = ? AND request_id = ?`).get(module, requestId);
@@ -231,6 +303,11 @@ module.exports = {
   getWorkflow,
   getCurrentApproverIds,
   isWorkflowParticipant,
+  canActOn,
+  autoResyncForTemplate,
+  currentApproverNames,
+  canResync,
+  resyncWorkflow,
   listRequestIdsForApprover,
   hasEverBeenApprover,
   decide,

@@ -59,7 +59,7 @@ export default function App() {
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/visit-request" element={<ProtectedRoute check={canAccessVisit}><VisitRequest /></ProtectedRoute>} />
       <Route path="/my-requests" element={<ProtectedRoute check={canAccessVisit}><MyRequests /></ProtectedRoute>} />
-      <Route path="/approve-requests" element={<ProtectedRoute roles={['Approver', 'Admin']}><ApproveRequests /></ProtectedRoute>} />
+      <Route path="/approve-requests" element={<ProtectedRoute check={(me) => me.role === 'Approver' || me.role === 'Admin' || me.can_approve}><ApproveRequests /></ProtectedRoute>} />
       <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
       <Route path="/customers" element={<ProtectedRoute check={canAccessVisit}><Customers /></ProtectedRoute>} />
       <Route path="/leave-request" element={<ProtectedRoute><LeaveRequest /></ProtectedRoute>} />
@@ -67,7 +67,7 @@ export default function App() {
       <Route path="/approve-leave" element={<ProtectedRoute check={(me) => me.can_approve_leave}><ApproveLeave /></ProtectedRoute>} />
       <Route path="/ot-request" element={<ProtectedRoute><OTRequest /></ProtectedRoute>} />
       <Route path="/my-ot" element={<ProtectedRoute><MyOT /></ProtectedRoute>} />
-      <Route path="/approve-ot" element={<ProtectedRoute roles={['Approver', 'Admin']}><ApproveOT /></ProtectedRoute>} />
+      <Route path="/approve-ot" element={<ProtectedRoute check={(me) => me.role === 'Approver' || me.role === 'Admin' || me.can_approve}><ApproveOT /></ProtectedRoute>} />
       <Route path="/admin-leave-balances" element={<ProtectedRoute roles={['Admin']}><AdminLeaveBalances /></ProtectedRoute>} />
       <Route path="/report" element={<ProtectedRoute><ReportHome /></ProtectedRoute>} />
       <Route path="/report/employee/:id" element={<ProtectedRoute><ReportEmployeeGuard /></ProtectedRoute>} />

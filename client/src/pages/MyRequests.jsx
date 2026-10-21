@@ -11,8 +11,8 @@ import { useAuth } from '../lib/AuthContext';
 const TABS = [
   { f: 'all', label: 'ทั้งหมด' },
   { f: 'draft', label: 'ฉบับร่าง' },
-  { f: 'pending', label: 'รออนุมัติ' },
   { f: 'revision', label: 'รอแก้ไข' },
+  { f: 'pending', label: 'รออนุมัติ' },
   { f: 'approved', label: 'กำลังดำเนินการ' },
   { f: 'completed', label: 'Visit เสร็จสิ้น' },
   { f: 'rejected', label: 'ไม่อนุมัติ' }

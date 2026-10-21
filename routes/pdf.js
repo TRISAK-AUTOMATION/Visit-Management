@@ -12,6 +12,7 @@ const db = require('../db/database');
 const { requireAuth } = require('./middleware');
 const { toThaiDate } = require('../utils/dateFormat');
 const { readSettings } = require('./pdfSettings');
+const { canViewRequest } = require('../utils/requestAccess');
 
 const router = express.Router();
 
@@ -48,6 +49,10 @@ function fetchRequest(id) {
 router.get('/:id/pdf', requireAuth, (req, res) => {
   const request = fetchRequest(req.params.id);
   if (!request) return res.status(404).json({ error: 'ไม่พบคำขอ' });
+  // ต้องมีสิทธิ์ดูคำขอใบนี้ (เจ้าของ / Admin / ผู้อยู่ในสายอนุมัติ / ผู้มีสิทธิ์อนุมัติ) เหมือนกับ GET /:id
+  if (!canViewRequest(req.session, 'visit', request)) {
+    return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ดูคำขอนี้' });
+  }
 
   const settings = readSettings();
   const PRIMARY = settings.primary_color;

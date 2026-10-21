@@ -32,7 +32,7 @@ function getEmailRows(vr) {
   }
 
   const coreFields = db.prepare(
-    'SELECT field_key, label FROM core_field_settings WHERE show_in_email = 1 ORDER BY sort_order ASC'
+    'SELECT field_key, label FROM core_field_settings WHERE show_in_email = 1 AND field_key != \'purpose\' ORDER BY sort_order ASC'
   ).all();
   for (const f of coreFields) {
     const raw = vr[f.field_key];

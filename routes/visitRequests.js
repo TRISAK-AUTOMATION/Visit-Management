@@ -7,6 +7,7 @@ const { sendNewRequestEmail, sendDecisionEmail, sendRevisionEmail } = require('.
 const { logAction } = require('../utils/systemLog');
 const approvalEngine = require('../utils/approvalEngine');
 const { canViewAll } = require('../utils/viewScope');
+const { applyVisitLevelToCustomer } = require('../utils/customerLevels');
 
 const router = express.Router();
 
@@ -49,9 +50,23 @@ const NOT_ELIGIBLE_MSG = 'คุณยังไม่มีสิทธิ์ส
 // ---------- Custom Fields (Form Builder) - ไม่กระทบ core fields เดิมเลย ----------
 // บันทึกค่าของ field ที่ Admin สร้างเองสำหรับคำขอ Visit หนึ่งรายการ
 // customFields: { field_key: value, ... } - เฉพาะ field ที่ active เท่านั้นที่รับค่า (field ที่ปิดใช้งานจะถูกข้าม)
+// ค่าแนบไฟล์ (Data URL) ต้องขึ้นต้นด้วย data: และไม่ใหญ่เกินไป — กันค่าแปลกๆ (เช่น javascript:) ที่จะถูกนำไปใส่ใน href ของลิงก์ดาวน์โหลดฝั่งหน้าเว็บ
+const MAX_FILE_DATA_LEN = 7000000; // ไฟล์ 4MB เมื่อเป็น base64 ≈ 5.4 ล้านตัวอักษร
+function isValidFileValue(v) {
+  if (v === undefined || v === null || v === '') return true;
+  return typeof v === 'string' && v.startsWith('data:') && v.length <= MAX_FILE_DATA_LEN;
+}
+
+// คืนข้อความ error (string) ถ้าข้อมูลไม่ถูกต้อง, คืน null ถ้าบันทึกสำเร็จ
 function saveCustomFieldValues(visitRequestId, customFields) {
-  if (!customFields || typeof customFields !== 'object') return;
-  const activeFields = db.prepare('SELECT id, field_key FROM custom_form_fields WHERE is_active = 1').all();
+  if (!customFields || typeof customFields !== 'object') return null;
+  const activeFields = db.prepare('SELECT id, field_key, label, field_type FROM custom_form_fields WHERE is_active = 1').all();
+  // ตรวจให้ครบก่อนเขียนจริง จะได้ไม่บันทึกไปครึ่งๆ กลางๆ
+  for (const f of activeFields) {
+    if (f.field_type === 'file' && Object.prototype.hasOwnProperty.call(customFields, f.field_key) && !isValidFileValue(customFields[f.field_key])) {
+      return `ไฟล์แนบในช่อง "${f.label}" ไม่ถูกต้องหรือมีขนาดใหญ่เกินไป`;
+    }
+  }
   const upsert = db.prepare(`
     INSERT INTO visit_custom_values (visit_request_id, field_id, value) VALUES (?, ?, ?)
     ON CONFLICT(visit_request_id, field_id) DO UPDATE SET value = excluded.value
@@ -63,7 +78,31 @@ function saveCustomFieldValues(visitRequestId, customFields) {
       upsert.run(visitRequestId, f.id, value);
     }
   }
+  return null;
 }
+
+// ฟิลด์หลักของคำขอ Visit ที่รับจาก body (ใช้ทั้งตอนสร้างและแก้ไข)
+const VISIT_SCALAR_FIELDS = ['customer_id', 'visit_date', 'time_from', 'time_to', 'purpose', 'location',
+  'contact_person', 'contact_phone', 'transport', 'license_plate', 'notes',
+  'job_type', 'sales_person', 'mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back',
+  'ot_hours', 'product', 'participants', 'customer_tax_id', 'tax_invoice_date'];
+const MAX_SCALAR_TEXT_LEN = 10000;
+
+// ค่าของฟิลด์หลักต้องเป็นข้อความ/ตัวเลข/ว่างเท่านั้น (ถ้าเป็น object/array/boolean จะทำให้ฐานข้อมูลล้มเป็น error 500) และข้อความต้องไม่ยาวผิดปกติ
+// คืนชื่อฟิลด์แรกที่ไม่ถูกต้อง หรือ null ถ้าถูกต้องทั้งหมด
+function findInvalidScalarField(body) {
+  for (const f of VISIT_SCALAR_FIELDS) {
+    const v = body[f];
+    if (v === undefined || v === null) continue;
+    if (typeof v === 'number') { if (!Number.isFinite(v)) return f; continue; }
+    if (typeof v === 'string') { if (v.length > MAX_SCALAR_TEXT_LEN) return f; continue; }
+    return f;
+  }
+  return null;
+}
+
+// ใช้โยนออกจาก transaction เพื่อ rollback แล้วตอบ 400 พร้อมข้อความ
+class ValidationError extends Error {}
 
 // ตรวจสอบว่า custom field ที่ required ครบถ้วนหรือไม่ (เฉพาะตอนส่งคำขอจริง ไม่ใช่ตอนบันทึกฉบับร่าง)
 function validateRequiredCustomFields(customFields) {
@@ -131,7 +170,7 @@ function validateContactsJson(raw) {
   try {
     const list = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (!Array.isArray(list)) return null;
-    const bad = list.some(c => c && (c.position || c.telephone || c.mobile || c.email) && !String(c.name || '').trim());
+    const bad = list.some(c => c && (c.position || c.telephone || c.ext || c.mobile || c.email) && !String(c.name || '').trim());
     return bad ? 'กรุณากรอกชื่อผู้ติดต่อ (Contact Name) ให้ครบทุกคน' : null;
   } catch (e) { return null; }
 }
@@ -182,6 +221,9 @@ router.get('/', requireAuth, (req, res) => {
     where.push(`vr.status != 'draft'`);
     where.push(`vr.status != 'revision'`);
     // ผู้มีสิทธิ์อนุมัติ (ผ่านด่านด้านบนแล้ว) เห็นคำขอของทุกคน เพื่อให้ตรงกับตัวเลขบน Dashboard
+  } else {
+    // scope อื่นๆ (เช่น 'all') ไม่รองรับ - เดิมหลุดไปไม่มีตัวกรองและคืนคำขอของทุกคน (รวมฉบับร่างคนอื่น)
+    return res.status(400).json({ error: 'scope ไม่ถูกต้อง' });
   }
   if (status) {
     where.push('vr.status = ?');
@@ -197,6 +239,44 @@ router.get('/', requireAuth, (req, res) => {
     ORDER BY vr.created_at DESC
   `;
   const rows = db.prepare(sql).all(...params);
+  if (scope === 'pending') {
+    // บอกหน้าเว็บว่าคนนี้ "กดอนุมัติใบนี้ได้จริงไหม" (อยู่ในรายชื่อผู้อนุมัติ State ปัจจุบันของใบนั้น) จะได้ไม่โชว์ปุ่มที่กดแล้วถูกปฏิเสธ
+    // และให้ Admin เห็นปุ่มรีเซ็ตสายอนุมัติ เมื่อใบที่ค้างอยู่ใช้รายชื่อเก่า (เช่น เพิ่มผู้อนุมัติใน Template หลังส่งคำขอ)
+    const isAdminUser = role === 'Admin';
+    for (const r of rows) {
+      if (r.status !== 'pending') continue;
+      r.can_act = approvalEngine.canActOn('visit', r.id, userId);
+      r.waiting_for = approvalEngine.currentApproverNames('visit', r.id).join(', ');
+      r.can_resync = isAdminUser && approvalEngine.canResync('visit', r.id);
+      // แยก "คำขอใหม่" กับ "คำขอที่ถูกแก้ไขหลังอนุมัติแล้วส่งกลับมา": ดูรายการล่าสุดที่ทำให้ใบนี้กลับมารออนุมัติ
+      const last = db.prepare(`SELECT action, note FROM approval_history WHERE visit_request_id = ? AND (action LIKE 'ส่งคำขอ%' OR action LIKE 'แก้ไขหลังอนุมัติ%') ORDER BY id DESC LIMIT 1`).get(r.id);
+      r.is_update = !!(last && last.action.startsWith('แก้ไขหลังอนุมัติ'));
+      r.update_summary = r.is_update ? (last.note || '') : '';
+    }
+  }
+  res.json({ requests: rows });
+});
+
+// ข้อมูลสำหรับหน้าปฏิทิน: เฉพาะคำขอที่ "รออนุมัติ" หรือ "อนุมัติแล้ว" (ไม่รวมฉบับร่าง/ส่งกลับแก้ไข/ไม่อนุมัติ/ยกเลิก) และเลือกเฉพาะคอลัมน์ที่ใช้ (ไม่ส่ง JSON ก้อนใหญ่ของฟอร์มมาด้วย)
+// ทุกคนที่ล็อกอินเห็นปฏิทินรวม (ใคร/ที่ไหน/เมื่อไร) แต่หมายเหตุภายในเห็นเฉพาะเจ้าของ/ผู้มีสิทธิ์อนุมัติ
+router.get('/calendar/events', requireAuth, (req, res) => {
+  const base = `
+    SELECT vr.id, vr.code, vr.requester_id, vr.visit_date, vr.time_from, vr.time_to, vr.purpose, vr.location,
+           vr.participants, vr.notes, vr.job_type, vr.status, vr.completed_at,
+           c.name AS customer_name,
+           u.full_name AS requester_name, u.department AS requester_department,
+           a.full_name AS approver_name
+    FROM visit_requests vr
+    LEFT JOIN customers c ON c.id = vr.customer_id
+    JOIN users u ON u.id = vr.requester_id
+    LEFT JOIN users a ON a.id = vr.approver_id
+    WHERE vr.status IN ('pending', 'approved')`;
+  const rows = db.prepare(`${base} ORDER BY vr.visit_date ASC, vr.time_from ASC`).all();
+  const full = canViewAll(req.session);
+  for (const r of rows) {
+    if (!full && r.requester_id !== req.session.userId) r.notes = null; // พนักงานทั่วไปเห็นว่าใครไปไหน แต่ไม่เห็นหมายเหตุภายใน
+    if (r.status === 'pending') r.waiting_for = approvalEngine.currentApproverNames('visit', r.id).join(', ');
+  }
   res.json({ requests: rows });
 });
 
@@ -233,7 +313,11 @@ router.get('/:id', requireAuth, (req, res) => {
   const customFields = getCustomFieldValues(req.params.id);
   const workflow = approvalEngine.getWorkflow('visit', vr.id);
 
-  res.json({ request: vr, history, customFields, workflow });
+  res.json({
+    request: vr, history, customFields, workflow,
+    can_act: vr.status === 'pending' && approvalEngine.canActOn('visit', vr.id, req.session.userId),
+    can_resync: isAdmin && vr.status === 'pending' && approvalEngine.canResync('visit', vr.id)
+  });
 });
 
 // CREATE (รองรับ save_as: 'draft' เพื่อบันทึกฉบับร่างโดยยังไม่ส่งเข้าสู่ระบบอนุมัติ)
@@ -249,7 +333,10 @@ router.post('/', requireAuth, (req, res) => {
 
   const isDraft = save_as === 'draft';
 
-  if (!isDraft && (!customer_id || !visit_date || !time_from || !time_to || !purpose)) {
+  const badField = findInvalidScalarField(req.body);
+  if (badField) return res.status(400).json({ error: `ข้อมูลในช่อง ${badField} ไม่ถูกต้องหรือยาวเกินไป` });
+
+  if (!isDraft && (!customer_id || !visit_date || !time_from || !time_to)) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน' });
   }
   if (!isDraft) {
@@ -302,8 +389,8 @@ router.post('/', requireAuth, (req, res) => {
   }
 
   const vrId = info.lastInsertRowid;
-  saveCustomFieldValues(vrId, custom_fields);
-  const extrasErr = saveVisitExtras(vrId, req.body);
+  const customErr = saveCustomFieldValues(vrId, custom_fields);
+  const extrasErr = customErr || saveVisitExtras(vrId, req.body);
   if (extrasErr) {
     // ข้อมูลส่วนใหม่ไม่ถูกต้อง -> ยกเลิกคำขอที่เพิ่งสร้าง (ยังไม่มี workflow/ประวัติ) แล้วแจ้งผู้ใช้
     db.prepare('DELETE FROM visit_custom_values WHERE visit_request_id = ?').run(vrId);
@@ -329,14 +416,16 @@ router.post('/', requireAuth, (req, res) => {
 
 // แจ้งเตือนผู้อนุมัติ (ในระบบ + อีเมล) เมื่อมีคำขอเข้าสู่สถานะ pending
 // isAdvance = true เมื่อเรียกตอน state เลื่อนไปคนถัดไป (ไม่ใช่ตอนส่งคำขอครั้งแรก) - แจ้งเฉพาะผู้อนุมัติของ state ปัจจุบัน ไม่ต้องแจ้ง Admin ซ้ำทุกรอบ
-function notifyRequestSubmitted(vrId, requester, isAdvance = false) {
+function notifyRequestSubmitted(vrId, requester, isAdvance = false, changes = null) {
   const currentApproverIds = approvalEngine.getCurrentApproverIds('visit', vrId);
   const admins = isAdvance ? [] : db.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
   const ids = Array.from(new Set([...currentApproverIds, ...admins]));
   if (!ids.length) return;
   const approvers = db.prepare(`SELECT id, full_name, email, email_notify FROM users WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(vrId);
-  const msg = isAdvance
+  const msg = (changes && changes.length)
+    ? `${requester.full_name} แก้ไขคำขอออกนอกสถานที่ที่อนุมัติแล้ว (วันที่ ${formatDateThai(vr.visit_date)}) กรุณาอนุมัติอีกครั้ง — แก้ไข: ${changes.slice(0, 3).join(' | ')}${changes.length > 3 ? ` และอีก ${changes.length - 3} รายการ` : ''}`.slice(0, 480)
+    : isAdvance
     ? `คำขอออกนอกสถานที่ของ ${requester.full_name} วันที่ ${formatDateThai(vr.visit_date)} เวลา ${vr.time_from} - ${vr.time_to} ถึงคิวที่ต้องให้คุณอนุมัติแล้ว`
     : `มีคำขอออกนอกสถานที่ใหม่จาก ${requester.full_name} วันที่ ${formatDateThai(vr.visit_date)} เวลา ${vr.time_from} - ${vr.time_to}`;
   const notifStmt = db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, 'new_request', ?, ?)`);
@@ -362,7 +451,7 @@ router.post('/:id/submit', requireAuth, (req, res) => {
   if (!['draft', 'revision'].includes(vr.status)) {
     return res.status(400).json({ error: 'สามารถส่งคำขอได้เฉพาะฉบับร่างหรือคำขอที่ถูกส่งกลับแก้ไขเท่านั้น' });
   }
-  if (!vr.customer_id || !vr.visit_date || !vr.time_from || !vr.time_to || !vr.purpose) {
+  if (!vr.customer_id || !vr.visit_date || !vr.time_from || !vr.time_to) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วนก่อนส่งคำขอ' });
   }
   const contactErr = validateContactsJson(vr.contacts_json);
@@ -400,6 +489,49 @@ router.post('/:id/submit', requireAuth, (req, res) => {
 });
 
 // UPDATE (แก้ไขคำขอ - เฉพาะเจ้าของคำขอ และเฉพาะสถานะที่ยังแก้ไขได้: draft / revision, หรือ post-visit update ตอน approved)
+// ชื่อฟิลด์ภาษาไทยสำหรับสรุปว่า "แก้อะไรบ้าง" ตอนแก้ไขหลังอนุมัติ
+const FIELD_LABELS = {
+  customer_id: 'ลูกค้า', visit_date: 'วันที่', time_from: 'เวลาเริ่ม', time_to: 'เวลาสิ้นสุด', purpose: 'วัตถุประสงค์', location: 'สถานที่',
+  contact_person: 'ผู้ติดต่อ', contact_phone: 'เบอร์โทร', transport: 'ยานพาหนะ', license_plate: 'ทะเบียนรถ', notes: 'หมายเหตุ',
+  job_type: 'ประเภทงาน', sales_person: 'ผู้ดูแลการขาย', mileage_out: 'เลขไมล์ออก', mileage_in: 'เลขไมล์กลับ',
+  actual_time_out: 'เวลาออกจริง', actual_time_back: 'เวลากลับจริง', ot_hours: 'ชั่วโมง OT', product: 'สินค้า', participants: 'ผู้ร่วมงาน',
+  customer_tax_id: 'เลขผู้เสียภาษีลูกค้า', tax_invoice_date: 'วันที่ใบกำกับภาษี',
+  request_date: 'วันที่ขอ', company: 'บริษัท', customer_type: 'ประเภทลูกค้า', meeting_start: 'เวลาเริ่มพบลูกค้า', meeting_end: 'เวลาจบการพบลูกค้า',
+  contacts_json: 'ข้อมูลผู้ติดต่อ', objective_json: 'วัตถุประสงค์การเข้าพบ', during_visit_json: 'ข้อมูลระหว่าง Visit', opportunity_json: 'โอกาสทางธุรกิจ',
+  action_plan_json: 'แผนดำเนินการ', customer_level_json: 'ระดับลูกค้า', next_visit_json: 'แผน Visit ครั้งต่อไป'
+};
+const norm = (v) => (v === null || v === undefined) ? '' : String(v).trim();
+const normJson = (v) => { if (v === null || v === undefined || v === '') return ''; try { return JSON.stringify(typeof v === 'string' ? JSON.parse(v) : v); } catch (e) { return String(v); } };
+const clip = (s, n = 60) => { const t = norm(s).replace(/\s+/g, ' '); return t.length > n ? t.slice(0, n) + '…' : t; };
+
+// ภาพถ่ายข้อมูลที่ผู้อนุมัติสนใจ (ฟิลด์หลัก + ฟิลด์เสริม + custom fields) ไว้เทียบก่อน/หลังแก้ไข
+function snapshotForDiff(id) {
+  const row = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(id) || {};
+  const customer = row.customer_id ? db.prepare('SELECT name FROM customers WHERE id = ?').get(row.customer_id) : null;
+  const scalars = {};
+  for (const f of [...VISIT_SCALAR_FIELDS, ...EXTRA_TEXT_FIELDS]) scalars[f] = f === 'customer_id' ? norm(customer && customer.name) : norm(row[f]);
+  for (const f of EXTRA_JSON_FIELDS) scalars[f] = normJson(row[f]);
+  const custom = {};
+  getCustomFieldValues(id).forEach(c => { custom[c.field_key] = { label: c.label, value: norm(c.value) }; });
+  return { scalars, custom };
+}
+
+// คืนรายการสิ่งที่เปลี่ยน เช่น ["วันที่: 09/10/2026 → 12/10/2026", "ข้อมูลผู้ติดต่อ: มีการแก้ไข"]
+function diffSnapshots(a, b) {
+  const out = [];
+  for (const f of Object.keys(b.scalars)) {
+    if (a.scalars[f] === b.scalars[f]) continue;
+    const label = FIELD_LABELS[f] || f;
+    if (f.endsWith('_json')) out.push(`${label}: มีการแก้ไข`);
+    else out.push(`${label}: ${clip(a.scalars[f]) || '(ว่าง)'} → ${clip(b.scalars[f]) || '(ว่าง)'}`);
+  }
+  for (const k of new Set([...Object.keys(a.custom), ...Object.keys(b.custom)])) {
+    const x = a.custom[k] ? a.custom[k].value : '', y = b.custom[k] ? b.custom[k].value : '';
+    if (x !== y) out.push(`${(b.custom[k] || a.custom[k]).label}: ${clip(x) || '(ว่าง)'} → ${clip(y) || '(ว่าง)'}`);
+  }
+  return out;
+}
+
 router.put('/:id', requireAuth, (req, res) => {
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
   if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
@@ -409,36 +541,67 @@ router.put('/:id', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'ไม่สามารถแก้ไขคำขอที่ดำเนินการแล้วได้' });
   }
 
-  const fields = ['customer_id', 'visit_date', 'time_from', 'time_to', 'purpose', 'location',
-    'contact_person', 'contact_phone', 'transport', 'license_plate', 'notes',
-    'job_type', 'sales_person', 'mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back',
-    'ot_hours', 'product', 'participants', 'customer_tax_id', 'tax_invoice_date'];
+  const badField = findInvalidScalarField(req.body);
+  if (badField) return res.status(400).json({ error: `ข้อมูลในช่อง ${badField} ไม่ถูกต้องหรือยาวเกินไป` });
+
+  // แก้ไขหลังอนุมัติ: ถ้ามีการเปลี่ยนแปลงจริง จะส่งกลับไปให้ผู้อนุมัติอนุมัติอีกครั้ง -> ต้องมีสายอนุมัติที่ใช้งานได้ก่อน ไม่งั้นไม่บันทึก
+  if (isPostVisitUpdate) {
+    const noApprover = approvalEngine.checkCanSubmit('visit', req.session.userId);
+    if (noApprover) return res.status(400).json({ error: noApprover });
+  }
+  const beforeSnap = isPostVisitUpdate ? snapshotForDiff(req.params.id) : null;
+
   const updates = [];
   const values = [];
-  for (const f of fields) {
+  for (const f of VISIT_SCALAR_FIELDS) {
     if (req.body[f] !== undefined) {
       updates.push(`${f} = ?`);
       values.push(req.body[f]);
     }
   }
-  if (updates.length) {
-    values.push(req.params.id);
-    // หมายเหตุ: ไม่แตะคอลัมน์ status เลย ดังนั้นคำขอที่ "อนุมัติแล้ว" จะยังคงเป็น approved อยู่เหมือนเดิมหลังอัปเดต
-    // (ไม่ต้องส่งขออนุมัติซ้ำ - อนุมัติแค่ครั้งเดียวตามที่ต้องการ)
-    db.prepare(`UPDATE visit_requests SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  let changes = [];
+  // บันทึกฟิลด์หลัก + custom fields + ฟิลด์เสริม ใน transaction เดียว: ถ้าส่วนไหนไม่ถูกต้องจะย้อนกลับทั้งหมด ไม่บันทึกค้างไว้ครึ่งเดียว
+  try {
+    db.transaction(() => {
+      if (updates.length) {
+        // หมายเหตุ: ไม่แตะคอลัมน์ status เลย ดังนั้นคำขอที่ "อนุมัติแล้ว" จะยังคงเป็น approved อยู่เหมือนเดิมหลังอัปเดต
+        // (ไม่ต้องส่งขออนุมัติซ้ำ - อนุมัติแค่ครั้งเดียวตามที่ต้องการ)
+        db.prepare(`UPDATE visit_requests SET ${updates.join(', ')} WHERE id = ?`).run(...values, req.params.id);
+      }
+      if (req.body.custom_fields) {
+        const customErr = saveCustomFieldValues(req.params.id, req.body.custom_fields);
+        if (customErr) throw new ValidationError(customErr);
+      }
+      const extrasErr = saveVisitExtras(req.params.id, req.body);
+      if (extrasErr) throw new ValidationError(extrasErr);
+      if (isPostVisitUpdate) {
+        changes = diffSnapshots(beforeSnap, snapshotForDiff(req.params.id));
+        if (changes.length) {
+          // มีการเปลี่ยนแปลงจริง -> กลับไปรออนุมัติใหม่ตั้งแต่ State แรก (ใช้ Template ล่าสุด) และจดสิ่งที่เปลี่ยนไว้ให้ผู้อนุมัติเห็น
+          db.prepare(`UPDATE visit_requests SET status = 'pending', approver_id = NULL, approved_at = NULL, approval_note = '' WHERE id = ?`).run(req.params.id);
+          approvalEngine.createWorkflow('visit', vr.id, req.session.userId);
+        }
+      }
+    })();
+  } catch (err) {
+    if (err instanceof ValidationError || err instanceof approvalEngine.ApprovalError) return res.status(400).json({ error: err.message });
+    throw err;
   }
-  if (req.body.custom_fields) {
-    saveCustomFieldValues(req.params.id, req.body.custom_fields);
-  }
-  const extrasErr = saveVisitExtras(req.params.id, req.body);
-  if (extrasErr) return res.status(400).json({ error: extrasErr });
   if (isPostVisitUpdate) {
-    db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'อัปเดตข้อมูลหลังปฏิบัติงาน', 'web')`).run(req.params.id, req.session.userId);
-    logAction(req.session.userId, 'update_after_visit', `อัปเดตข้อมูลหลังปฏิบัติงาน #${vr.code}`);
+    if (changes.length) {
+      const summary = changes.join('\n').slice(0, 3000);
+      db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, note, channel) VALUES (?, ?, 'แก้ไขหลังอนุมัติ — ส่งขออนุมัติอีกครั้ง', ?, 'web')`).run(req.params.id, req.session.userId, summary);
+      logAction(req.session.userId, 'update_after_approval', `แก้ไขคำขอที่อนุมัติแล้ว #${vr.code} และส่งขออนุมัติอีกครั้ง (${changes.length} รายการ)`);
+      const requester = db.prepare('SELECT full_name, department FROM users WHERE id = ?').get(req.session.userId);
+      notifyRequestSubmitted(vr.id, requester, false, changes);
+      return res.json({ ok: true, reapproval: true, changes });
+    }
+    db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'อัปเดตข้อมูลหลังปฏิบัติงาน (ไม่มีการเปลี่ยนแปลง)', 'web')`).run(req.params.id, req.session.userId);
+    logAction(req.session.userId, 'update_after_visit', `อัปเดตข้อมูลหลังปฏิบัติงาน #${vr.code} (ไม่มีการเปลี่ยนแปลง)`);
   } else {
     logAction(req.session.userId, 'edit_request', `แก้ไขคำขอ #${vr.code}`);
   }
-  res.json({ ok: true });
+  res.json({ ok: true, reapproval: false });
 });
 
 // วันนี้ตามเวลาไทย (YYYY-MM-DD) — ใช้เทียบกับวันที่ไป Visit
@@ -519,6 +682,27 @@ router.delete('/:id', requireAuth, requireRole('Admin'), (req, res) => {
   res.json({ ok: true });
 });
 
+// Admin รีเซ็ตสายอนุมัติของคำขอที่ยังรออยู่ ให้ใช้รายชื่อผู้อนุมัติ "ล่าสุด" ตาม Template (เช่น เพิ่มผู้อนุมัติใน Template หลังจากคำขอถูกส่งไปแล้ว)
+// ทำได้เฉพาะใบที่ยังไม่มีใครตัดสินใจ — ถ้ามีคนอนุมัติไปแล้วบางส่วน ให้ใช้ "ส่งกลับแก้ไข" แล้วให้ผู้ขอส่งใหม่
+router.post('/:id/resync-workflow', requireAuth, requireRole('Admin'), (req, res) => {
+  const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
+  if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
+  if (vr.status !== 'pending') return res.status(400).json({ error: 'รีเซ็ตสายอนุมัติได้เฉพาะคำขอที่รออนุมัติอยู่' });
+  try {
+    db.transaction(() => {
+      approvalEngine.resyncWorkflow('visit', vr.id, vr.requester_id);
+      db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'รีเซ็ตสายอนุมัติตามรายชื่อผู้อนุมัติล่าสุด', 'web')`).run(vr.id, req.session.userId);
+      logAction(req.session.userId, 'resync_workflow', `รีเซ็ตสายอนุมัติคำขอ Visit #${vr.code}`);
+    })();
+  } catch (err) {
+    if (err instanceof approvalEngine.ApprovalError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+  const requester = db.prepare('SELECT full_name, department FROM users WHERE id = ?').get(vr.requester_id);
+  notifyRequestSubmitted(vr.id, requester, true); // แจ้งผู้อนุมัติชุดใหม่ (ไม่แจ้ง Admin ซ้ำ)
+  res.json({ ok: true, waiting_for: approvalEngine.currentApproverNames('visit', vr.id) });
+});
+
 // อนุญาตทั้ง Approver/Admin โดยตำแหน่ง และคนที่ Admin ตั้งเป็นผู้อนุมัติผ่าน Template (ไม่ว่า role จะเป็นอะไร)
 // การตรวจว่าเป็นผู้อนุมัติของ "คำขอนี้ใน state ปัจจุบัน" จริงหรือไม่ ทำอีกชั้นใน approvalEngine.decide() อยู่แล้ว
 function requireApproverOrAdmin(req, res, next) {
@@ -558,7 +742,7 @@ function decide(req, res, action, actionLabel, note) {
     result = db.transaction(() => {
       const r = approvalEngine.decide('visit', vr.id, req.session.userId, action, note, vr.requester_id);
       db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, note, channel) VALUES (?, ?, ?, ?, 'web')`)
-        .run(req.params.id, req.session.userId, `${actionLabel}${stateName ? ` (${stateName})` : ''}`, note || '');
+        .run(req.params.id, req.session.userId, `${actionLabel}${stateName ? ` (${stateName})` : ''}${vr.requester_id === req.session.userId ? ' · โดยผู้ขอเอง' : ''}`, note || '');
       logAction(req.session.userId, `visit_${action}`, `${actionLabel}คำขอ #${vr.code}`);
 
       if (r.finalStatus) {
@@ -574,6 +758,14 @@ function decide(req, res, action, actionLabel, note) {
             : `คำขอออกนอกสถานที่ของคุณ #${vr.code} ไม่ได้รับการอนุมัติ`;
         db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, ?, ?, ?)`)
           .run(vr.requester_id, r.finalStatus === 'revision' ? 'revision' : r.finalStatus, message, vr.id);
+        if (r.finalStatus === 'approved') {
+          // ผู้ขอเลือกระดับลูกค้าใหม่ในฟอร์ม -> อัปเดตระดับของลูกค้ารายนั้นเมื่ออนุมัติแล้ว
+          const lv = applyVisitLevelToCustomer(vr, req.session.userId);
+          if (lv) {
+            db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, note, channel) VALUES (?, ?, ?, ?, 'web')`)
+              .run(req.params.id, req.session.userId, 'อัปเดตระดับลูกค้า', `${lv.from || '(ไม่ระบุ)'} → ${lv.to}`);
+          }
+        }
       }
       return r;
     })();
@@ -621,4 +813,5 @@ function sendRevisionResultEmail(vr, approverId, note) {
   }).catch(err => console.error('sendRevisionEmail error:', err.message));
 }
 
+router.notifySubmitted = notifyRequestSubmitted;
 module.exports = router;

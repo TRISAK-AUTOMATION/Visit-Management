@@ -43,7 +43,7 @@ router.patch('/reorder', requireAuth, requireRole('Admin'), (req, res) => {
 // Label ของ Field พื้นฐานที่จำเป็นต่อระบบ (วันที่ / รหัสลูกค้า / เวลาเริ่ม / เวลาสิ้นสุด / วัตถุประสงค์)
 // ต่างจาก core_field_settings ตรงที่ field กลุ่มนี้ไม่มี is_visible/is_required ให้ปรับ (ต้องแสดง+บังคับกรอกเสมอ) แก้ได้แค่ชื่อหัวข้อ
 router.get('/essential-labels', requireAuth, (req, res) => {
-  const rows = db.prepare('SELECT field_key, label FROM essential_field_labels').all();
+  const rows = db.prepare('SELECT field_key, label FROM essential_field_labels WHERE field_key != \'purpose\'').all();
   res.json({ labels: rows });
 });
 

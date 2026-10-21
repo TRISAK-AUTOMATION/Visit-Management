@@ -2,7 +2,7 @@
 const express = require('express');
 const db = require('../db/database');
 const { requireAuth, requireRole } = require('./middleware');
-const { sendMail } = require('../utils/mailer');
+const { sendMail, escapeHtml } = require('../utils/mailer');
 const { toThaiDate } = require('../utils/dateFormat');
 const { logAction } = require('../utils/systemLog');
 const approvalEngine = require('../utils/approvalEngine');
@@ -56,6 +56,7 @@ function hoursBetween(timeFrom, timeTo) {
 function validateOT(f, isDraft) {
   const otType = String(f.ot_type || '').trim();
   if (otType && !OT_TYPES.includes(otType)) return 'OT Type ไม่ถูกต้อง';
+  if (f.day_type && !['workday', 'holiday'].includes(f.day_type)) return 'ประเภทวัน (วันทำงาน/วันหยุด) ไม่ถูกต้อง';
   for (const [key, label] of [['project_no', 'Project No.'], ['job_no', 'Job No.']]) {
     if (String(f[key] || '').trim().length > MAX_REF_LEN) return `${label} ยาวเกินไป (ไม่เกิน ${MAX_REF_LEN} ตัวอักษร)`;
   }
@@ -76,6 +77,13 @@ function validateOT(f, isDraft) {
   if (from !== null && to !== null && from >= to) return 'เวลาสิ้นสุดต้องมากกว่าเวลาเริ่มต้น กรุณาตรวจสอบเวลาอีกครั้ง';
   return null;
 }
+// ค่าเริ่มต้นของประเภทวันตามปฏิทิน: เสาร์-อาทิตย์ = วันหยุด (ไม่รวมนักขัตฤกษ์) — ผู้ขอเปลี่ยนเองได้
+function defaultDayType(isoDate) {
+  const d = new Date(`${String(isoDate || '').slice(0, 10)}T00:00:00Z`);
+  if (isNaN(d)) return null;
+  const wd = d.getUTCDay();
+  return wd === 0 || wd === 6 ? 'holiday' : 'workday';
+}
 const FILL_HINT = ' — กรุณากดแก้ไขคำขอเพื่อกรอกข้อมูลให้ครบก่อนส่ง';
 
 // แปลงค่าจากฟอร์มเป็นค่าที่เก็บลงฐานข้อมูล (ตัดช่องว่าง, ช่องว่างเปล่า = NULL)
@@ -83,6 +91,7 @@ function otFields(b) {
   const blank = (v) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim());
   return {
     ot_type: blank(b.ot_type),
+    day_type: blank(b.day_type) || defaultDayType(b.ot_date),
     customer_id: blank(b.customer_id) === null ? null : Number(b.customer_id),
     project_no: blank(b.project_no),
     job_no: blank(b.job_no)
@@ -124,9 +133,35 @@ router.get('/', requireAuth, (req, res) => {
       FROM ot_requests o JOIN users u ON u.id = o.requester_id
       WHERE o.status = ? ORDER BY o.created_at DESC
     `).all(wantedStatus);
+    for (const r of rows) {
+      if (r.status !== 'pending') continue;
+      r.can_act = approvalEngine.canActOn('ot', r.id, req.session.userId);
+      r.waiting_for = approvalEngine.currentApproverNames('ot', r.id).join(', ');
+      r.can_resync = req.session.role === 'Admin' && approvalEngine.canResync('ot', r.id);
+    }
     return res.json({ requests: rows });
   }
   res.status(400).json({ error: 'scope ไม่ถูกต้อง' });
+});
+
+// ข้อมูลสำหรับหน้าปฏิทิน: เฉพาะ OT ที่ "รออนุมัติ" หรือ "อนุมัติแล้ว" — ผู้มีสิทธิ์อนุมัติ/Admin เห็นของทุกคน, คนอื่นเห็นของตัวเอง
+// ต้องวางก่อน '/:id' ไม่งั้น "calendar" จะถูกตีเป็น id
+router.get('/calendar/events', requireAuth, (req, res) => {
+  const base = `
+    SELECT o.id, o.code, o.requester_id, o.ot_date, o.time_from, o.time_to, o.hours, o.location, o.work_detail,
+           o.reason, o.notes, o.ot_type, o.day_type, o.status,
+           u.full_name AS requester_name, u.department AS requester_department,
+           a.full_name AS approver_name
+    FROM ot_requests o JOIN users u ON u.id = o.requester_id
+    LEFT JOIN users a ON a.id = o.approver_id
+    WHERE o.status IN ('pending', 'approved')`;
+  const rows = db.prepare(`${base} ORDER BY o.ot_date ASC, o.time_from ASC`).all();
+  const full = canViewAll(req.session);
+  for (const r of rows) {
+    if (!full && r.requester_id !== req.session.userId) { r.notes = null; r.reason = null; }
+    if (r.status === 'pending') r.waiting_for = approvalEngine.currentApproverNames('ot', r.id).join(', ');
+  }
+  res.json({ requests: rows });
 });
 
 router.get('/:id', requireAuth, (req, res) => {
@@ -154,7 +189,11 @@ router.get('/:id', requireAuth, (req, res) => {
     WHERE h.ot_request_id = ? ORDER BY h.created_at ASC
   `).all(req.params.id);
   const workflow = approvalEngine.getWorkflow('ot', ot.id);
-  res.json({ request: ot, history, workflow });
+  res.json({
+    request: ot, history, workflow,
+    can_act: ot.status === 'pending' && approvalEngine.canActOn('ot', ot.id, req.session.userId),
+    can_resync: isAdmin && ot.status === 'pending' && approvalEngine.canResync('ot', ot.id)
+  });
 });
 
 router.post('/', requireAuth, (req, res) => {
@@ -182,15 +221,15 @@ router.post('/', requireAuth, (req, res) => {
   let code, info;
   const insertStmt = db.prepare(`
     INSERT INTO ot_requests (code, requester_id, ot_date, time_from, time_to, hours, location, work_detail, reason, notes, status,
-                             ot_type, customer_id, project_no, job_no)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             ot_type, customer_id, project_no, job_no, day_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (let attempt = 0; attempt < 5; attempt++) {
     code = generateCode();
     try {
       info = insertStmt.run(code, req.session.userId, ot_date || '', time_from || '', time_to || '', hours,
         location || '', work_detail || '', reason || '', notes || '', status,
-        x.ot_type, x.customer_id, x.project_no, x.job_no);
+        x.ot_type, x.customer_id, x.project_no, x.job_no, x.day_type);
       break;
     } catch (err) {
       const isDup = err.code === 'SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed: ot_requests\.code/.test(err.message);
@@ -227,10 +266,10 @@ router.put('/:id', requireAuth, (req, res) => {
   const hours = hoursBetween(time_from, time_to);
   db.prepare(`
     UPDATE ot_requests SET ot_date = ?, time_from = ?, time_to = ?, hours = ?, location = ?, work_detail = ?, reason = ?, notes = ?,
-                           ot_type = ?, customer_id = ?, project_no = ?, job_no = ?
+                           ot_type = ?, customer_id = ?, project_no = ?, job_no = ?, day_type = ?
     WHERE id = ?
   `).run(ot_date || '', time_from || '', time_to || '', hours, location || '', work_detail || '', reason || '', notes || '',
-    x.ot_type, x.customer_id, x.project_no, x.job_no, req.params.id);
+    x.ot_type, x.customer_id, x.project_no, x.job_no, x.day_type, req.params.id);
   res.json({ ok: true });
 });
 
@@ -295,6 +334,25 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Admin รีเซ็ตสายอนุมัติของ OT ที่ยังรออยู่ ให้ใช้รายชื่อผู้อนุมัติ "ล่าสุด" ตาม Template (เฉพาะใบที่ยังไม่มีใครตัดสินใจ)
+router.post('/:id/resync-workflow', requireAuth, requireRole('Admin'), (req, res) => {
+  const ot = db.prepare('SELECT * FROM ot_requests WHERE id = ?').get(req.params.id);
+  if (!ot) return res.status(404).json({ error: 'ไม่พบคำขอ OT' });
+  if (ot.status !== 'pending') return res.status(400).json({ error: 'รีเซ็ตสายอนุมัติได้เฉพาะคำขอที่รออนุมัติอยู่' });
+  try {
+    db.transaction(() => {
+      approvalEngine.resyncWorkflow('ot', ot.id, ot.requester_id);
+      db.prepare(`INSERT INTO ot_history (ot_request_id, action_by, action) VALUES (?, ?, 'รีเซ็ตสายอนุมัติตามรายชื่อผู้อนุมัติล่าสุด')`).run(ot.id, req.session.userId);
+      logAction(req.session.userId, 'resync_workflow', `รีเซ็ตสายอนุมัติคำขอ OT #${ot.code}`);
+    })();
+  } catch (err) {
+    if (err instanceof approvalEngine.ApprovalError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+  notifyOTSubmitted(ot.id, true); // แจ้งผู้อนุมัติชุดใหม่ (ไม่แจ้ง Admin ซ้ำ)
+  res.json({ ok: true, waiting_for: approvalEngine.currentApproverNames('ot', ot.id) });
+});
+
 function requireApproverOrAdmin(req, res, next) {
   // อนุญาตทั้งหัวหน้า/Admin โดยตำแหน่ง และคนที่ Admin ตั้งเป็นผู้อนุมัติผ่าน Template (ไม่ว่า role จะเป็นอะไร)
   // การตรวจว่าเป็นผู้อนุมัติของ "คำขอนี้ใน state ปัจจุบัน" จริงหรือไม่ ทำอีกชั้นใน approvalEngine.decide() อยู่แล้ว
@@ -323,7 +381,7 @@ function decide(req, res, action, actionLabel) {
     result = db.transaction(() => {
       const r = approvalEngine.decide('ot', ot.id, req.session.userId, action, note, ot.requester_id);
       db.prepare(`INSERT INTO ot_history (ot_request_id, action_by, action, note) VALUES (?, ?, ?, ?)`)
-        .run(req.params.id, req.session.userId, `${actionLabel}${stateName ? ` (${stateName})` : ''}`, note || '');
+        .run(req.params.id, req.session.userId, `${actionLabel}${stateName ? ` (${stateName})` : ''}${ot.requester_id === req.session.userId ? ' · โดยผู้ขอเอง' : ''}`, note || '');
       logAction(req.session.userId, `ot_${action}`, `${actionLabel}คำขอ OT #${ot.code}`);
       if (r.finalStatus) {
         // workflow จบแล้ว (approved / rejected / revision) - sync กลับไปที่ ot_requests.status
@@ -368,7 +426,7 @@ function notifyOTSubmitted(otId, isAdvance = false) {
       sendMail({
         to: a.email,
         subject: `[TRISAK] คำขอ OT ใหม่ #${ot.code}`,
-        html: `<p>${msg}</p><p>รายละเอียดงาน: ${ot.work_detail || '-'}</p><p><a href="${process.env.APP_BASE_URL || 'http://localhost:3000'}/approve-ot?id=${otId}">เปิดดูคำขอ</a></p>`
+        html: `<p>${escapeHtml(msg)}</p><p>รายละเอียดงาน: ${escapeHtml(ot.work_detail || '-')}</p><p><a href="${process.env.APP_BASE_URL || 'http://localhost:3000'}/approve-ot?id=${otId}">เปิดดูคำขอ</a></p>`
       }).catch(err => console.error('[ot] send mail error:', err.message));
     }
   }
@@ -384,7 +442,7 @@ function notifyOTDecision(otId, status, approverId, note) {
   db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, ?, ?, ?)`)
     .run(ot.requester_id, notifType, msg, otId);
   if (requester && requester.email && requester.email_notify) {
-    sendMail({ to: requester.email, subject: `[TRISAK] คำขอ OT #${ot.code} ถูก${label}`, html: `<p>${msg}</p>` })
+    sendMail({ to: requester.email, subject: `[TRISAK] คำขอ OT #${ot.code} ถูก${label}`, html: `<p>${escapeHtml(msg)}</p>` })
       .catch(err => console.error('[ot] send mail error:', err.message));
   }
 }
@@ -400,4 +458,5 @@ router.get('/summary/me', requireAuth, (req, res) => {
   res.json({ by_month: rows, total_hours_this_year: totalHours });
 });
 
+router.notifySubmitted = notifyOTSubmitted;
 module.exports = router;

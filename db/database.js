@@ -544,6 +544,42 @@ db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_code_company ON custome
   }
 }
 
+// ===== สิทธิ์วันลาอัตโนมัติตามอายุงาน =====
+// users.start_date = วันเริ่มทำงาน (YYYY-MM-DD) ; leave_balances.auto_entitlement = 1 -> ระบบคำนวณ *_total จากอายุงานตามกติกาด้านล่าง
+// leave_entitlement_rules: "ครบ min_months เดือน ได้ days วัน" ต่อประเภทลา — ใช้กติกาที่ min_months สูงสุดที่อายุงานถึง
+{
+  if (!db.prepare(`PRAGMA table_info(users)`).all().some(c => c.name === 'start_date')) db.exec(`ALTER TABLE users ADD COLUMN start_date TEXT`);
+  if (!db.prepare(`PRAGMA table_info(leave_balances)`).all().some(c => c.name === 'auto_entitlement')) db.exec(`ALTER TABLE leave_balances ADD COLUMN auto_entitlement INTEGER NOT NULL DEFAULT 0`);
+  // รอบสิทธิ์: cycle_key = รอบที่ยอด "ใช้ไป" นับอยู่ (เช่น '2026' หรือวันครบรอบ) — ขึ้นรอบใหม่แล้วรีเซ็ตยอดใช้ไป และเก็บรอบก่อนลง leave_balance_history
+  if (!db.prepare(`PRAGMA table_info(leave_balances)`).all().some(c => c.name === 'cycle_key')) db.exec(`ALTER TABLE leave_balances ADD COLUMN cycle_key TEXT`);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS leave_balance_history (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      cycle_key      TEXT NOT NULL,
+      vacation_total REAL, vacation_used REAL,
+      personal_total REAL, personal_used REAL,
+      sick_total     REAL, sick_used REAL,
+      archived_at    TEXT DEFAULT (datetime('now'))
+    );
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS leave_entitlement_rules (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      leave_type TEXT NOT NULL,            -- ลาพักร้อน | ลากิจ | ลาป่วย
+      min_months INTEGER NOT NULL,         -- อายุงานขั้นต่ำ (เดือน) เช่น 12 = ครบ 1 ปี
+      days       REAL NOT NULL,            -- สิทธิ์ต่อปี (วัน) เมื่ออายุงานถึงเกณฑ์นี้
+      UNIQUE (leave_type, min_months)
+    );
+  `);
+  // ค่าเริ่มต้น (ใส่ครั้งแรกเท่านั้น แก้ได้ที่หน้า "จัดการสิทธิ์วันลา"): พักร้อน 6 วันเมื่อครบ 1 ปี (ตามกฎหมายแรงงาน), ลากิจ 3 วัน, ลาป่วย 30 วัน ตั้งแต่เริ่มงาน
+  // รอบสิทธิ์/สัดส่วนปีแรกเก็บใน system_settings (leave_cycle, leave_prorate_first_year) — ไม่มีแถว = ค่าตั้งต้น: ปฏิทิน, ไม่คิดสัดส่วน (ดู utils/leaveEntitlement.js)
+  if (db.prepare('SELECT COUNT(*) c FROM leave_entitlement_rules').get().c === 0) {
+    const ins = db.prepare('INSERT INTO leave_entitlement_rules (leave_type, min_months, days) VALUES (?, ?, ?)');
+    [['ลาพักร้อน', 0, 0], ['ลาพักร้อน', 12, 6], ['ลากิจ', 0, 3], ['ลาป่วย', 0, 30]].forEach(r => ins.run(...r));
+  }
+}
+
 // archived_at: วันเวลาที่ลูกค้ารายนี้ถูกเก็บถาวร ใช้คำนวณว่า "เก็บถาวรมานานแค่ไหนแล้ว" สำหรับกฎลบอัตโนมัติ
 if (!db.prepare(`PRAGMA table_info(customers)`).all().map(c => c.name).includes('archived_at')) {
   db.exec(`ALTER TABLE customers ADD COLUMN archived_at TEXT`);
@@ -603,6 +639,8 @@ if (db.prepare('SELECT COUNT(*) AS c FROM brands').get().c === 0) {
   // OT Type (Project | Service | Visit | Site Survey | Internal) และ Job No. — customer_id / project_no ใช้ช่องที่มีอยู่แล้วข้างบน
   if (!otCols.includes('ot_type')) db.exec(`ALTER TABLE ot_requests ADD COLUMN ot_type TEXT`);
   if (!otCols.includes('job_no')) db.exec(`ALTER TABLE ot_requests ADD COLUMN job_no TEXT`);
+  // ประเภทวันของ OT: workday (วันทำงาน) | holiday (วันหยุด) — ฟอร์มเลือกให้อัตโนมัติตามปฏิทิน แต่ผู้ขอแก้เองได้ (เช่น เสาร์ที่เป็นเวร)
+  if (!otCols.includes('day_type')) db.exec(`ALTER TABLE ot_requests ADD COLUMN day_type TEXT`);
 }
 
 // ---------- Index เพิ่มความเร็วให้คอลัมน์ที่ค้นหา/join บ่อย ----------
@@ -702,6 +740,18 @@ const ESSENTIAL_LABEL_DEFAULTS = [
 {
   const insertEssentialLabel = db.prepare('INSERT OR IGNORE INTO essential_field_labels (field_key, label) VALUES (?, ?)');
   ESSENTIAL_LABEL_DEFAULTS.forEach(([k, l]) => insertEssentialLabel.run(k, l));
+}
+
+// "วัตถุประสงค์ / รายละเอียดงาน" (purpose) ย้ายจาก field จำเป็น (label-only) มาเป็น field ที่ Admin ซ่อน/ปิดบังคับกรอก/แก้ชื่อได้
+// ไม่ลบแถวทิ้งเพราะผูกกับคอลัมน์ visit_requests.purpose (NOT NULL) ที่ PDF/Report/Email ใช้ — "ซ่อน" = ไม่โชว์ช่องนี้ในฟอร์ม
+// default: แสดง + ไม่บังคับ (ฟอร์มเติมจาก Visit Objective ให้อัตโนมัติอยู่แล้ว) ใช้ชื่อ label เดิมที่ Admin เคยตั้งไว้
+{
+  if (!db.prepare(`SELECT 1 FROM core_field_settings WHERE field_key = 'purpose'`).get()) {
+    const old = db.prepare(`SELECT label FROM essential_field_labels WHERE field_key = 'purpose'`).get();
+    const nextOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM core_field_settings').get().n;
+    db.prepare(`INSERT INTO core_field_settings (field_key, label, is_visible, is_required, sort_order, show_in_email) VALUES ('purpose', ?, 1, 0, ?, 0)`)
+      .run(old ? old.label : 'วัตถุประสงค์ / รายละเอียดงาน', nextOrder);
+  }
 }
 
 // รายชื่อ "แผนก" ที่ใช้เป็นตัวเลือกแบบ dropdown ทั่วทั้งระบบ (แทนการพิมพ์เองแบบเดิม)

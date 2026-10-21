@@ -213,3 +213,85 @@ export function MultiPicker({ options, value, onChange, placeholder = 'Search...
     </div>
   );
 }
+
+
+// ผู้ร่วมงาน: ติ๊กแผนก -> ป๊อปอัพรายชื่อพนักงานของแผนกนั้นให้ติ๊กเลือก (ค่าที่เลือกรวมกับช่องค้นหา/พิมพ์เองด้านล่างผ่าน value/onChange เดียวกัน)
+// directory = [{ full_name, department }] ; value = รายชื่อที่เลือกไว้ทั้งหมด (string[])
+export function DeptParticipants({ directory, value, onChange }) {
+  const cur = Array.isArray(value) ? value : [];
+  const [openDept, setOpenDept] = useState(null);
+  const [draft, setDraft] = useState([]);
+
+  const byDept = useMemo(() => {
+    const m = {};
+    (directory || []).forEach(u => {
+      const d = (u.department || '').trim();
+      if (!d) return;
+      (m[d] = m[d] || []).push(u.full_name);
+    });
+    Object.values(m).forEach(list => list.sort((a, b) => a.localeCompare(b)));
+    return m;
+  }, [directory]);
+  const depts = useMemo(
+    () => Object.keys(byDept).sort((a, b) => (a === 'Engineer' ? 0 : 1) - (b === 'Engineer' ? 0 : 1) || a.localeCompare(b)),
+    [byDept]
+  );
+
+  if (!directory) return <div className="vf-hint" style={{ marginTop: 0 }}>กำลังโหลดรายชื่อแผนก...</div>;
+  if (!depts.length) return null;
+
+  const countIn = (d) => cur.filter(n => byDept[d].includes(n)).length;
+  const openPopup = (d) => { setDraft(cur.filter(n => byDept[d].includes(n))); setOpenDept(d); };
+  const names = openDept ? byDept[openDept] : [];
+  const allOn = names.length > 0 && names.every(n => draft.includes(n));
+  const toggle = (n) => setDraft(d => (d.includes(n) ? d.filter(x => x !== n) : [...d, n]));
+  const apply = () => {
+    onChange([...cur.filter(n => !names.includes(n)), ...names.filter(n => draft.includes(n))]);
+    setOpenDept(null);
+  };
+
+  return (
+    <>
+      <div className="vf-dept-row" role="group" aria-label="เลือกผู้ร่วมงานตามแผนก">
+        {depts.map(d => {
+          const n = countIn(d);
+          return (
+            <label key={d} className={`vf-dept ${n ? 'on' : ''}`}>
+              <input type="checkbox" checked={n > 0} onChange={() => openPopup(d)} />
+              <span>{d}</span>
+              {n > 0 && <span className="vf-dept-count">{n}</span>}
+            </label>
+          );
+        })}
+      </div>
+      {openDept && (
+        <div className="modal-bg" onClick={(e) => { if (e.target === e.currentTarget) setOpenDept(null); }}>
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <div className="modal-head">
+              <h3>ผู้ร่วมงาน — {openDept}</h3>
+              <button type="button" className="modal-close" onClick={() => setOpenDept(null)} aria-label="Close">&times;</button>
+            </div>
+            <div className="modal-body">
+              <label className="vf-inline-check" style={{ marginTop: 0, marginBottom: 8 }}>
+                <input type="checkbox" checked={allOn} onChange={() => setDraft(allOn ? [] : [...names])} />
+                <b>เลือกทั้งแผนก ({names.length} คน)</b>
+              </label>
+              <div className="vf-dept-list">
+                {names.map(n => (
+                  <label key={n} className="vf-opt">
+                    <input type="checkbox" checked={draft.includes(n)} onChange={() => toggle(n)} />
+                    <span><b>{n}</b></span>
+                  </label>
+                ))}
+              </div>
+              <div className="form-actions" style={{ marginTop: 14 }}>
+                <button type="button" className="btn btn-outline" onClick={() => setOpenDept(null)}>ยกเลิก</button>
+                <button type="button" className="btn btn-primary" onClick={apply}>ตกลง ({draft.length})</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

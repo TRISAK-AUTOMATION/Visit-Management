@@ -7,7 +7,15 @@ const { getDepartmentsForUser } = require('../utils/userDepartments');
 
 const router = express.Router();
 
+// จำนวนคำขอที่อ้างถึงลูกค้ารายนี้ — ต้องนับทั้ง Visit และ OT (เดิมนับแค่ Visit ทำให้ลูกค้าที่ถูกใช้ใน OT ถูกลบได้ แล้ว OT ชี้ไปลูกค้าที่หายไป หรือทำให้การ import ล้มทั้งก้อนเมื่อเปิด foreign key)
+const countVisitUsage = db.prepare('SELECT COUNT(*) c FROM visit_requests WHERE customer_id = ?');
+const countOtUsage = db.prepare('SELECT COUNT(*) c FROM ot_requests WHERE customer_id = ?');
+function countCustomerUsage(customerId) {
+  return countVisitUsage.get(customerId).c + countOtUsage.get(customerId).c;
+}
+
 const COMPANIES = ['TAC', 'FAC', 'HTC'];
+const { CUSTOMER_LEVELS } = require('../utils/customerLevels');
 
 // GET /api/customers?q=&company=&include_archived=1
 // - หน้าค้นหาลูกค้าตอนสร้างคำขอ Visit จะไม่ส่ง include_archived มา จึงเห็นเฉพาะลูกค้าที่ยังใช้งานอยู่
@@ -21,13 +29,24 @@ router.get('/', requireAuth, (req, res) => {
   if (pending === '1') where.push('is_pending = 1');
   if (company) { where.push('company = ?'); params.push(company); }
   if (q) {
-    where.push('(name LIKE ? OR code LIKE ?)');
-    params.push(`%${q}%`, `%${q}%`);
+    where.push('(name LIKE ? OR code LIKE ? OR contact_person LIKE ?)'); // ค้นจากชื่อ/รหัส/Sales
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
   }
 
   const sql = `SELECT * FROM customers ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY company, id`;
   const rows = db.prepare(sql).all(...params);
-  res.json({ customers: rows, companies: COMPANIES });
+  res.json({ customers: rows, companies: COMPANIES, levels: CUSTOMER_LEVELS });
+});
+
+// อัปเดตระดับลูกค้า (Admin) — body: { level: 'L2 Growth' } หรือ '' เพื่อล้างค่า
+router.put('/:id/level', requireAuth, requireRole('Admin'), (req, res) => {
+  const row = db.prepare('SELECT id, code, name, level FROM customers WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'ไม่พบลูกค้า' });
+  const level = req.body.level === null || req.body.level === undefined ? '' : String(req.body.level).trim();
+  if (level && !CUSTOMER_LEVELS.includes(level)) return res.status(400).json({ error: 'ระดับลูกค้าไม่ถูกต้อง' });
+  db.prepare(`UPDATE customers SET level = ?, level_updated_at = datetime('now') WHERE id = ?`).run(level || null, row.id);
+  logAction(req.session.userId, 'update_customer_level', `เปลี่ยนระดับลูกค้า ${row.code} - ${row.name}: ${row.level || '(ไม่ระบุ)'} → ${level || '(ไม่ระบุ)'}`);
+  res.json({ ok: true, level: level || null });
 });
 
 router.get('/:id', requireAuth, (req, res) => {
@@ -154,8 +173,8 @@ router.put('/:id', requireAuth, requireRole('Admin'), (req, res) => {
 });
 
 router.delete('/:id', requireAuth, requireRole('Admin'), (req, res) => {
-  const used = db.prepare('SELECT COUNT(*) c FROM visit_requests WHERE customer_id = ?').get(req.params.id).c;
-  if (used > 0) return res.status(400).json({ error: 'ไม่สามารถลบลูกค้านี้ได้ เนื่องจากมีคำขอ Visit ที่เกี่ยวข้องอยู่' });
+  const used = countCustomerUsage(req.params.id);
+  if (used > 0) return res.status(400).json({ error: 'ไม่สามารถลบลูกค้านี้ได้ เนื่องจากมีคำขอ Visit หรือ OT ที่เกี่ยวข้องอยู่' });
   db.prepare('DELETE FROM customers WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
@@ -188,7 +207,6 @@ router.post('/import', requireAuth, requireRole('Admin'), (req, res) => {
       is_archived = 0,
       archived_at = NULL
   `);
-  const checkUsage = db.prepare('SELECT COUNT(*) c FROM visit_requests WHERE customer_id = ?');
   const archiveStmt = db.prepare("UPDATE customers SET is_archived = 1, archived_at = datetime('now') WHERE id = ?");
   const deleteStmt = db.prepare('DELETE FROM customers WHERE id = ?');
   const getByCompany = db.prepare('SELECT id, code FROM customers WHERE company = ? AND is_pending = 0');
@@ -221,7 +239,7 @@ router.post('/import', requireAuth, requireRole('Admin'), (req, res) => {
     const existingRows = getByCompany.all(company);
     for (const row of existingRows) {
       if (seenCodes.has(row.code)) continue;
-      const used = checkUsage.get(row.id).c;
+      const used = countCustomerUsage(row.id);
       if (used > 0) { archiveStmt.run(row.id); archived++; }
       else { deleteStmt.run(row.id); deleted++; }
     }
@@ -249,14 +267,13 @@ router.delete('/bulk/all', requireAuth, requireRole('Admin'), (req, res) => {
     ? db.prepare('SELECT id FROM customers WHERE company = ? AND is_pending = 0').all(company)
     : db.prepare('SELECT id FROM customers WHERE is_pending = 0').all();
 
-  const checkUsage = db.prepare('SELECT COUNT(*) c FROM visit_requests WHERE customer_id = ?');
   const archiveStmt = db.prepare("UPDATE customers SET is_archived = 1, archived_at = datetime('now') WHERE id = ?");
   const deleteStmt = db.prepare('DELETE FROM customers WHERE id = ?');
 
   let deleted = 0, archived = 0;
   const run = db.transaction(() => {
     for (const row of rows) {
-      const used = checkUsage.get(row.id).c;
+      const used = countCustomerUsage(row.id);
       if (used > 0) { archiveStmt.run(row.id); archived++; }
       else { deleteStmt.run(row.id); deleted++; }
     }

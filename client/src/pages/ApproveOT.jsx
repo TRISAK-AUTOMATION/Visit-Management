@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+import { useAuth } from '../lib/AuthContext';
 
 const TABS = [{ f: 'pending', label: 'รออนุมัติ' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }, { f: 'revision', label: 'ส่งกลับแก้ไข' }];
 
@@ -39,6 +40,7 @@ function WorkflowTimeline({ workflow }) {
 
 export default function ApproveOT() {
   const toast = useToast();
+  const { refreshBadges } = useAuth();
   const [rows, setRows] = useState([]);
   const [tab, setTab] = useState(() => { const s = new URLSearchParams(window.location.search).get('status'); return ['pending','approved','rejected','revision'].includes(s) ? s : 'pending'; });
   const [detail, setDetail] = useState(null);
@@ -46,12 +48,24 @@ export default function ApproveOT() {
   const load = async (status = tab) => {
     const { requests } = await api.get(`/api/ot-requests?scope=pending&status=${status}`);
     setRows(requests);
+    refreshBadges(); // อัปเดตตัวเลขแจ้งเตือนข้างเมนู/กระดิ่งให้ตรงกับรายการล่าสุด
   };
   useEffect(() => { load(tab); }, [tab]);
 
   const openDetail = async (id) => {
     const d = await api.get(`/api/ot-requests/${id}`);
     setDetail(d);
+  };
+
+  // Admin: ให้ OT ที่ค้างอยู่ใช้รายชื่อผู้อนุมัติล่าสุดตาม Template (เฉพาะใบที่ยังไม่มีใครตัดสินใจ)
+  const resync = async (id) => {
+    if (!window.confirm('รีเซ็ตสายอนุมัติของคำขอนี้ให้ใช้รายชื่อผู้อนุมัติล่าสุดตาม Template?\n(ทำได้เฉพาะใบที่ยังไม่มีใครตัดสินใจ และจะแจ้งเตือนผู้อนุมัติชุดใหม่)')) return;
+    try {
+      const r = await api.post(`/api/ot-requests/${id}/resync-workflow`);
+      toast(`รีเซ็ตสายอนุมัติแล้ว — รอ ${(r.waiting_for || []).join(', ') || 'ผู้อนุมัติ'}`, 'success');
+      setDetail(null);
+      load();
+    } catch (err) { toast(err.message, 'error'); }
   };
 
   const decide = async (id, action) => {
@@ -85,11 +99,17 @@ export default function ApproveOT() {
                   <td>{r.hours} ชม.</td>
                   <td>
                     <button className="btn btn-outline btn-sm" onClick={() => openDetail(r.id)}>ดู</button>{' '}
-                    {r.status === 'pending' && (
+                    {r.status === 'pending' && r.can_act && (
                       <>
                         <button className="btn btn-success btn-sm" onClick={() => decide(r.id, 'approve')}>อนุมัติ</button>{' '}
                         <button className="btn btn-outline btn-sm" onClick={() => decide(r.id, 'revision')}>ส่งกลับแก้ไข</button>{' '}
                         <button className="btn btn-danger btn-sm" onClick={() => decide(r.id, 'reject')}>ไม่อนุมัติ</button>
+                      </>
+                    )}
+                    {r.status === 'pending' && !r.can_act && (
+                      <>
+                        <span className="muted" style={{ fontSize: 12.5 }}>รอ {r.waiting_for || 'ผู้อนุมัติ'} อนุมัติ</span>{' '}
+                        {r.can_resync && <button className="btn btn-outline btn-sm" onClick={() => resync(r.id)}>รีเซ็ตสายอนุมัติ</button>}
                       </>
                     )}
                   </td>
@@ -106,7 +126,7 @@ export default function ApproveOT() {
             <div className="modal-head"><h3>คำขอ OT #{detail.request.code}</h3><button className="modal-close" onClick={() => setDetail(null)}>×</button></div>
             <div className="modal-body">
               <p><b>ผู้ขอ:</b> {detail.request.requester_name} ({detail.request.requester_department || '-'})</p>
-              <p><b>วันที่:</b> {fmtDate(detail.request.ot_date)}</p>
+              <p><b>วันที่:</b> {fmtDate(detail.request.ot_date)}{detail.request.day_type ? ` (${detail.request.day_type === 'holiday' ? 'วันหยุด' : 'วันทำงาน'})` : ''}</p>
               <p><b>เวลา:</b> {detail.request.time_from} - {detail.request.time_to} ({detail.request.hours} ชม.)</p>
               <p><b>สถานที่:</b> {detail.request.location || '-'}</p>
               <p><b>OT Type:</b> {detail.request.ot_type || '-'}</p>
@@ -118,11 +138,21 @@ export default function ApproveOT() {
               <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '14px 0' }} />
               <b>ขั้นตอนการอนุมัติ</b>
               <WorkflowTimeline workflow={detail.workflow} />
-              {detail.request.status === 'pending' && (
+              {detail.request.status === 'pending' && detail.can_act && (
                 <div className="form-actions" style={{ justifyContent: 'flex-start', marginTop: 12 }}>
                   <button className="btn btn-success" onClick={() => decide(detail.request.id, 'approve')}>อนุมัติ</button>
                   <button className="btn btn-outline" onClick={() => decide(detail.request.id, 'revision')}>ส่งกลับแก้ไข</button>
                   <button className="btn btn-danger" onClick={() => decide(detail.request.id, 'reject')}>ไม่อนุมัติ</button>
+                </div>
+              )}
+              {detail.request.status === 'pending' && !detail.can_act && (
+                <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff7e6', border: '1px solid #f5d9a0', borderRadius: 9, fontSize: 13, color: '#8a5a00' }}>
+                  คุณไม่ได้อยู่ในลำดับผู้อนุมัติของคำขอนี้ในขั้นตอนปัจจุบัน จึงอนุมัติ/ไม่อนุมัติไม่ได้
+                  {detail.can_resync && (
+                    <div style={{ marginTop: 8 }}>
+                      <button className="btn btn-outline btn-sm" onClick={() => resync(detail.request.id)}>รีเซ็ตสายอนุมัติตามรายชื่อล่าสุด</button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -111,6 +111,7 @@ export default function MyLeave() {
                   <td><span className={`badge ${r.status}`}>{STATUS_TH[r.status]}</span></td>
                   <td>
                     <button className="btn btn-outline btn-sm" onClick={() => openDetail(r.id)}>ดูรายละเอียด</button>{' '}
+                    {r.status === 'approved' && <><a className="btn btn-outline btn-sm" href={`/api/leave-requests/${r.id}/pdf`} target="_blank" rel="noreferrer">PDF</a>{' '}</>}
                     {['draft', 'pending', 'revision'].includes(r.status) && (
                       <>
                         {/* ห้ามแก้ไขตอน pending เพราะกำลังอยู่ระหว่างอนุมัติ (อาจผ่านบาง State ไปแล้ว) - แก้ได้เฉพาะ draft/revision */}
@@ -141,6 +142,7 @@ export default function MyLeave() {
               <p><b>เหตุผล:</b> {detail.request.reason || '-'}</p>
               {detail.request.attachment && <p><a href={detail.request.attachment} download>ดาวน์โหลดเอกสารแนบ</a></p>}
               <p><b>สถานะ:</b> <span className={`badge ${detail.request.status}`}>{STATUS_TH[detail.request.status]}</span></p>
+              {detail.request.status === 'approved' && <p><a className="btn btn-outline btn-sm" href={`/api/leave-requests/${detail.request.id}/pdf`} target="_blank" rel="noreferrer">เปิด/พิมพ์ใบลา PDF</a></p>}
               {detail.request.approval_note && <p><b>ความเห็นผู้อนุมัติ:</b> {detail.request.approval_note}</p>}
               {detail.request.status === 'revision' && (
                 <div className="form-actions" style={{ justifyContent: 'flex-start', marginTop: 4, marginBottom: 8 }}>

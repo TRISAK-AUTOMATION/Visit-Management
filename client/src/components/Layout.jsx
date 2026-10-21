@@ -26,8 +26,8 @@ export const ADMIN_TOOLS = [
 const VISIT_STAGES = [
   { href: '/visit-request', icon: '\uD83D\uDCDD', label: 'สร้างคำขอ' },
   { href: '/my-requests?status=draft', icon: '\u270F\uFE0F', label: 'ฉบับร่าง', badgeKey: 'vDraft', badgeTone: 'soft' },
-  { href: '/my-requests?status=pending', icon: '\u23F3', label: 'รออนุมัติ', badgeKey: 'vPending', badgeTone: 'soft' },
   { href: '/my-requests?status=revision', icon: '\uD83D\uDD04', label: 'รอแก้ไข', badgeKey: 'vRevision', badgeTone: 'warn' },
+  { href: '/my-requests?status=pending', icon: '\u23F3', label: 'รออนุมัติ', badgeKey: 'vPending', badgeTone: 'soft' },
   { href: '/my-requests?status=approved', icon: '\u2705', label: 'กำลังดำเนินการ', badgeKey: 'vApproved', badgeTone: 'soft' },
   { href: '/my-requests?status=completed', icon: '\uD83C\uDFC1', label: 'Visit เสร็จสิ้น', badgeKey: 'vCompleted', badgeTone: 'soft' },
   { href: '/my-requests?status=rejected', icon: '\u26D4', label: 'ไม่อนุมัติ', badgeKey: 'vRejected', badgeTone: 'soft' },
@@ -86,7 +86,8 @@ const MENU = {
 // เพื่อให้เห็นชัดว่าอันไหนคือ "งานที่ต้องอนุมัติ" อันไหนคือ "คำขอของฉัน"
 function buildApprovalGroup(me) {
   const items = [];
-  if (me.role === 'Approver' || me.role === 'Admin') {
+  // ผู้อนุมัติ = role Approver/Admin หรือคนที่ Admin ตั้งเป็นผู้อนุมัติใน Template (me.can_approve) แม้ role จะเป็นพนักงาน
+  if (me.role === 'Approver' || me.role === 'Admin' || me.can_approve) {
     items.push({ href: '/approve-requests', icon: '\u2705', label: 'Approve Requests', badgeKey: 'pending' });
     items.push({ href: '/approve-ot', icon: '\u2611', label: 'อนุมัติ OT', badgeKey: 'pendingOT' });
   }
@@ -170,7 +171,12 @@ export default function Layout({ title, children }) {
           <div className="side-profile-text">
             <b>{me.full_name}</b>
             <span>{me.position || ROLE_TH[me.role]}</span>
-            <em>{ROLE_TH[me.role]}{me.department ? ` · ${me.department}` : ''}</em>
+            <em>{(() => {
+              // ซ่อนแผนกที่ชื่อซ้ำกับตำแหน่ง (เช่น ตำแหน่ง "Sales" แผนก "Sales") ไม่ให้แสดงซ้ำ
+              const pos = String(me.position || '').trim().toLowerCase();
+              const depts = String(me.department || '').split(',').map(d => d.trim()).filter(d => d && d.toLowerCase() !== pos);
+              return `${ROLE_TH[me.role]}${depts.length ? ` · ${depts.join(', ')}` : ''}`;
+            })()}</em>
           </div>
           <span className="side-profile-go">{'\u203A'}</span>
         </Link>

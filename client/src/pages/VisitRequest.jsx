@@ -8,7 +8,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import TimeInput24 from '../components/TimeInput24';
 import {
-  Section, SubAccordion, Group, Field, CheckGroup, PillRadio, RadioCards, MultiPicker
+  Section, SubAccordion, Group, Field, CheckGroup, PillRadio, RadioCards, MultiPicker, DeptParticipants
 } from '../components/VisitFormKit';
 import { api, todayLocal } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
@@ -66,7 +66,7 @@ const DEFAULT_CORE_LABELS = {
   mileage_out: 'ไมล์ออก', mileage_in: 'ไมล์เข้า', actual_time_out: 'เวลาออกจริง',
   actual_time_back: 'เวลากลับจริง', ot_hours: 'จำนวนชั่วโมง OT',
   customer_tax_id: 'เลขประจำตัวผู้เสียภาษีลูกค้า (Cus. TAX ID)', tax_invoice_date: 'วันที่ออกใบกำกับภาษี (TAX ID & Date)',
-  notes: 'รายละเอียดเพิ่มเติม (Remark)'
+  notes: 'รายละเอียดเพิ่มเติม (Remark)', purpose: 'วัตถุประสงค์ / รายละเอียดงาน'
 };
 const DEFAULT_ESSENTIAL_LABELS = {
   visit_date: 'วันที่', customer_id: 'รหัสลูกค้า / บริษัท',
@@ -90,13 +90,14 @@ const CORE_SPEC = {
 const CORE_KEYS = ['job_type', 'sales_person', 'location', 'contact_person', 'contact_phone', 'product', 'participants', 'transport',
   'license_plate', 'mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back', 'ot_hours', 'customer_tax_id', 'tax_invoice_date', 'notes'];
 // ตำแหน่ง anchor ของ Custom Field (position_after) ที่ฟอร์มนี้มีที่ให้วาง — ที่เหลือไปรวมในหัวข้อ Additional Information
-const ANCHOR_KEYS = new Set(['TOP', 'visit_date', 'customer_id', 'time_from', 'time_to', 'purpose', ...CORE_KEYS]);
+const GROUP_ANCHORS = ['GRP_company', 'GRP_customer', 'GRP_contact', 'GRP_visit', 'GRP_people', 'GRP_trip']; // วางท้ายกลุ่มในฟอร์ม (เลือกได้จาก Form Builder)
+const ANCHOR_KEYS = new Set(['TOP', ...GROUP_ANCHORS, 'visit_date', 'customer_id', 'time_from', 'time_to', 'purpose', ...CORE_KEYS]);
 const ANCHOR_SECTION = { notes: 'vf-s8' };
 
 // ---------------------------------------------------------------- ตัวช่วย
 const uid = () => Math.random().toString(36).slice(2, 9);
 const safeParse = (s, fb) => { try { const v = typeof s === 'string' ? JSON.parse(s) : s; return v === null || v === undefined ? fb : v; } catch (e) { return fb; } };
-const blankContact = () => ({ id: uid(), name: '', position: '', telephone: '', mobile: '', email: '' });
+const blankContact = () => ({ id: uid(), name: '', position: '', telephone: '', ext: '', mobile: '', email: '' });
 const blankRow = () => ({
   id: uid(), next_action: '', owner_id: '', owner_name: '', contact: '', due_date: '', expected_result: '',
   // โครงสำหรับระบบแจ้งเตือน/Reminder ในอนาคต (ยังไม่มีการทำงาน)
@@ -133,7 +134,7 @@ const mergeDuring = (raw) => {
     potential: { ...base.potential, ...(r.potential || {}) }
   };
 };
-const anyContactData = (c) => !!(c.name.trim() || c.position.trim() || c.telephone.trim() || c.mobile.trim() || c.email.trim());
+const anyContactData = (c) => !!(c.name.trim() || c.position.trim() || c.telephone.trim() || (c.ext || '').trim() || c.mobile.trim() || c.email.trim());
 const duringHasData = (d) => !!(d.brands.length || d.brand_notes.trim() || d.recurring.value || d.problems.items.length || d.problems.detail.trim()
   || d.projects.items.length || d.projects.detail.trim() || d.projects.timing || d.potential.items.length
   || d.potential.product_application.trim() || d.potential.current_brand.trim() || d.potential.target_brand.trim());
@@ -186,7 +187,6 @@ export default function VisitRequest() {
   const [brands, setBrands] = useState([]);
   const [directory, setDirectory] = useState(null);
   const [engineerUsers, setEngineerUsers] = useState([]);
-  const [includeOtherDepts, setIncludeOtherDepts] = useState(false);
 
   useEffect(() => {
     api.get('/api/form-fields').then(({ fields }) => setCustomFieldDefs(fields)).catch(() => {});
@@ -308,7 +308,12 @@ export default function VisitRequest() {
     setSearchingCust(true);
     const t = setTimeout(() => {
       api.get(`/api/customers?q=${encodeURIComponent(q)}`)
-        .then(r => setCustomerResults(r.customers.slice(0, 20)))
+        .then(r => {
+          setCustomerResults(r.customers.slice(0, 20));
+          // พิมพ์รหัสลูกค้าครบตรงกับลูกค้าเพียงรายเดียว -> เลือกให้อัตโนมัติ (ไม่ต้องกดจากรายการ) เพื่อให้ Level/SSO/ชื่อขึ้นเลย
+          const exact = r.customers.filter(c => String(c.code || '').toLowerCase() === q.toLowerCase());
+          if (exact.length === 1 && r.customers.length === 1 && form.customer_type !== 'new') pickCustomer(exact[0]);
+        })
         .catch(() => setCustomerResults([]))
         .finally(() => setSearchingCust(false));
     }, 250);
@@ -322,16 +327,31 @@ export default function VisitRequest() {
     return () => document.removeEventListener('mousedown', onDoc);
   }, [customerOpen]);
 
+  // ลูกค้าที่โหลดจากฉบับร่าง/คำขอเดิมอาจไม่มี level ติดมา -> ดึงจากรายชื่อลูกค้าล่าสุด (null = ไม่มีระดับ, undefined = ยังไม่ได้ดึง)
+  useEffect(() => {
+    if (!selectedCustomer || selectedCustomer.level !== undefined || !selectedCustomer.code) return;
+    const cid = selectedCustomer.id;
+    api.get(`/api/customers?q=${encodeURIComponent(selectedCustomer.code)}`)
+      .then(({ customers }) => {
+        const m = customers.find(c => c.id === cid);
+        setSelectedCustomer(s => (s && s.id === cid ? { ...s, level: m ? (m.level || null) : null } : s));
+      })
+      .catch(() => setSelectedCustomer(s => (s && s.id === cid ? { ...s, level: null } : s)));
+  }, [selectedCustomer]);
+
   const pickCustomer = (c) => {
     setSelectedCustomer(c);
     setCustomerQuery(c.code);
     setCustomerOpen(false);
+    const prevAddr = selectedCustomer && selectedCustomer.address ? String(selectedCustomer.address).trim() : '';
     setForm(f => ({
       ...f,
       customer_id: c.id,
       company: c.company || f.company,
       sales_person: c.contact_person || '',
-      customer_tax_id: c.tax_id || f.customer_tax_id
+      customer_tax_id: c.tax_id || f.customer_tax_id,
+      // เติมสถานที่จากที่อยู่ของลูกค้าให้อัตโนมัติ (ไม่ทับสิ่งที่ผู้ใช้พิมพ์เอง: เติมเฉพาะเมื่อว่าง หรือยังเป็นที่อยู่ของลูกค้ารายก่อนหน้า)
+      location: (c.address && (!String(f.location || '').trim() || String(f.location).trim() === prevAddr)) ? String(c.address).trim() : f.location
     }));
   };
   const clearCustomer = () => {
@@ -379,10 +399,9 @@ export default function VisitRequest() {
 
   // ผู้ร่วมงาน
   const participantOptions = useMemo(() => {
-    if (!includeOtherDepts) return engineerUsers.map(u => ({ value: u.full_name, label: u.full_name, sub: 'Engineer' }));
     return (directory || []).map(u => ({ value: u.full_name, label: u.full_name, sub: u.department || '' }))
       .sort((a, b) => (a.sub === 'Engineer' ? 0 : 1) - (b.sub === 'Engineer' ? 0 : 1) || a.label.localeCompare(b.label));
-  }, [includeOtherDepts, engineerUsers, directory]);
+  }, [directory]);
   const brandOptions = useMemo(() => brands.map(b => ({ value: b.name, label: b.name })), [brands]);
   const ownerOptions = useMemo(() => (directory || []), [directory]);
 
@@ -412,8 +431,11 @@ export default function VisitRequest() {
     add('visit_date', 'Visit Date', 'vf-s1', form.visit_date);
     add('time_from', 'Time Out', 'vf-s1', form.time_from);
     add('time_to', 'Time In', 'vf-s1', form.time_to);
-    add('purpose', 'Purpose', 'vf-s1', form.purpose.trim() || objective.items.length,
-      'กรุณากรอกวัตถุประสงค์ หรือเลือกอย่างน้อย 1 ข้อในหัวข้อ Visit Objective');
+    const ps = cf('purpose');
+    if (ps.is_visible && ps.is_required) {
+      add('purpose', 'Purpose', 'vf-s1', form.purpose.trim() || objective.items.length,
+        `กรุณากรอก ${ps.label} หรือเลือกอย่างน้อย 1 ข้อในหัวข้อ Visit Objective`);
+    }
     if (form.customer_type === 'new') {
       add('customer', 'Company Name', 'vf-s1', form.customer_id || newCust.name.trim(), 'กรุณากรอกชื่อบริษัท (Company Name)');
     } else {
@@ -422,9 +444,6 @@ export default function VisitRequest() {
     contacts.forEach((c, i) => {
       if (anyContactData(c)) add(`contact_${c.id}`, `Contact #${i + 1} Name`, 'vf-s1', c.name.trim(), `กรุณากรอกชื่อผู้ติดต่อ (Contact #${i + 1})`);
     });
-    if (form.meeting_start && form.meeting_end && form.meeting_end < form.meeting_start) {
-      add('meeting_end', 'Meeting End Time', 'vf-s1', false, 'เวลาสิ้นสุดการประชุมต้องไม่ก่อนเวลาเริ่ม');
-    }
     // ฟิลด์เดิมที่ Admin ตั้งเป็น "บังคับ" (และยังแสดงอยู่)
     const first = contacts.find(c => c.name.trim());
     const coreVal = {
@@ -435,7 +454,7 @@ export default function VisitRequest() {
     };
     Object.values(coreSettings).forEach(s => {
       if (!s.is_visible || !s.is_required) return;
-      if (s.field_key === 'customer_id') return;
+      if (s.field_key === 'customer_id' || s.field_key === 'purpose') return;
       const v = coreVal[s.field_key];
       add(`core_${s.field_key}`, s.label, ANCHOR_SECTION[s.field_key] || 'vf-s1', v !== undefined && v !== null && String(v).trim());
     });
@@ -605,7 +624,7 @@ export default function VisitRequest() {
   const buildPayload = () => {
     const first = contacts.find(c => c.name.trim());
     const cleanContacts = contacts.filter(anyContactData).map(c => ({
-      id: c.id, name: c.name.trim(), position: c.position.trim(), telephone: c.telephone.trim(), mobile: c.mobile.trim(), email: c.email.trim()
+      id: c.id, name: c.name.trim(), position: c.position.trim(), telephone: c.telephone.trim(), ext: (c.ext || '').trim(), mobile: c.mobile.trim(), email: c.email.trim()
     }));
     const rows = plan.rows.filter(r => r.next_action.trim() || r.owner_id || r.contact || r.due_date || r.expected_result.trim());
     // Purpose (ฟิลด์เดิมที่ระบบบังคับ): ถ้าเว้นว่าง ใช้ข้อที่เลือกใน Visit Objective แทน
@@ -692,9 +711,11 @@ export default function VisitRequest() {
       }
       const payload = { ...buildPayload(), customer_id: customerId };
       if (editingRequest) {
-        await api.put(`/api/visit-requests/${editingRequest.id}`, payload);
+        const putRes = await api.put(`/api/visit-requests/${editingRequest.id}`, payload);
         if (isPostVisitUpdate) {
-          toast(`บันทึกข้อมูลหลังปฏิบัติงานสำเร็จ (${editingRequest.code})`, 'success');
+          toast(putRes && putRes.reapproval
+            ? `บันทึกแล้ว และส่งให้ผู้อนุมัติอนุมัติอีกครั้ง (${editingRequest.code}) — ${putRes.changes.length} รายการที่แก้ไข`
+            : `บันทึกข้อมูลหลังปฏิบัติงานสำเร็จ (${editingRequest.code}) — ไม่มีการเปลี่ยนแปลง จึงไม่ต้องอนุมัติซ้ำ`, 'success');
         } else {
           await api.post(`/api/visit-requests/${editingRequest.id}/submit`);
           toast(`ส่งคำขอสำเร็จ (${editingRequest.code})`, 'success');
@@ -818,7 +839,7 @@ export default function VisitRequest() {
           <div className="vf-banner warn"><b>ผู้อนุมัติขอให้แก้ไข:</b> {editingRequest.approval_note}</div>
         )}
         {isPostVisitUpdate && (
-          <div className="vf-banner ok">คำขอนี้อนุมัติแล้ว — แก้ไขข้อมูลให้ตรงกับที่ปฏิบัติงานจริงได้ทุกช่อง แล้วกด "Save Changes" ได้เลย ไม่ต้องขออนุมัติใหม่</div>
+          <div className="vf-banner ok">คำขอนี้อนุมัติแล้ว — แก้ไขข้อมูลได้ทุกช่อง เมื่อกด "Save Changes" ระบบจะส่งกลับให้ผู้อนุมัติอนุมัติอีกครั้ง พร้อมแจ้งรายการที่แก้ไข (ถ้าไม่ได้เปลี่ยนอะไร จะไม่ต้องอนุมัติซ้ำ)</div>
         )}
         {restoreOffer && (
           <div className="vf-banner info">
@@ -862,63 +883,6 @@ export default function VisitRequest() {
             {/* ===== SECTION 1 ===== */}
             <Section id="vf-s1" no={1} title="Request Detail" th="รายละเอียดการเข้าพบลูกค้า" open={!!open['vf-s1']} onToggle={() => toggleSec('vf-s1')}
               status={sIn('vf-s1').state} statusText={sIn('vf-s1').text}>
-              <Group title="Visit Information" th="ข้อมูลการเข้าพบ">
-                <div className="vf-grid">
-                  {anchored('TOP')}
-                  <Field fid="request_date" label="Request Date" th="วันที่ทำคำขอ" required error={err('request_date')} ok={isOk('request_date') && !!form.request_date}>
-                    <input type="date" className="vf-input" value={form.request_date} onChange={setF('request_date')} />
-                  </Field>
-                  <Field fid="visit_date" label="Visit Date" th={el('visit_date')} required error={err('visit_date')} ok={isOk('visit_date') && !!form.visit_date}>
-                    <input type="date" className="vf-input" value={form.visit_date} onChange={setF('visit_date')} />
-                  </Field>
-                  {anchored('visit_date')}
-                  <Field fid="time_from" label="Time Out" th={el('time_from')} required error={err('time_from')} ok={isOk('time_from') && !!form.time_from}>
-                    <TimeInput24 value={form.time_from} onChange={setF('time_from')} />
-                  </Field>
-                  {anchored('time_from')}
-                  <Field fid="time_to" label="Time In" th={el('time_to')} required error={err('time_to')} ok={isOk('time_to') && !!form.time_to}>
-                    <TimeInput24 value={form.time_to} onChange={setF('time_to')} />
-                  </Field>
-                  {anchored('time_to')}
-                  {orderedKeys(['job_type', 'transport', 'license_plate']).map(renderCore)}
-                  <Field fid="purpose" label="Purpose / Job Detail" th={el('purpose')} required full error={err('purpose')} ok={isOk('purpose') && !!form.purpose.trim()}
-                    hint={!form.purpose.trim() ? 'ถ้าเว้นว่าง ระบบจะใช้ข้อที่เลือกใน Visit Objective เป็นวัตถุประสงค์ให้อัตโนมัติ' : undefined}>
-                    <input type="text" className="vf-input" value={form.purpose} onChange={setF('purpose')} placeholder="e.g. Visit customer to present products and services" />
-                  </Field>
-                  {anchored('purpose')}
-                  {orderedKeys(['location', 'product']).map(renderCore)}
-                </div>
-              </Group>
-
-              <Group title="Accompanied Employees" th="ผู้ร่วมงาน">
-                {cf('participants').is_visible && (
-                  <Field fid="core_participants" label="Employees" th={cf('participants').label} required={!!cf('participants').is_required} error={err('core_participants')} ok={cf('participants').is_required && isOk('core_participants')}>
-                    <MultiPicker
-                      options={participantOptions} value={participants} onChange={setParticipants} allowCustom
-                      loading={includeOtherDepts && directory === null}
-                      placeholder="Search employee or type a name..." emptyText="ไม่พบพนักงาน"
-                      customLabel={(t) => `+ เพิ่ม "${t}" เป็นผู้ร่วมงาน (พิมพ์เอง)`}
-                    />
-                    <label className="vf-inline-check">
-                      <input type="checkbox" checked={includeOtherDepts} onChange={(e) => setIncludeOtherDepts(e.target.checked)} />
-                      รวมพนักงานแผนกอื่นด้วย (Include other departments)
-                    </label>
-                  </Field>
-                )}
-                {anchored('participants')}
-              </Group>
-
-              <Group title="Trip & Post-visit Details" th="ข้อมูลการเดินทางและหลังปฏิบัติงาน"
-                tools={<button type="button" className="vf-link" onClick={() => setTripOpen(v => !v)}>{tripOpen ? 'Hide' : 'Show'}</button>}>
-                {(tripOpen || ['mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back', 'ot_hours'].some(k => form[k] || err(`core_${k}`))) ? (
-                  <div className="vf-grid">
-                    {orderedKeys(['mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back', 'ot_hours']).map(renderCore)}
-                  </div>
-                ) : (
-                  <div className="vf-hint" style={{ marginTop: 0 }}>Mileage, actual time out/back and OT hours — กรอกเมื่อมีข้อมูล (มักบันทึกหลังกลับจากการเข้าพบ)</div>
-                )}
-              </Group>
-
               <Group title="Company Information" th="ข้อมูลบริษัท">
                 <div className="vf-grid">
                   <Field label="Company" th="บริษัทในเครือที่รับผิดชอบ">
@@ -928,6 +892,7 @@ export default function VisitRequest() {
                     </select>
                   </Field>
                 </div>
+                {anchored('GRP_company').length > 0 && <div className="vf-grid" style={{ marginTop: 16 }}>{anchored('GRP_company')}</div>}
               </Group>
 
               <Group title="Customer Information" th="ข้อมูลลูกค้า">
@@ -978,6 +943,16 @@ export default function VisitRequest() {
                       <Field label="SSO" th="เติมอัตโนมัติ">
                         <input type="text" className="vf-input ro" readOnly value={sel ? (sel.sso || '') : ''} placeholder="Auto-filled" tabIndex={-1} />
                       </Field>
+                      <Field label="Customer Level" th="ระดับลูกค้าปัจจุบัน (เติมอัตโนมัติ)">
+                        {!sel ? <input type="text" className="vf-input ro" readOnly value="" placeholder="Auto-filled from Customer Code" tabIndex={-1} />
+                          : sel.level === undefined ? <input type="text" className="vf-input ro" readOnly value="กำลังโหลด..." tabIndex={-1} />
+                          : (() => {
+                            const lv = CUSTOMER_LEVELS.find(l => l.value === sel.level);
+                            return lv
+                              ? <span className="vf-level-chip" style={{ background: lv.tint, color: lv.color, borderColor: lv.color }}>{lv.label}<small style={{ fontWeight: 400, color: 'var(--text-500)' }}>{lv.desc}</small></span>
+                              : <input type="text" className="vf-input ro" readOnly value="ยังไม่ได้กำหนดระดับ" tabIndex={-1} />;
+                          })()}
+                      </Field>
                       {cf('sales_person').is_visible && (
                         <Field fid="core_sales_person" label="Sales Name" th={cf('sales_person').label} required={!!cf('sales_person').is_required} error={err('core_sales_person')}>
                           <input type="text" className={`vf-input ${sel && sel.contact_person ? 'ro' : ''}`} readOnly={!!(sel && sel.contact_person)}
@@ -1024,6 +999,7 @@ export default function VisitRequest() {
                 <div className="vf-grid" style={{ marginTop: 16 }}>
                   {orderedKeys(['customer_tax_id', 'tax_invoice_date']).map(renderCore)}
                 </div>
+                {anchored('GRP_customer').length > 0 && <div className="vf-grid" style={{ marginTop: 16 }}>{anchored('GRP_customer')}</div>}
               </Group>
 
               <Group title="Contact Information" th="ข้อมูลผู้ติดต่อ"
@@ -1045,8 +1021,13 @@ export default function VisitRequest() {
                         <Field label="Position" th="ตำแหน่ง">
                           <input type="text" className="vf-input" value={c.position} onChange={(e) => updContact(c.id, 'position', e.target.value)} />
                         </Field>
-                        <Field label="Telephone" th="เบอร์โทรศัพท์">
-                          <input type="tel" className="vf-input" value={c.telephone} onChange={(e) => updContact(c.id, 'telephone', e.target.value)} placeholder="0x-xxx-xxxx" />
+                        <Field label="Telephone / Ext." th="เบอร์โทรศัพท์ - เบอร์ต่อ">
+                          <div className="vf-tel-row">
+                            <input type="tel" className="vf-input" value={c.telephone} onChange={(e) => updContact(c.id, 'telephone', e.target.value)} placeholder="0x-xxx-xxxx" aria-label="Telephone" />
+                            <span className="vf-tel-dash" aria-hidden="true">-</span>
+                            <input type="text" inputMode="numeric" className="vf-input vf-tel-ext" value={c.ext || ''} maxLength={10}
+                              onChange={(e) => updContact(c.id, 'ext', e.target.value.replace(/[^0-9#*,-]/g, ''))} placeholder="ต่อ" aria-label="Extension" />
+                          </div>
                         </Field>
                         <Field label="Mobile" th="เบอร์มือถือ">
                           <input type="tel" className="vf-input" value={c.mobile} onChange={(e) => updContact(c.id, 'mobile', e.target.value)} placeholder="08x-xxx-xxxx" />
@@ -1062,18 +1043,68 @@ export default function VisitRequest() {
                 {(anchored('contact_person').length > 0 || anchored('contact_phone').length > 0) && (
                   <div className="vf-grid" style={{ marginTop: 16 }}>{anchored('contact_person')}{anchored('contact_phone')}</div>
                 )}
+                {anchored('GRP_contact').length > 0 && <div className="vf-grid" style={{ marginTop: 16 }}>{anchored('GRP_contact')}</div>}
               </Group>
 
-              <Group title="Meeting Information" th="ข้อมูลการประชุม">
+              <Group title="Visit Information" th="ข้อมูลการเข้าพบ">
                 <div className="vf-grid">
-                  <Field label="Meeting Start Time" th="เวลาเริ่มประชุม">
-                    <TimeInput24 value={form.meeting_start} onChange={setF('meeting_start')} />
+                  {anchored('TOP')}
+                  <Field fid="request_date" label="Request Date" th="วันที่ทำคำขอ" required error={err('request_date')} ok={isOk('request_date') && !!form.request_date}>
+                    <input type="date" className="vf-input" value={form.request_date} onChange={setF('request_date')} />
                   </Field>
-                  <Field fid="meeting_end" label="Meeting End Time" th="เวลาสิ้นสุดการประชุม" error={err('meeting_end')}>
-                    <TimeInput24 value={form.meeting_end} onChange={setF('meeting_end')} />
+                  <Field fid="visit_date" label="Visit Date" th={el('visit_date')} required error={err('visit_date')} ok={isOk('visit_date') && !!form.visit_date}>
+                    <input type="date" className="vf-input" value={form.visit_date} onChange={setF('visit_date')} />
                   </Field>
+                  {anchored('visit_date')}
+                  <Field fid="time_from" label="Time Out" th={el('time_from')} required error={err('time_from')} ok={isOk('time_from') && !!form.time_from}>
+                    <TimeInput24 value={form.time_from} onChange={setF('time_from')} />
+                  </Field>
+                  {anchored('time_from')}
+                  <Field fid="time_to" label="Time In" th={el('time_to')} required error={err('time_to')} ok={isOk('time_to') && !!form.time_to}>
+                    <TimeInput24 value={form.time_to} onChange={setF('time_to')} />
+                  </Field>
+                  {anchored('time_to')}
+                  {orderedKeys(['job_type', 'transport', 'license_plate']).map(renderCore)}
+                  {cf('purpose').is_visible && (
+                    <Field fid="purpose" label="Purpose / Job Detail" th={cf('purpose').label} required={!!cf('purpose').is_required} full error={err('purpose')} ok={cf('purpose').is_required && isOk('purpose') && !!form.purpose.trim()}
+                      hint={!form.purpose.trim() ? 'ถ้าเว้นว่าง ระบบจะใช้ข้อที่เลือกใน Visit Objective เป็นวัตถุประสงค์ให้อัตโนมัติ' : undefined}>
+                      <input type="text" className="vf-input" value={form.purpose} onChange={setF('purpose')} placeholder="e.g. Visit customer to present products and services" />
+                    </Field>
+                  )}
+                  {anchored('purpose')}
+                  {orderedKeys(['location', 'product']).map(renderCore)}
                 </div>
+                {anchored('GRP_visit').length > 0 && <div className="vf-grid" style={{ marginTop: 16 }}>{anchored('GRP_visit')}</div>}
               </Group>
+
+              <Group title="Accompanied Employees" th="ผู้ร่วมงาน">
+                {cf('participants').is_visible && (
+                  <Field fid="core_participants" label="Employees" th={cf('participants').label} required={!!cf('participants').is_required} error={err('core_participants')} ok={cf('participants').is_required && isOk('core_participants')}>
+                    <DeptParticipants directory={directory} value={participants} onChange={setParticipants} />
+                    <MultiPicker
+                      options={participantOptions} value={participants} onChange={setParticipants} allowCustom
+                      loading={directory === null}
+                      placeholder="Search employee or type a name..." emptyText="ไม่พบพนักงาน"
+                      customLabel={(t) => `+ เพิ่ม "${t}" เป็นผู้ร่วมงาน (พิมพ์เอง)`}
+                    />
+                  </Field>
+                )}
+                {anchored('participants')}
+                {anchored('GRP_people').length > 0 && <div className="vf-grid" style={{ marginTop: 16 }}>{anchored('GRP_people')}</div>}
+              </Group>
+
+              <Group title="Trip & Post-visit Details" th="ข้อมูลการเดินทางและหลังปฏิบัติงาน"
+                tools={<button type="button" className="vf-link" onClick={() => setTripOpen(v => !v)}>{tripOpen ? 'Hide' : 'Show'}</button>}>
+                {(tripOpen || ['mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back', 'ot_hours'].some(k => form[k] || err(`core_${k}`))) ? (
+                  <div className="vf-grid">
+                    {orderedKeys(['mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back', 'ot_hours']).map(renderCore)}
+                  </div>
+                ) : (
+                  <div className="vf-hint" style={{ marginTop: 0 }}>Mileage, actual time out/back and OT hours — กรอกเมื่อมีข้อมูล (มักบันทึกหลังกลับจากการเข้าพบ)</div>
+                )}
+                {anchored('GRP_trip').length > 0 && <div className="vf-grid" style={{ marginTop: 16 }}>{anchored('GRP_trip')}</div>}
+              </Group>
+
             </Section>
 
             {/* ===== SECTION 2 ===== */}
@@ -1260,6 +1291,11 @@ export default function VisitRequest() {
             {/* ===== SECTION 6 ===== */}
             <Section id="vf-s6" no={6} title="Customer Level" th="ระดับลูกค้า" open={!!open['vf-s6']} onToggle={() => toggleSec('vf-s6')}
               status={sIn('vf-s6').state} statusText={sIn('vf-s6').text} summary={sIn('vf-s6').summary}>
+              <div className="vf-hint" style={{ marginTop: 0, marginBottom: 12 }}>
+                {selectedCustomer
+                  ? <>ระดับปัจจุบันของลูกค้า: <b>{selectedCustomer.level || 'ยังไม่ระบุ'}</b> — ถ้าเลือกระดับอื่นที่ไม่ใช่ "No Change" ระบบจะอัปเดตระดับของลูกค้ารายนี้ให้เมื่อคำขอนี้ได้รับการอนุมัติ</>
+                  : 'เลือกลูกค้าก่อน เพื่อดูระดับปัจจุบัน — ถ้าเลือกระดับอื่นที่ไม่ใช่ "No Change" ระบบจะอัปเดตระดับของลูกค้าเมื่อคำขอได้รับการอนุมัติ'}
+              </div>
               <RadioCards name="cust_level" options={CUSTOMER_LEVELS} value={level.level} onChange={(v) => setLevel(l => ({ ...l, level: v }))} />
               <div style={{ height: 16 }} />
               <Field label="Reason for Change / Review" th="เหตุผลในการเปลี่ยน / ทบทวนระดับลูกค้า">

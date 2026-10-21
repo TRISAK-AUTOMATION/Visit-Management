@@ -22,7 +22,7 @@ export default function Dashboard() {
 
   const showVisit = canAccessVisit(me);
   const kinds = showVisit ? ['visit', 'leave', 'ot'] : ['leave', 'ot'];
-  const isEmployee = me.role === 'Employee';
+  const isEmployee = me.role === 'Employee' && !me.can_approve; // พนักงานที่ถูกตั้งเป็นผู้อนุมัติใน Template นับเป็นฝั่งผู้อนุมัติ
 
   const stats = useMemo(() => {
     if (!data) return ZERO;
@@ -45,7 +45,7 @@ export default function Dashboard() {
     const kind = tab !== 'all' ? tab : (kinds.find(k => (status ? byKind[k][status] : byKind[k].total) > 0) || kinds[0]);
     // ผู้มีสิทธิ์อนุมัติเห็นของทุกคน -> พาไปหน้าอนุมัติ (มีแท็บ รออนุมัติ/อนุมัติแล้ว/ไม่อนุมัติ) ให้ตรงกับตัวเลข
     // ผู้ใช้ทั่วไปเห็นเฉพาะของตัวเอง -> พาไปหน้า "ของฉัน" พร้อมกรองสถานะ
-    const isApprover = !isEmployee || (kind === 'leave' && me.can_approve_leave);
+    const isApprover = !isEmployee;
     if (isApprover) return `${APPROVE_PATH[kind]}?status=${status && status !== 'total' ? status : 'pending'}`;
     // Visit: การ์ด "อนุมัติแล้ว" นับรวมที่เสร็จสิ้นแล้วด้วย จึงใช้ approved_all (หน้า My Requests จะแสดงทั้งกำลังดำเนินการ + เสร็จสิ้น)
     if (kind === 'visit' && status === 'approved') return `${MY_PATH.visit}?status=approved_all`;
@@ -62,7 +62,7 @@ export default function Dashboard() {
     { key: 'waiting', label: 'รอคุณอนุมัติ', cls: 'orange', to: APPROVE_PATH },
     { key: 'revision', label: 'ถูกส่งกลับให้แก้ไข', cls: 'red', to: MY_PATH },
     { key: 'draft', label: 'แบบร่างที่ยังไม่ได้ส่ง', cls: '', to: MY_PATH }
-  ].map(r => ({ ...r, items: kinds.filter(k => (todo[r.key]?.[k] || 0) > 0 && (r.key !== 'waiting' || k !== 'leave' || me.can_approve_leave)) }))
+  ].map(r => ({ ...r, items: kinds.filter(k => (todo[r.key]?.[k] || 0) > 0 && (r.key !== 'waiting' || !isEmployee)) }))
     .filter(r => r.items.length) : [];
 
   return (

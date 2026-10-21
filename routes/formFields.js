@@ -13,9 +13,13 @@ const KEY_RE = /^[a-z][a-z0-9_]*$/;
 // field ที่จำเป็นต่อระบบ (ไม่อยู่ใน core_field_settings เพราะซ่อน/ลบไม่ได้) แต่ยังใช้เป็นจุดอ้างอิงตำแหน่งได้
 const ESSENTIAL_FIELD_KEYS = ['visit_date', 'customer_id', 'time_from', 'time_to', 'purpose'];
 
+// ตำแหน่ง "ท้ายกลุ่ม" ในฟอร์ม Visit (ตรงกับ GROUP_ANCHORS ใน VisitRequest.jsx)
+const GROUP_ANCHORS = ['GRP_company', 'GRP_customer', 'GRP_contact', 'GRP_visit', 'GRP_people', 'GRP_meeting', 'GRP_trip'];
+
 // ตรวจสอบว่า position_after ที่ส่งมาอ้างอิงถึง field ที่มีอยู่จริงในระบบหรือไม่ (core หรือ custom ก็ได้)
 function isValidPosition(value) {
   if (!value || value === 'TOP') return true;
+  if (GROUP_ANCHORS.includes(value)) return true;
   if (ESSENTIAL_FIELD_KEYS.includes(value)) return true;
   const core = db.prepare('SELECT 1 FROM core_field_settings WHERE field_key = ?').get(value);
   if (core) return true;

@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db/database');
 const { requireAuth, requireRole } = require('./middleware');
 const { logAction } = require('../utils/systemLog');
+const approvalEngine = require('../utils/approvalEngine');
 
 const router = express.Router();
 const MODULES = ['leave', 'ot', 'visit']; // V1 รองรับแค่ Leave, ตอนนี้ขยายรองรับ OT และ Visit ด้วยแล้ว
@@ -111,7 +112,30 @@ router.put('/:id/states', (req, res) => {
   });
   tx();
   logAction(req.session.userId, 'update_approval_template_states', `แก้ไขขั้นตอนอนุมัติของ Template "${tpl.name}"`);
-  res.json({ ok: true });
+
+  // คำขอที่ยังรออนุมัติและยังไม่มีใครตัดสินใจ ให้ใช้รายชื่อผู้อนุมัติล่าสุดทันที (เช่น เพิ่มผู้อนุมัติหลังมีคนส่งคำขอไปแล้ว)
+  let synced = [];
+  try {
+    synced = approvalEngine.autoResyncForTemplate(Number(req.params.id));
+    const HIST = {
+      visit: `INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, ?, 'web')`,
+      leave: `INSERT INTO leave_history (leave_request_id, action_by, action) VALUES (?, ?, ?)`,
+      ot: `INSERT INTO ot_history (ot_request_id, action_by, action) VALUES (?, ?, ?)`
+    };
+    const routes = { visit: '../routes/visitRequests', leave: '../routes/leave', ot: '../routes/ot' };
+    for (const s of synced) {
+      db.prepare(HIST[s.module]).run(s.requestId, req.session.userId, 'อัปเดตสายอนุมัติอัตโนมัติ (Template ถูกแก้ไข)');
+      try {
+        const requester = db.prepare('SELECT full_name, department FROM users WHERE id = ?').get(s.requesterId);
+        const notify = require(routes[s.module]).notifySubmitted;
+        if (typeof notify === 'function') {
+          if (s.module === 'visit') notify(s.requestId, requester, true); else notify(s.requestId, true);
+        }
+      } catch (e) { console.error('auto-resync notify error:', e.message); }
+    }
+    if (synced.length) logAction(req.session.userId, 'auto_resync_workflows', `อัปเดตสายอนุมัติอัตโนมัติ ${synced.length} คำขอ จาก Template "${tpl.name}"`);
+  } catch (e) { console.error('auto-resync error:', e.message); }
+  res.json({ ok: true, resynced: synced.length });
 });
 
 module.exports = router;

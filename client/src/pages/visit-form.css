@@ -263,3 +263,21 @@
   .vf-fbtn.cancel { flex: 0 0 auto !important; }
 }
 @media print { .vf-nav, .vf-footer { display: none !important; } .vf-sec-body, .vf-sub-body { display: block !important; } }
+
+/* ผู้ร่วมงาน: ติ๊กแผนก */
+.vf-dept-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.vf-dept { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; font-size: 12.5px; cursor: pointer; background: #fff; user-select: none; }
+.vf-dept input { width: 15px; height: 15px; margin: 0; accent-color: var(--blue-600); }
+.vf-dept.on { border-color: var(--blue-600); background: var(--blue-50, #eef3ff); }
+.vf-dept-count { background: var(--blue-600); color: #fff; border-radius: 999px; font-size: 11px; line-height: 1; padding: 3px 7px; }
+.vf-dept-list { max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 9px; padding: 4px; }
+.vf-dept-list .vf-opt { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px; cursor: pointer; }
+.vf-dept-list .vf-opt:hover { background: var(--bg-100, #f4f6fa); }
+.vf-level-chip { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; border: 1px solid transparent; }
+
+/* เบอร์โทร + เบอร์ต่อ ในช่องเดียว: [เบอร์โทร] - [ต่อ] */
+.vf-tel-row { display: flex; align-items: center; gap: 8px; }
+.vf-tel-row .vf-input { min-width: 0; }
+.vf-tel-row .vf-input:first-child { flex: 1 1 auto; }
+.vf-tel-ext { flex: 0 0 84px; width: 84px; text-align: center; }
+.vf-tel-dash { color: var(--text-400); }

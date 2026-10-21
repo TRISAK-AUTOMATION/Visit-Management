@@ -131,7 +131,7 @@ export default function MyOT() {
           <div className="modal">
             <div className="modal-head"><h3>รายละเอียดคำขอ OT #{detail.request.code}</h3><button className="modal-close" onClick={() => setDetail(null)}>×</button></div>
             <div className="modal-body">
-              <p><b>วันที่:</b> {fmtDate(detail.request.ot_date)}</p>
+              <p><b>วันที่:</b> {fmtDate(detail.request.ot_date)}{detail.request.day_type ? ` (${detail.request.day_type === 'holiday' ? 'วันหยุด' : 'วันทำงาน'})` : ''}</p>
               <p><b>เวลา:</b> {detail.request.time_from} - {detail.request.time_to} ({detail.request.hours} ชม.)</p>
               <p><b>สถานที่:</b> {detail.request.location || '-'}</p>
               <p><b>OT Type:</b> {detail.request.ot_type || '-'}</p>

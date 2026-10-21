@@ -7,6 +7,20 @@ import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
 
 const COMPANIES = ['TAC', 'FAC', 'HTC'];
+// ระดับลูกค้า + สี (ตรงกับหัวข้อ Customer Level ในฟอร์ม Visit)
+const LEVELS = [
+  { value: 'L1 Strategic', color: '#2f5bff', tint: '#eef3ff' },
+  { value: 'L2 Growth', color: '#1fae62', tint: '#e8f7ee' },
+  { value: 'L3 Maintain', color: '#0ea5b7', tint: '#e5f8fa' },
+  { value: 'L4 Develop', color: '#f5a524', tint: '#fff6e0' },
+  { value: 'L5 Low Priority', color: '#8b93a7', tint: '#f1f3f7' }
+];
+const levelStyle = (v) => { const l = LEVELS.find(x => x.value === v); return l ? { color: l.color, background: l.tint, borderColor: l.color } : {}; };
+function LevelPill({ value }) {
+  if (!value) return <span className="muted">-</span>;
+  return <span style={{ ...levelStyle(value), border: '1px solid', borderRadius: 999, padding: '2px 10px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>{value}</span>;
+}
+const addrCell = { maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 const emptyForm = { name: '', contact_person: '', phone: '', email: '', address: '', company: '', code: '' };
 
 // แปลง header ของไฟล์ (Excel/CSV) ให้ยืดหยุ่น รองรับหลายชื่อคอลัมน์ที่พบได้บ่อยจากไฟล์ SAP
@@ -120,6 +134,19 @@ export default function Customers() {
       setEditing(undefined);
       load(q, companyFilter);
     } catch (err) { toast(err.message, 'error'); }
+  };
+
+  // แก้ระดับลูกค้าได้ทันทีจากตาราง (Admin)
+  const changeLevel = async (c, level) => {
+    const prev = c.level;
+    setCustomers(list => list.map(x => x.id === c.id ? { ...x, level: level || null } : x));
+    try {
+      await api.put(`/api/customers/${c.id}/level`, { level });
+      toast(`อัปเดตระดับลูกค้า ${c.code} แล้ว`, 'success');
+    } catch (err) {
+      setCustomers(list => list.map(x => x.id === c.id ? { ...x, level: prev } : x));
+      toast(err.message, 'error');
+    }
   };
 
   const remove = async (id) => {
@@ -243,7 +270,7 @@ export default function Customers() {
           )}
         </div>
         <div className="flex" style={{ gap: 10 }}>
-          <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหาลูกค้า..."
+          <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหาลูกค้า / Sales..."
             style={{ width: 220, padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 9 }} />
           {isAdmin && <button className="btn btn-outline" onClick={openImport}>นำเข้าจากไฟล์</button>}
           {isAdmin && <button className="btn btn-danger" onClick={deleteAll}>ลบข้อมูลทั้งหมด</button>}
@@ -255,14 +282,22 @@ export default function Customers() {
         <div className="card">
           <div className="card-body" style={{ padding: 0 }}>
             <table>
-              <thead><tr><th>รหัสลูกค้า</th><th>ชื่อบริษัท</th><th>Company</th><th>ผู้ติดต่อ</th><th>เบอร์โทร</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+              <thead><tr><th>รหัสลูกค้า</th><th>ชื่อบริษัท</th><th>Sales</th><th>ที่อยู่</th><th>Level</th><th>Company</th><th>เบอร์โทร</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
               <tbody>
                 {customers.length ? customers.map(c => (
                   <tr key={c.id} style={c.is_archived ? { opacity: 0.55 } : undefined}>
                     <td>{c.code}</td>
                     <td>{c.name}</td>
-                    <td>{c.company || '-'}</td>
                     <td>{c.contact_person || '-'}</td>
+                    <td style={addrCell} title={c.address || ''}>{c.address || '-'}</td>
+                    <td>
+                      <select value={c.level || ''} onChange={e => changeLevel(c, e.target.value)}
+                        style={{ padding: '4px 8px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 12.5, ...(c.level ? levelStyle(c.level) : {}) }}>
+                        <option value="">- ไม่ระบุ -</option>
+                        {LEVELS.map(l => <option key={l.value} value={l.value}>{l.value}</option>)}
+                      </select>
+                    </td>
+                    <td>{c.company || '-'}</td>
                     <td>{c.phone || '-'}</td>
                     <td>{c.is_archived ? <span className="badge cancelled">เก็บถาวร</span> : c.is_pending ? <span className="badge pending">รอตรวจสอบ</span> : <span className="badge approved">ใช้งานอยู่</span>}</td>
                     <td>
@@ -271,7 +306,7 @@ export default function Customers() {
                       <button className="btn btn-danger btn-sm" onClick={() => remove(c.id)}>ลบ</button>
                     </td>
                   </tr>
-                )) : <tr><td colSpan={7} className="empty">ไม่พบข้อมูลลูกค้า</td></tr>}
+                )) : <tr><td colSpan={9} className="empty">ไม่พบข้อมูลลูกค้า</td></tr>}
               </tbody>
             </table>
           </div>
@@ -281,11 +316,15 @@ export default function Customers() {
         <div className="card">
           <div className="card-body" style={{ padding: 0 }}>
             <table>
-              <thead><tr><th>รหัสลูกค้า</th><th>ชื่อบริษัท</th></tr></thead>
+              <thead><tr><th>รหัสลูกค้า</th><th>ชื่อบริษัท</th><th>Sales</th><th>ที่อยู่</th><th>Level</th></tr></thead>
               <tbody>
                 {customers.length ? customers.filter(c => !c.is_archived).map(c => (
-                  <tr key={c.id}><td>{c.code}</td><td>{c.name}</td></tr>
-                )) : <tr><td colSpan={2} className="empty">ไม่พบข้อมูลลูกค้า</td></tr>}
+                  <tr key={c.id}>
+                    <td>{c.code}</td><td>{c.name}</td><td>{c.contact_person || '-'}</td>
+                    <td style={addrCell} title={c.address || ''}>{c.address || '-'}</td>
+                    <td><LevelPill value={c.level} /></td>
+                  </tr>
+                )) : <tr><td colSpan={5} className="empty">ไม่พบข้อมูลลูกค้า</td></tr>}
               </tbody>
             </table>
           </div>

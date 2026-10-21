@@ -54,6 +54,21 @@ async function sendMail({ to, subject, html }) {
 
 const FONT = "Arial,Helvetica,sans-serif";
 
+// escape ข้อความที่ผู้ใช้กรอกก่อนใส่ลง HTML ของอีเมล (กันฝังแท็ก/ลิงก์ปลอมในอีเมลที่ส่งถึงผู้อนุมัติ)
+// ขึ้นบรรทัดใหม่ในข้อความยาว (textarea) แปลงเป็น <br/> หลัง escape แล้ว
+function escapeHtml(v) {
+  if (v === undefined || v === null) return '';
+  return String(v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function escapeMultiline(v) {
+  return escapeHtml(v).replace(/\r?\n/g, '<br/>');
+}
+
 // แถบแบรนด์บนสุด - พื้นเข้ม เรียบหรู ไม่ใช่สีเดียวกับสถานะ (แยกความรู้สึก "หัวเว็บ" ออกจาก "เนื้อหาสถานะ")
 function brandBar() {
   return `
@@ -87,7 +102,7 @@ function hero({ accentColor, icon, title, codeText }) {
           </td>
           <td style="vertical-align:middle;padding-left:14px;">
             <div style="color:#ffffff;font-size:19px;font-weight:700;font-family:${FONT};line-height:1.35;">${title}</div>
-            ${codeText ? `<div style="color:#ffffff;font-size:12.5px;font-weight:400;font-family:${FONT};margin-top:3px;opacity:0.85;">${codeText}</div>` : ''}
+            ${codeText ? `<div style="color:#ffffff;font-size:12.5px;font-weight:400;font-family:${FONT};margin-top:3px;opacity:0.85;">${escapeHtml(codeText)}</div>` : ''}
           </td>
         </tr>
       </table>
@@ -112,10 +127,10 @@ function detailRow(label, value, bg, isLast) {
   return `
   <tr>
     <td bgcolor="${bg}" style="background-color:${bg};padding:12px 16px;width:38%;${border}vertical-align:top;">
-      <span style="color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;font-family:${FONT};">${label}</span>
+      <span style="color:#6b7280;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;font-family:${FONT};">${escapeHtml(label)}</span>
     </td>
     <td bgcolor="${bg}" style="background-color:${bg};padding:12px 16px;${border}vertical-align:top;">
-      <span style="color:#111827;font-size:13.5px;font-family:${FONT};">${value}</span>
+      <span style="color:#111827;font-size:13.5px;font-family:${FONT};">${escapeMultiline(value)}</span>
     </td>
   </tr>`;
 }
@@ -198,7 +213,7 @@ async function sendNewRequestEmail({ to, approverName, requesterName, vr, emailR
   const html = emailShell(`
     ${brandBar()}
     ${hero({ accentColor, icon: '!', title: 'คำขอออกนอกสถานที่รออนุมัติ', codeText: showDocCode ? `#${vr.code}` : '' })}
-    ${introText(`เรียนคุณ ${approverName},<br/><b>${requesterName}</b> ได้ส่งคำขอออกนอกสถานที่นี้เพื่อรอการอนุมัติจากท่าน`)}
+    ${introText(`เรียนคุณ ${escapeHtml(approverName)},<br/><b>${escapeHtml(requesterName)}</b> ได้ส่งคำขอออกนอกสถานที่นี้เพื่อรอการอนุมัติจากท่าน`)}
     ${detailCard(emailRows)}
     <tr>
       <td style="padding:22px 32px 6px 32px;">${ctaButton(detailUrl, 'เปิดดูคำขอ / อนุมัติผ่านเว็บแอปพลิเคชัน &rarr;', accentColor)}</td>
@@ -233,7 +248,7 @@ async function sendDecisionEmail({ to, requesterName, vr, status, approverName, 
       title: `คำขอออกนอกสถานที่${approved ? 'ได้รับการอนุมัติ' : 'ไม่ได้รับการอนุมัติ'}`,
       codeText: showCode ? `#${vr.code}` : ''
     })}
-    ${introText(`เรียนคุณ ${requesterName},<br/>คำขอออกนอกสถานที่ของท่าน${approved ? 'ได้รับการอนุมัติ' : 'ไม่ได้รับการอนุมัติ'}เรียบร้อยแล้ว`)}
+    ${introText(`เรียนคุณ ${escapeHtml(requesterName)},<br/>คำขอออกนอกสถานที่ของท่าน${approved ? 'ได้รับการอนุมัติ' : 'ไม่ได้รับการอนุมัติ'}เรียบร้อยแล้ว`)}
     ${detailCard(rows)}
     <tr>
       <td style="padding:22px 32px 6px 32px;">${ctaButton(detailUrl, 'ดูรายละเอียดคำขอของฉัน &rarr;', '#2f5bff')}</td>
@@ -261,7 +276,7 @@ async function sendRevisionEmail({ to, requesterName, vr, approverName, note, sh
   const html = emailShell(`
     ${brandBar()}
     ${hero({ accentColor, icon: '✎', title: 'คำขอออกนอกสถานที่ถูกส่งกลับให้แก้ไข', codeText: showCode ? `#${vr.code}` : '' })}
-    ${introText(`เรียนคุณ ${requesterName},<br/>คำขอออกนอกสถานที่ของท่านถูกส่งกลับให้แก้ไขโดย <b>${approverName}</b>`)}
+    ${introText(`เรียนคุณ ${escapeHtml(requesterName)},<br/>คำขอออกนอกสถานที่ของท่านถูกส่งกลับให้แก้ไขโดย <b>${escapeHtml(approverName)}</b>`)}
     ${detailCard(rows)}
     <tr>
       <td style="padding:22px 32px 6px 32px;">${ctaButton(editUrl, 'แก้ไขคำขอ &rarr;', '#2f5bff')}</td>
@@ -272,4 +287,4 @@ async function sendRevisionEmail({ to, requesterName, vr, approverName, note, sh
   return sendMail({ to, subject: `[ส่งกลับแก้ไข] คำขอออกนอกสถานที่${codeSuffix}`, html });
 }
 
-module.exports = { sendMail, sendNewRequestEmail, sendDecisionEmail, sendRevisionEmail, APP_BASE_URL };
+module.exports = { escapeHtml, sendMail, sendNewRequestEmail, sendDecisionEmail, sendRevisionEmail, APP_BASE_URL };

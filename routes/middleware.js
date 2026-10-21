@@ -6,11 +6,13 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'กรุณาเข้าสู่ระบบ' });
   }
   // เช็คว่าบัญชียังเปิดใช้งานอยู่หรือไม่ทุกครั้ง (เผื่อ Admin สั่งปิดใช้งานระหว่างที่ session ยังอยู่)
-  const user = db.prepare('SELECT is_active FROM users WHERE id = ?').get(req.session.userId);
+  const user = db.prepare('SELECT is_active, role FROM users WHERE id = ?').get(req.session.userId);
   if (!user || !user.is_active) {
     req.session.destroy(() => {});
     return res.status(401).json({ error: 'บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ' });
   }
+  // sync role จากฐานข้อมูลทุกครั้ง: ถ้า Admin เปลี่ยนตำแหน่งผู้ใช้ จะมีผลทันที ไม่ต้องรอ session หมดอายุ (เดิมเก็บ role ไว้ตอน login นานสูงสุด 30 วัน)
+  req.session.role = user.role;
   next();
 }
 

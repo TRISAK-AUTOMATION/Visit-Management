@@ -9,6 +9,9 @@ const { getDepartmentsForUser, setDepartmentsForUser } = require('../utils/userD
 
 const router = express.Router();
 
+const VALID_ROLES = ['Employee', 'Approver', 'Admin'];
+const MIN_PASSWORD_LENGTH = 6;
+
 function sanitize(u) {
   const { password_hash, ...rest } = u;
   return rest;
@@ -17,18 +20,37 @@ function sanitize(u) {
 // โปรไฟล์ของตัวเอง
 router.put('/me', requireAuth, (req, res) => {
   const { full_name, email, phone, position, department, email_notify, avatar_url } = req.body;
+  if (typeof full_name !== 'string' || !full_name.trim()) {
+    return res.status(400).json({ error: 'กรุณากรอกชื่อ-นามสกุล' });
+  }
+  const textOk = (v) => v === undefined || v === null || (typeof v === 'string' && v.length <= 200);
+  if (![email, phone, position].every(textOk)) {
+    return res.status(400).json({ error: 'ข้อมูลโปรไฟล์ไม่ถูกต้องหรือยาวเกินไป' });
+  }
+  if (avatar_url && (typeof avatar_url !== 'string' || avatar_url.length > 3_000_000 || !/^(data:image\/|\/|https?:\/\/)/.test(avatar_url))) {
+    return res.status(400).json({ error: 'รูปโปรไฟล์ไม่ถูกต้องหรือมีขนาดใหญ่เกินไป' });
+  }
   if (!isValidDepartment(department)) {
     return res.status(400).json({ error: 'แผนกไม่ถูกต้อง กรุณาเลือกจากรายการ' });
   }
   db.prepare(`
     UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, department = ?, email_notify = ?, avatar_url = ?
     WHERE id = ?
-  `).run(full_name, email, phone, position, department, email_notify ? 1 : 0, avatar_url || null, req.session.userId);
+  `).run(full_name.trim(), email || '', phone || '', position || '', department, email_notify ? 1 : 0, avatar_url || null, req.session.userId);
   res.json({ ok: true });
 });
 
 router.put('/me/password', requireAuth, (req, res) => {
   const { current_password, new_password } = req.body;
+  if (typeof current_password !== 'string' || !current_password) {
+    return res.status(400).json({ error: 'กรุณากรอกรหัสผ่านปัจจุบัน' });
+  }
+  if (typeof new_password !== 'string' || new_password.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({ error: `รหัสผ่านใหม่ต้องมีอย่างน้อย ${MIN_PASSWORD_LENGTH} ตัวอักษร` });
+  }
+  if (new_password.length > 200) {
+    return res.status(400).json({ error: 'รหัสผ่านใหม่ยาวเกินไป' });
+  }
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
   if (!bcrypt.compareSync(current_password, user.password_hash)) {
     return res.status(400).json({ error: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' });
@@ -68,6 +90,12 @@ router.post('/', requireAuth, requireRole('Admin'), (req, res) => {
   if (!username || !password || !full_name) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
   }
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({ error: `รหัสผ่านต้องมีอย่างน้อย ${MIN_PASSWORD_LENGTH} ตัวอักษร` });
+  }
+  if (role !== undefined && role !== null && role !== '' && !VALID_ROLES.includes(role)) {
+    return res.status(400).json({ error: 'ตำแหน่ง (role) ไม่ถูกต้อง' });
+  }
   const deptList = Array.isArray(departments) ? departments.filter(Boolean) : [];
   const invalidDept = deptList.find(d => !isValidDepartment(d));
   if (invalidDept) {
@@ -87,8 +115,18 @@ router.post('/', requireAuth, requireRole('Admin'), (req, res) => {
 
 router.put('/:id', requireAuth, requireRole('Admin'), (req, res) => {
   const { full_name, email, phone, position, departments, role } = req.body;
-  const exists = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
+  const exists = db.prepare('SELECT id, role, is_active FROM users WHERE id = ?').get(req.params.id);
   if (!exists) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+  if (!VALID_ROLES.includes(role)) {
+    return res.status(400).json({ error: 'ตำแหน่ง (role) ไม่ถูกต้อง' });
+  }
+  // กันระบบไม่มี Admin เหลือเลย: ห้ามลดสิทธิ์ Admin คนสุดท้ายที่ยังใช้งานอยู่
+  if (exists.role === 'Admin' && role !== 'Admin' && exists.is_active) {
+    const otherAdmins = db.prepare(`SELECT COUNT(*) AS c FROM users WHERE role = 'Admin' AND is_active = 1 AND id != ?`).get(req.params.id).c;
+    if (otherAdmins === 0) {
+      return res.status(400).json({ error: 'ไม่สามารถลดสิทธิ์ผู้ดูแลระบบคนสุดท้ายได้ ต้องมี Admin อย่างน้อย 1 คน' });
+    }
+  }
   const deptList = Array.isArray(departments) ? departments.filter(Boolean) : [];
   const invalidDept = deptList.find(d => !isValidDepartment(d));
   if (invalidDept) {

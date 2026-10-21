@@ -37,7 +37,7 @@ function WorkflowTimeline({ workflow }) {
 
 // mode: 'mine' (แสดงประวัติ+ปุ่มพิมพ์) หรือ 'approve' (แสดงข้อมูลผู้ขอ+ปุ่มอนุมัติ/ไม่อนุมัติ/ส่งกลับแก้ไข)
 // หรือ 'calendar' (แสดงข้อมูลผู้ขอ+ผู้อนุมัติ แบบอ่านอย่างเดียว - ใช้จากหน้าปฏิทิน)
-export default function RequestModal({ request, history, customFields, workflow, mode, onClose, onDecide, onRequestRevision }) {
+export default function RequestModal({ request, history, customFields, workflow, mode, onClose, onDecide, onRequestRevision, canAct = true, canResync = false, onResync }) {
   const navigate = useNavigate();
   const canPrint = !['draft', 'revision'].includes(request.status);
 
@@ -116,7 +116,17 @@ export default function RequestModal({ request, history, customFields, workflow,
             </>
           )}
 
-          {mode === 'approve' && request.status === 'pending' && (
+          {mode === 'approve' && request.status === 'pending' && !canAct && (
+            <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff7e6', border: '1px solid #f5d9a0', borderRadius: 9, fontSize: 13, color: '#8a5a00' }}>
+              คุณไม่ได้อยู่ในลำดับผู้อนุมัติของคำขอนี้ในขั้นตอนปัจจุบัน จึงอนุมัติ/ไม่อนุมัติไม่ได้
+              {canResync && onResync && (
+                <div style={{ marginTop: 8 }}>
+                  <button className="btn btn-outline btn-sm" onClick={() => { onResync(request.id); onClose(); }}>รีเซ็ตสายอนุมัติตามรายชื่อล่าสุด</button>
+                </div>
+              )}
+            </div>
+          )}
+          {mode === 'approve' && request.status === 'pending' && canAct && (
             <div className="form-actions" style={{ justifyContent: 'flex-start', marginTop: 12 }}>
               <button className="btn btn-success" onClick={() => { onDecide(request.id, 'approve'); onClose(); }}>อนุมัติ</button>
               <button className="btn btn-danger" onClick={() => { onDecide(request.id, 'reject'); onClose(); }}>ไม่อนุมัติ</button>
@@ -125,6 +135,23 @@ export default function RequestModal({ request, history, customFields, workflow,
               )}
             </div>
           )}
+
+          {mode === 'approve' && request.status === 'pending' && (() => {
+            // คำขอที่ถูกแก้ไขหลังอนุมัติแล้วส่งกลับมาให้อนุมัติอีกครั้ง: โชว์รายการที่เปลี่ยนล่าสุด (ถ้ามี) ให้ผู้อนุมัติเห็น
+            const list = history || [];
+            const idx = list.reduce((m, h, i) => (h.action && h.action.startsWith('แก้ไขหลังอนุมัติ') ? i : m), -1);
+            if (idx < 0) return null;
+            const h = list[idx];
+            const reopenedAfter = list.slice(idx + 1).some(x => x.action && (x.action.startsWith('ส่งคำขอ') || x.action.startsWith('แก้ไขหลังอนุมัติ')));
+            if (reopenedAfter) return null;
+            return (
+              <div style={{ marginTop: 12, padding: '10px 12px', background: '#eef3ff', border: '1px solid #c9d6ff', borderRadius: 9, fontSize: 13 }}>
+                <b>คำขอนี้ถูกแก้ไขหลังอนุมัติ — กรุณาตรวจสอบและอนุมัติอีกครั้ง</b>
+                <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>แก้ไขโดย {h.actor_name || 'ผู้ขอ'} · {fmtDateTime(h.created_at)}</div>
+                <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{h.note || '-'}</div>
+              </div>
+            );
+          })()}
 
           {mode === 'mine' && history && (
             <>

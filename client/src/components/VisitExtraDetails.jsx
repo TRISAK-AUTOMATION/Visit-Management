@@ -57,7 +57,7 @@ export default function VisitExtraDetails({ request: r }) {
             <div className="vf-detail-card" key={c.id || i}>
               <b>{c.name}</b>{c.position ? ` · ${c.position}` : ''}
               <div className="muted">
-                {[c.telephone && `Tel ${c.telephone}`, c.mobile && `Mobile ${c.mobile}`, c.email].filter(Boolean).join(' · ')}
+                {[(c.telephone || c.ext) && `Tel ${c.telephone || ''}${c.ext ? ` ต่อ ${c.ext}` : ''}`, c.mobile && `Mobile ${c.mobile}`, c.email].filter(Boolean).join(' · ')}
               </div>
             </div>
           ))}

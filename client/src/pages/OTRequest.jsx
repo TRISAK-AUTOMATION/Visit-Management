@@ -13,8 +13,16 @@ const todayLocal = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+// ค่าเริ่มต้นตามปฏิทิน: เสาร์-อาทิตย์ = วันหยุด (ผู้ขอเปลี่ยนเองได้ เช่น เสาร์ที่เป็นเวร)
+const calendarDayType = (iso) => {
+  const d = new Date(`${iso}T00:00:00`);
+  if (isNaN(d)) return 'workday';
+  return d.getDay() === 0 || d.getDay() === 6 ? 'holiday' : 'workday';
+};
+
 const makeInitial = () => ({
   ot_date: todayLocal(),
+  day_type: calendarDayType(todayLocal()),
   ot_type: '', customer_id: '', project_no: '', job_no: '',
   time_from: '18:00', time_to: '20:00',
   location: '', work_detail: '', reason: '', notes: ''
@@ -60,8 +68,10 @@ export default function OTRequest() {
         return;
       }
       setExisting(r);
+      setDayTypeTouched(!!r.day_type); // ใบที่เคยบันทึกประเภทวันไว้แล้ว ไม่ให้เปลี่ยนวันที่แล้วทับค่าเดิม
       setForm({
         ot_date: r.ot_date, time_from: r.time_from, time_to: r.time_to,
+        day_type: r.day_type || calendarDayType(r.ot_date),
         ot_type: r.ot_type || '', customer_id: r.customer_id || '', project_no: r.project_no || '', job_no: r.job_no || '',
         location: r.location || '', work_detail: r.work_detail || '', reason: r.reason || '', notes: r.notes || ''
       });
@@ -70,6 +80,12 @@ export default function OTRequest() {
   }, [id]);
 
   const set = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
+  // เปลี่ยนวันที่ -> ปรับประเภทวันตามปฏิทินให้ แต่ถ้าผู้ขอเลือกประเภทวันเองไปแล้ว จะไม่เขียนทับ
+  const [dayTypeTouched, setDayTypeTouched] = useState(false);
+  const changeDate = (e) => {
+    const v = e.target.value;
+    setForm(f => ({ ...f, ot_date: v, day_type: dayTypeTouched || !v ? f.day_type : calendarDayType(v) }));
+  };
 
   const pickCustomer = (c) => {
     setForm(f => ({ ...f, customer_id: c.id }));
@@ -130,7 +146,15 @@ export default function OTRequest() {
             <div className="form-grid">
               <div className="form-group">
                 <label htmlFor="ot-date">วันที่ทำ OT <span className="req">*</span></label>
-                <input id="ot-date" type="date" value={form.ot_date} onChange={set('ot_date')} required />
+                <input id="ot-date" type="date" value={form.ot_date} onChange={changeDate} required />
+              </div>
+              <div className="form-group">
+                <label htmlFor="ot-daytype">ประเภทวัน <span className="req">*</span></label>
+                <select id="ot-daytype" value={form.day_type} onChange={(e) => { setDayTypeTouched(true); set('day_type')(e); }}>
+                  <option value="workday">วันทำงาน</option>
+                  <option value="holiday">วันหยุด</option>
+                </select>
+                <div className="muted" style={{ fontSize: 11.5, marginTop: 3 }}>เลือกให้อัตโนมัติตามปฏิทิน (เสาร์-อาทิตย์ = วันหยุด) เปลี่ยนเองได้ เช่น เสาร์ที่เป็นเวร</div>
               </div>
               <div className="form-group">
                 <label htmlFor="ot-location">สถานที่ปฏิบัติงาน <span className="req">*</span></label>
