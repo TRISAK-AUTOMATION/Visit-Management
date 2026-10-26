@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
 import { ROLE_TH, canAccessVisit } from '../lib/api';
 import { getPinnedAdminTools } from '../lib/pinnedTools';
+import NotificationBell from './NotificationBell';
 
 // เครื่องมือผู้ดูแลระบบทั้งหมด - อยู่ที่หน้า "ตั้งค่า" เป็นหลัก เลือกปักหมุดบางอันให้โชว์ในเมนูซ้ายได้ (ดู pinnedTools.js)
 export const ADMIN_TOOLS = [
@@ -26,13 +27,26 @@ export const ADMIN_TOOLS = [
 const VISIT_STAGES = [
   { href: '/visit-request', icon: '\uD83D\uDCDD', label: 'สร้างคำขอ' },
   { href: '/my-requests?status=draft', icon: '\u270F\uFE0F', label: 'ฉบับร่าง', badgeKey: 'vDraft', badgeTone: 'soft' },
-  { href: '/my-requests?status=revision', icon: '\uD83D\uDD04', label: 'รอแก้ไข', badgeKey: 'vRevision', badgeTone: 'warn' },
   { href: '/my-requests?status=pending', icon: '\u23F3', label: 'รออนุมัติ', badgeKey: 'vPending', badgeTone: 'soft' },
-  { href: '/my-requests?status=approved', icon: '\u2705', label: 'กำลังดำเนินการ', badgeKey: 'vApproved', badgeTone: 'soft' },
+  { href: '/my-requests?status=revision', icon: '\uD83D\uDD04', label: 'รอแก้ไข', badgeKey: 'vRevision', badgeTone: 'warn' },
+  { href: '/my-requests?status=approved', icon: '\u2705', label: 'Approve@Visiting', badgeKey: 'vApproved', badgeTone: 'soft' },
   { href: '/my-requests?status=completed', icon: '\uD83C\uDFC1', label: 'Visit เสร็จสิ้น', badgeKey: 'vCompleted', badgeTone: 'soft' },
   { href: '/my-requests?status=rejected', icon: '\u26D4', label: 'ไม่อนุมัติ', badgeKey: 'vRejected', badgeTone: 'soft' },
   { href: '/my-requests', icon: '\uD83D\uDCCB', label: 'My Requests' },
 ];
+
+// เมนูย่อยของ ลา / OT แยกตามขั้นตอนเหมือน Visit (ไม่มีขั้น "เสร็จสิ้น" เพราะเป็นของ Visit เท่านั้น)
+const requestStages = (create, createLabel, createIcon, listPath, listLabel, prefix) => [
+  { href: create, icon: createIcon, label: createLabel },
+  { href: `${listPath}?status=draft`, icon: '\u270F\uFE0F', label: 'ฉบับร่าง', badgeKey: `${prefix}Draft`, badgeTone: 'soft' },
+  { href: `${listPath}?status=pending`, icon: '\u23F3', label: 'รออนุมัติ', badgeKey: `${prefix}Pending`, badgeTone: 'soft' },
+  { href: `${listPath}?status=revision`, icon: '\uD83D\uDD04', label: 'รอแก้ไข', badgeKey: `${prefix}Revision`, badgeTone: 'warn' },
+  { href: `${listPath}?status=approved`, icon: '\u2705', label: 'อนุมัติแล้ว', badgeKey: `${prefix}Approved`, badgeTone: 'soft' },
+  { href: `${listPath}?status=rejected`, icon: '\u26D4', label: 'ไม่อนุมัติ', badgeKey: `${prefix}Rejected`, badgeTone: 'soft' },
+  { href: listPath, icon: '\uD83D\uDCCB', label: listLabel },
+];
+const LEAVE_STAGES = requestStages('/leave-request', 'สร้างคำขอลา', '\uD83C\uDFD6', '/my-leave', 'การลาของฉัน', 'l');
+const OT_STAGES = requestStages('/ot-request', 'สร้างคำขอ OT', '\u23F0', '/my-ot', 'OT ของฉัน', 'o');
 
 // ลิงก์เมนูย่อยที่มี ?status= ต้องเทียบทั้ง path และ query ถึงจะไฮไลต์ถูกอัน
 function isNavActive(href, location) {
@@ -40,7 +54,7 @@ function isNavActive(href, location) {
   if (location.pathname !== path) return false;
   const cur = new URLSearchParams(location.search);
   if (query) return cur.get('status') === new URLSearchParams(query).get('status');
-  return path !== '/my-requests' || !cur.get('status');
+  return !['/my-requests', '/my-leave', '/my-ot'].includes(path) || !cur.get('status');
 }
 
 const BADGE_STYLE = {
@@ -49,29 +63,17 @@ const BADGE_STYLE = {
 };
 
 const MENU = {
-  common: [{ href: '/dashboard', icon: '\u2302', label: 'Dashboard' }],
+  common: [{ href: '/profile', icon: '\uD83D\uDC64', label: 'โปรไฟล์ของฉัน' }, { href: '/dashboard', icon: '\u2302', label: 'Dashboard' }],
   // จัดกลุ่ม "สร้างคำขอ + ดูของฉัน" ของแต่ละประเภทไว้ด้วยกัน กดหัวข้อกลุ่มเพื่อขยาย/ย่อ (กันเมนูซ้ายยาวเป็นเส้นตรง)
   Employee: [
     { group: 'visit', icon: '\uD83D\uDCDD', label: 'Visit', items: VISIT_STAGES },
-    { group: 'leave', icon: '\uD83C\uDFD6', label: 'ลา', items: [
-      { href: '/leave-request', icon: '\uD83C\uDFD6', label: 'สร้างคำขอลา' },
-      { href: '/my-leave', icon: '\uD83D\uDCC6', label: 'การลาของฉัน' },
-    ] },
-    { group: 'ot', icon: '\u23F0', label: 'OT', items: [
-      { href: '/ot-request', icon: '\u23F0', label: 'สร้างคำขอ OT' },
-      { href: '/my-ot', icon: '\uD83D\uDDD2', label: 'OT ของฉัน' },
-    ] },
+    { group: 'leave', icon: '\uD83C\uDFD6', label: 'ลา', items: LEAVE_STAGES },
+    { group: 'ot', icon: '\u23F0', label: 'OT', items: OT_STAGES },
   ],
   ApproverAdmin: [
     { group: 'visit', icon: '\uD83D\uDCDD', label: 'Visit', items: VISIT_STAGES },
-    { group: 'leave', icon: '\uD83C\uDFD6', label: 'ลา', items: [
-      { href: '/leave-request', icon: '\uD83C\uDFD6', label: 'สร้างคำขอลา' },
-      { href: '/my-leave', icon: '\uD83D\uDCC6', label: 'การลาของฉัน' },
-    ] },
-    { group: 'ot', icon: '\u23F0', label: 'OT', items: [
-      { href: '/ot-request', icon: '\u23F0', label: 'สร้างคำขอ OT' },
-      { href: '/my-ot', icon: '\uD83D\uDDD2', label: 'OT ของฉัน' },
-    ] },
+    { group: 'leave', icon: '\uD83C\uDFD6', label: 'ลา', items: LEAVE_STAGES },
+    { group: 'ot', icon: '\u23F0', label: 'OT', items: OT_STAGES },
   ],
   tail: [
     { href: '/calendar', icon: '\uD83D\uDCC5', label: 'ปฏิทิน' },
@@ -238,10 +240,7 @@ export default function Layout({ title, children }) {
             <h1>{title}</h1>
           </div>
           <div className="topbar-right">
-            <button className="icon-btn" onClick={() => navigate('/notifications')} title="การแจ้งเตือน">
-              {'\uD83D\uDD14'}
-              {badgeCounts.unread > 0 && <span className="dot">{badgeCounts.unread}</span>}
-            </button>
+            <NotificationBell />
             <div className="topbar-user" style={{ cursor: 'pointer' }} onClick={() => navigate('/profile')}>
               <img src={me.avatar_url || '/img/avatar1.png'} onError={(e) => { e.target.style.display = 'none'; }} />
               <div>

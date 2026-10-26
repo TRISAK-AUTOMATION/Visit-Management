@@ -48,6 +48,7 @@ app.use('/api/leave-requests', require('./routes/leavePdf'));
 app.use('/api/leave-requests', require('./routes/leave'));
 app.use('/api/ot-requests', require('./routes/ot'));
 app.use('/api/ot-requests', require('./routes/otPdf'));
+app.use('/api/profile-dashboard', require('./routes/profileDashboard'));
 app.use('/api/kpi', require('./routes/kpi'));
 app.use('/api/report', require('./routes/report'));
 app.use('/api/approval-templates', require('./routes/approvalTemplates'));

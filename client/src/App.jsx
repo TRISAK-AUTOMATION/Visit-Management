@@ -87,8 +87,8 @@ export default function App() {
       <Route path="/admin-brands" element={<ProtectedRoute roles={['Admin']}><AdminBrands /></ProtectedRoute>} />
       <Route path="/admin-approval-templates" element={<ProtectedRoute roles={['Admin']}><AdminApprovalTemplates /></ProtectedRoute>} />
 
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<Navigate to="/profile" replace />} />
+      <Route path="*" element={<Navigate to="/profile" replace />} />
     </Routes>
   );
 }

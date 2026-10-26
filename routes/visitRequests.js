@@ -128,7 +128,7 @@ function getCustomFieldValues(visitRequestId) {
 
 // ตรวจสอบว่า core field ที่ Admin ตั้งเป็น required (และยังแสดงอยู่) ครบถ้วนหรือไม่
 function validateRequiredCoreFields(body) {
-  const requiredCore = db.prepare('SELECT field_key, label FROM core_field_settings WHERE is_visible = 1 AND is_required = 1').all();
+  const requiredCore = db.prepare('SELECT field_key, label FROM core_field_settings WHERE is_visible = 1 AND is_required = 1 AND field_key NOT IN (\'actual_time_out\', \'actual_time_back\')').all();
   return requiredCore.filter(f => {
     const v = body[f.field_key];
     return v === undefined || v === null || (typeof v === 'string' && !v.trim());
@@ -645,6 +645,7 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
   if (!CANCELLABLE_STATUSES.includes(vr.status)) return res.status(400).json({ error: 'ไม่สามารถยกเลิกคำขอที่ดำเนินการแล้วได้' });
 
   db.prepare(`UPDATE visit_requests SET status = 'cancelled' WHERE id = ?`).run(req.params.id);
+  approvalEngine.closeWorkflow('visit', req.params.id);
   db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'ยกเลิกคำขอ', 'web')`).run(req.params.id, req.session.userId);
   logAction(req.session.userId, 'cancel_request', `ยกเลิกคำขอ #${vr.code}`);
   res.json({ ok: true });

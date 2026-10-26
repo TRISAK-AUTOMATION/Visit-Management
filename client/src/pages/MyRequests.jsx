@@ -11,9 +11,9 @@ import { useAuth } from '../lib/AuthContext';
 const TABS = [
   { f: 'all', label: 'ทั้งหมด' },
   { f: 'draft', label: 'ฉบับร่าง' },
-  { f: 'revision', label: 'รอแก้ไข' },
   { f: 'pending', label: 'รออนุมัติ' },
-  { f: 'approved', label: 'กำลังดำเนินการ' },
+  { f: 'revision', label: 'รอแก้ไข' },
+  { f: 'approved', label: 'Approve@Visiting' },
   { f: 'completed', label: 'Visit เสร็จสิ้น' },
   { f: 'rejected', label: 'ไม่อนุมัติ' }
 ];
@@ -21,7 +21,7 @@ const TABS = [
 // "ขั้นตอน" ของคำขอ = สถานะอนุมัติ + การที่ผู้ขอกดแจ้ง Visit เสร็จสิ้นแล้วหรือยัง
 // (approved + completed_at = เสร็จสิ้น ; สถานะอนุมัติในระบบยังเป็น approved เหมือนเดิม)
 const stageOf = (v) => (v.status === 'approved' && v.completed_at ? 'completed' : v.status);
-const STAGE_LABEL = { approved: 'กำลังดำเนินการ', completed: 'Visit เสร็จสิ้น' };
+const STAGE_LABEL = { approved: 'Approve@Visiting', completed: 'Visit เสร็จสิ้น' };
 const stageLabel = (st) => STAGE_LABEL[st] || statusLabel(st);
 
 // แถบขั้นตอนเล็กๆ ในแต่ละแถว: ร่าง -> รออนุมัติ -> อนุมัติ -> เสร็จสิ้น (ให้พนักงานเห็นว่าคำขอถึงขั้นไหนแล้ว)
@@ -107,10 +107,10 @@ export default function MyRequests() {
   };
 
   const reopenRequest = async (id) => {
-    if (!confirm('ย้อนกลับเป็น "กำลังดำเนินการ" (ยังไม่เสร็จสิ้น) หรือไม่?')) return;
+    if (!confirm('ย้อนกลับเป็น "Approve@Visiting" (ยังไม่เสร็จสิ้น) หรือไม่?')) return;
     try {
       await api.post(`/api/visit-requests/${id}/reopen`);
-      toast('ย้อนกลับเป็นกำลังดำเนินการ', 'success');
+      toast('ย้อนกลับเป็น Approve@Visiting', 'success');
       load();
     } catch (err) { toast(err.message, 'error'); }
   };

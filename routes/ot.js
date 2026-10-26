@@ -8,6 +8,7 @@ const { logAction } = require('../utils/systemLog');
 const approvalEngine = require('../utils/approvalEngine');
 const { canViewAll } = require('../utils/viewScope');
 
+const checks = require('../utils/inputChecks');
 const router = express.Router();
 
 // เช็คว่าผู้ใช้นี้มี Template อนุมัติของโมดูล "ot" ที่เปิดใช้งานอยู่ (is_active=1) และเลือกเขาไว้เป็น Requester จริงหรือไม่
@@ -63,6 +64,10 @@ function validateOT(f, isDraft) {
   if (f.customer_id !== undefined && f.customer_id !== null && f.customer_id !== '') {
     const cid = Number(f.customer_id);
     if (!Number.isInteger(cid) || !db.prepare('SELECT 1 FROM customers WHERE id = ?').get(cid)) return 'ไม่พบข้อมูลลูกค้าที่เลือก กรุณาเลือกลูกค้าใหม่จากรายการ';
+  }
+  if (f.ot_date) { const e = checks.dateError(f.ot_date, 'วันที่ทำ OT'); if (e) return e; }
+  for (const [k, max, label] of [['location', 200, 'สถานที่'], ['work_detail', 2000, 'รายละเอียดงาน'], ['reason', 1000, 'เหตุผล'], ['notes', 1000, 'หมายเหตุ']]) {
+    const e = checks.tooLong(f[k], max, label); if (e) return e;
   }
   const from = toMinutes(f.time_from), to = toMinutes(f.time_to);
   if ((f.time_from && from === null) || (f.time_to && to === null)) return 'รูปแบบเวลาไม่ถูกต้อง';
@@ -164,6 +169,14 @@ router.get('/calendar/events', requireAuth, (req, res) => {
   res.json({ requests: rows });
 });
 
+// GET /api/ot-requests/my-status-counts -> จำนวนคำขอของฉันแยกตามขั้นตอน (ตัวเลขที่เมนูข้างซ้าย) — ต้องอยู่ก่อน '/:id'
+router.get('/my-status-counts', requireAuth, (req, res) => {
+  const rows = db.prepare(`SELECT status AS st, COUNT(*) AS c FROM ot_requests WHERE requester_id = ? GROUP BY status`).all(req.session.userId);
+  const counts = { draft: 0, pending: 0, revision: 0, approved: 0, rejected: 0 };
+  rows.forEach(r => { if (r.st in counts) counts[r.st] = r.c; });
+  res.json({ counts });
+});
+
 router.get('/:id', requireAuth, (req, res) => {
   const ot = db.prepare(`
     SELECT o.*, u.full_name AS requester_name, u.position AS requester_position, u.department AS requester_department,
@@ -205,6 +218,8 @@ router.post('/', requireAuth, (req, res) => {
   const x = otFields(req.body);
 
   if (!isDraft) {
+    const ov = checks.otOverlapError(db, req.session.userId, req.body);
+    if (ov) return res.status(400).json({ error: ov });
     // ยังไม่มี Template อนุมัติไหนเซ็ตชื่อผู้ใช้นี้ไว้เป็น Requester เลย -> บล็อกตอนส่งคำขอ (ฟอร์มกรอก/บันทึกร่างได้ปกติ แต่ส่งจริงไม่ได้)
     if (!isEligibleOTRequester(req.session.userId)) {
       return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
@@ -262,6 +277,7 @@ router.put('/:id', requireAuth, (req, res) => {
   // บันทึกฉบับร่างไม่บังคับกรอกครบ; แก้ไขเพื่อส่ง (รวมกรณีส่งกลับแก้ไข) ต้องครบเหมือนตอนสร้าง
   const invalid = validateOT(req.body, req.body.save_as === 'draft');
   if (invalid) return res.status(400).json({ error: invalid });
+  if (req.body.save_as !== 'draft') { const ov = checks.otOverlapError(db, req.session.userId, req.body, req.params.id); if (ov) return res.status(400).json({ error: ov }); }
   const x = otFields(req.body);
   const hours = hoursBetween(time_from, time_to);
   db.prepare(`
@@ -282,6 +298,8 @@ router.post('/:id/submit', requireAuth, (req, res) => {
     // ฉบับร่างเก่าที่สร้างก่อนมี field ใหม่ (OT Type ฯลฯ) ต้องกรอกให้ครบก่อนจึงส่งได้
     const invalid = validateOT(ot, false);
     if (invalid) return res.status(400).json({ error: invalid + FILL_HINT });
+    const ov = checks.otOverlapError(db, ot.requester_id, ot, ot.id);
+    if (ov) return res.status(400).json({ error: ov });
   }
   if (!isEligibleOTRequester(req.session.userId)) {
     return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
@@ -307,6 +325,8 @@ router.post('/:id/resubmit', requireAuth, (req, res) => {
   {
     const invalid = validateOT(ot, false);
     if (invalid) return res.status(400).json({ error: invalid + FILL_HINT });
+    const ov = checks.otOverlapError(db, ot.requester_id, ot, ot.id);
+    if (ov) return res.status(400).json({ error: ov });
   }
   if (!isEligibleOTRequester(req.session.userId)) {
     return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
@@ -329,6 +349,7 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
   if (ot.requester_id !== req.session.userId) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ยกเลิกคำขอนี้' });
   if (!CANCELLABLE_STATUSES.includes(ot.status)) return res.status(400).json({ error: 'ไม่สามารถยกเลิกคำขอนี้ได้แล้ว' });
   db.prepare(`UPDATE ot_requests SET status = 'cancelled' WHERE id = ?`).run(req.params.id);
+  approvalEngine.closeWorkflow('ot', req.params.id);
   db.prepare(`INSERT INTO ot_history (ot_request_id, action_by, action) VALUES (?, ?, 'ยกเลิก')`).run(req.params.id, req.session.userId);
   logAction(req.session.userId, 'cancel_ot_request', `ยกเลิกคำขอ OT #${ot.code}`);
   res.json({ ok: true });

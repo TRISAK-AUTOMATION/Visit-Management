@@ -1,5 +1,5 @@
 // client/src/lib/AuthContext.jsx
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { api, canAccessVisit } from './api';
 
 const AuthContext = createContext(null);
@@ -10,7 +10,12 @@ export function AuthProvider({ children }) {
 
   // จำนวนคำขอ Visit ของฉันแยกตามขั้นตอน (ฉบับร่าง/รออนุมัติ/รอแก้ไข/อนุมัติแล้ว/ไม่อนุมัติ) สำหรับเมนูข้างซ้าย
   const refreshMyVisit = useCallback(async (user) => {
-    if (!user || !canAccessVisit(user)) return;
+    if (!user) return;
+    // ลา / OT: นับคำขอของฉันแยกตามขั้นตอน (ทุก role ใช้ได้)
+    const stage = (prefix, c) => ({ [`${prefix}Draft`]: c.draft, [`${prefix}Pending`]: c.pending, [`${prefix}Revision`]: c.revision, [`${prefix}Approved`]: c.approved, [`${prefix}Rejected`]: c.rejected });
+    api.get('/api/leave-requests/my-status-counts').then(({ counts }) => setBadgeCounts(prev => ({ ...prev, ...stage('l', counts) }))).catch(() => {});
+    api.get('/api/ot-requests/my-status-counts').then(({ counts }) => setBadgeCounts(prev => ({ ...prev, ...stage('o', counts) }))).catch(() => {});
+    if (!canAccessVisit(user)) return;
     try {
       const { counts } = await api.get('/api/visit-requests/my-status-counts');
       setBadgeCounts(prev => ({ ...prev, vDraft: counts.draft, vPending: counts.pending, vRevision: counts.revision, vApproved: counts.approved, vCompleted: counts.completed, vRejected: counts.rejected }));
@@ -28,6 +33,7 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const lastUnread = useRef(null);
   const refreshBadges = useCallback(async (user) => {
     const counts = { pending: 0, unread: 0, pendingLeave: 0, pendingOT: 0 };
     try {
@@ -44,6 +50,11 @@ export function AuthProvider({ children }) {
       }
       const notif = await api.get('/api/notifications');
       counts.unread = notif.unread;
+      // มีแจ้งเตือนใหม่เข้ามาระหว่างใช้งาน -> ส่งสัญญาณให้กระดิ่งเด้งป๊อปอัพเล็กๆ (ไม่เด้งตอนโหลดหน้าครั้งแรก)
+      if (lastUnread.current !== null && notif.unread > lastUnread.current) {
+        window.dispatchEvent(new CustomEvent('trisak:new-notif', { detail: { added: notif.unread - lastUnread.current, latest: (notif.notifications || [])[0] || null } }));
+      }
+      lastUnread.current = notif.unread;
     } catch (e) { /* ignore */ }
     setBadgeCounts(prev => ({ ...prev, ...counts }));
   }, []);

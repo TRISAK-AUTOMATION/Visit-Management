@@ -1,6 +1,6 @@
 // client/src/pages/Login.jsx
 import React, { useEffect, useRef, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
 import { useToast } from '../lib/ToastContext';
 import logoWhite from '../assets/trisak-logo-white.png';
@@ -25,6 +25,10 @@ export default function Login() {
   const { me, login } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
+  const loc = useLocation();
+  // กลับไปหน้าที่ตั้งใจจะเข้า (ถ้ามี) ไม่งั้นเข้า Profile Dashboard — กัน loop ไม่วนกลับ /login
+  const from = loc.state && loc.state.from;
+  const landing = (from && from.pathname && !['/login', '/'].includes(from.pathname)) ? `${from.pathname}${from.search || ''}${from.hash || ''}` : '/profile';
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -91,14 +95,14 @@ export default function Login() {
     };
   }, []);
 
-  if (me) return <Navigate to="/dashboard" replace />;
+  if (me) return <Navigate to={landing} replace />;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
     try {
       await login(username.trim(), password, remember);
-      navigate('/dashboard');
+      navigate(landing, { replace: true });
     } catch (err) {
       toast(err.message, 'error');
     } finally {

@@ -46,9 +46,9 @@ const FORM_GROUPS = [
   { end: 'GRP_contact', title: 'ข้อมูลผู้ติดต่อ', en: 'Contact Information', anchors: ['contact_person', 'contact_phone'], builtin: ['Contact (ชื่อ / ตำแหน่ง / เบอร์โทร / อีเมล) — เพิ่มได้หลายคน'] },
   { end: 'GRP_visit', title: 'ข้อมูลการเข้าพบ', en: 'Visit Information', anchors: ['TOP', 'visit_date', 'time_from', 'time_to', 'job_type', 'transport', 'license_plate', 'purpose', 'location', 'product'],
     builtin: ['Request Date', 'Visit Date', 'Time Out / In', 'Job Type', 'Transport', 'Car License', 'Purpose', 'Location', 'Product'] },
+  { end: 'GRP_trip', title: 'การเดินทาง / หลังปฏิบัติงาน', en: 'Trip & Post-visit', anchors: ['mileage_out', 'mileage_in', 'ot_hours'],
+    builtin: ['Mileage Out/In', 'OT Hours'] },
   { end: 'GRP_people', title: 'ผู้ร่วมงาน', en: 'Accompanied Employees', anchors: ['participants'], builtin: ['Employees'] },
-  { end: 'GRP_trip', title: 'การเดินทาง / หลังปฏิบัติงาน', en: 'Trip & Post-visit', anchors: ['mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back', 'ot_hours'],
-    builtin: ['Mileage Out/In', 'Actual Time Out/Back', 'OT Hours'] },
   { end: 'notes', title: 'หมายเหตุ (Remark)', en: 'Remark', anchors: ['notes'], builtin: ['Remark'] }
 ];
 

@@ -4,6 +4,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+import { useAuth } from '../lib/AuthContext';
 
 const STATUS_TH = { draft: 'ฉบับร่าง', pending: 'รออนุมัติ', revision: 'รอแก้ไข', approved: 'อนุมัติแล้ว', rejected: 'ไม่อนุมัติ', cancelled: 'ยกเลิกแล้ว' };
 const TABS = [{ f: 'all', label: 'ทั้งหมด' }, { f: 'draft', label: 'ฉบับร่าง' }, { f: 'pending', label: 'รออนุมัติ' }, { f: 'revision', label: 'รอแก้ไข' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }];
@@ -45,13 +46,18 @@ export default function MyOT() {
   const navigate = useNavigate();
   const toast = useToast();
   const [rows, setRows] = useState([]);
-  const [searchParams] = useSearchParams();
-  const [tab, setTab] = useState(() => { const s = searchParams.get('status'); return ['all','draft','pending','revision','approved','rejected'].includes(s) ? s : 'all'; });
+  const { refreshMyVisit } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // ขั้นตอนที่เลือกอยู่ผูกกับ URL (?status=) เพื่อให้เมนูซ้ายกับแท็บตรงกันเสมอ และกด back/ลิงก์ตรงมาได้
+  const statusParam = searchParams.get('status');
+  const tab = ['draft', 'pending', 'revision', 'approved', 'rejected'].includes(statusParam) ? statusParam : 'all';
+  const setTab = (f) => setSearchParams(f === 'all' ? {} : { status: f });
   const [detail, setDetail] = useState(null);
 
   const load = async () => {
     const { requests } = await api.get('/api/ot-requests?scope=mine');
     setRows(requests);
+    refreshMyVisit(); // อัปเดตตัวเลขแต่ละขั้นตอนที่เมนูซ้าย
   };
   useEffect(() => { load(); }, []);
 

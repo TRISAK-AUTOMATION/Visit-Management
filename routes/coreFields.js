@@ -12,7 +12,7 @@ const router = express.Router();
 router.get('/', requireAuth, (req, res) => {
   const rows = db.prepare('SELECT * FROM core_field_settings ORDER BY sort_order ASC, field_key ASC').all();
   res.json({
-    settings: rows.map(r => ({ ...r, is_visible: !!r.is_visible, is_required: !!r.is_required, show_in_email: !!r.show_in_email }))
+    settings: rows.filter(r => !['actual_time_out', 'actual_time_back'].includes(r.field_key)).map(r => ({ ...r, is_visible: !!r.is_visible, is_required: !!r.is_required, show_in_email: !!r.show_in_email }))
   });
 });
 

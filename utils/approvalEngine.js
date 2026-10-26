@@ -153,10 +153,19 @@ function isWorkflowParticipant(module, requestId, userId) {
 }
 
 // รายการ request_id ที่ userId เป็นผู้อนุมัติ - onlyCurrentPending = true จะกรองเหลือเฉพาะที่รอ userId ตัดสินใจ ณ ขณะนี้จริงๆ
+
+// ปิด workflow เมื่อคำขอถูกยกเลิก (ไม่งั้นยังค้างเป็น "รอผู้อนุมัติ" ทั้งที่คำขอถูกยกเลิกไปแล้ว)
+function closeWorkflow(module, requestId) {
+  dbModule.prepare(`UPDATE request_workflows SET status = 'cancelled' WHERE module = ? AND request_id = ? AND status = 'pending'`).run(module, requestId);
+}
+
 function listRequestIdsForApprover(module, userId, { onlyCurrentPending = false } = {}) {
   if (onlyCurrentPending) {
+    // นับเฉพาะคำขอที่ยังมีสถานะ pending จริง (กันคำขอที่ถูกยกเลิกแล้วแต่ workflow ค้าง)
+    const table = REQUEST_TABLE[module];
     const rows = dbModule.prepare(`
       SELECT w.request_id FROM request_workflows w
+      JOIN ${table} r ON r.id = w.request_id AND r.status = 'pending'
       JOIN request_workflow_states s ON s.workflow_id = w.id AND s.state_index = w.current_state_index
       JOIN request_workflow_approvers a ON a.workflow_state_id = s.id
       WHERE w.module = ? AND w.status = 'pending' AND a.user_id = ? AND a.decision IS NULL
@@ -309,6 +318,7 @@ module.exports = {
   canResync,
   resyncWorkflow,
   listRequestIdsForApprover,
+  closeWorkflow,
   hasEverBeenApprover,
   decide,
   FALLBACK_STATE_NAME

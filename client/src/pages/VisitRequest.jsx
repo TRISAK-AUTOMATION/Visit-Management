@@ -1077,6 +1077,18 @@ export default function VisitRequest() {
                 {anchored('GRP_visit').length > 0 && <div className="vf-grid" style={{ marginTop: 16 }}>{anchored('GRP_visit')}</div>}
               </Group>
 
+              <Group title="Trip & Post-visit Details" th="ข้อมูลการเดินทางและหลังปฏิบัติงาน"
+                tools={<button type="button" className="vf-link" onClick={() => setTripOpen(v => !v)}>{tripOpen ? 'Hide' : 'Show'}</button>}>
+                {(tripOpen || ['mileage_out', 'mileage_in', 'ot_hours'].some(k => form[k] || err(`core_${k}`))) ? (
+                  <div className="vf-grid">
+                    {orderedKeys(['mileage_out', 'mileage_in', 'ot_hours']).map(renderCore)}
+                  </div>
+                ) : (
+                  <div className="vf-hint" style={{ marginTop: 0 }}>Mileage and OT hours — กรอกเมื่อมีข้อมูล (มักบันทึกหลังกลับจากการเข้าพบ)</div>
+                )}
+                {anchored('GRP_trip').length > 0 && <div className="vf-grid" style={{ marginTop: 16 }}>{anchored('GRP_trip')}</div>}
+              </Group>
+
               <Group title="Accompanied Employees" th="ผู้ร่วมงาน">
                 {cf('participants').is_visible && (
                   <Field fid="core_participants" label="Employees" th={cf('participants').label} required={!!cf('participants').is_required} error={err('core_participants')} ok={cf('participants').is_required && isOk('core_participants')}>
@@ -1093,17 +1105,6 @@ export default function VisitRequest() {
                 {anchored('GRP_people').length > 0 && <div className="vf-grid" style={{ marginTop: 16 }}>{anchored('GRP_people')}</div>}
               </Group>
 
-              <Group title="Trip & Post-visit Details" th="ข้อมูลการเดินทางและหลังปฏิบัติงาน"
-                tools={<button type="button" className="vf-link" onClick={() => setTripOpen(v => !v)}>{tripOpen ? 'Hide' : 'Show'}</button>}>
-                {(tripOpen || ['mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back', 'ot_hours'].some(k => form[k] || err(`core_${k}`))) ? (
-                  <div className="vf-grid">
-                    {orderedKeys(['mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back', 'ot_hours']).map(renderCore)}
-                  </div>
-                ) : (
-                  <div className="vf-hint" style={{ marginTop: 0 }}>Mileage, actual time out/back and OT hours — กรอกเมื่อมีข้อมูล (มักบันทึกหลังกลับจากการเข้าพบ)</div>
-                )}
-                {anchored('GRP_trip').length > 0 && <div className="vf-grid" style={{ marginTop: 16 }}>{anchored('GRP_trip')}</div>}
-              </Group>
 
             </Section>
 

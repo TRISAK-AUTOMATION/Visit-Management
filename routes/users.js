@@ -33,10 +33,13 @@ router.put('/me', requireAuth, (req, res) => {
   if (!isValidDepartment(department)) {
     return res.status(400).json({ error: 'แผนกไม่ถูกต้อง กรุณาเลือกจากรายการ' });
   }
+  // แผนกมีผลต่อสิทธิ์ (เช่น เมนู Visit ของแผนก Engineer และสายอนุมัติ) จึงให้เฉพาะ Admin เปลี่ยนได้ — พนักงานแก้ได้แค่ข้อมูลส่วนตัว
+  const cur = db.prepare('SELECT department FROM users WHERE id = ?').get(req.session.userId);
+  const newDept = req.session.role === 'Admin' ? department : (cur ? cur.department : '');
   db.prepare(`
     UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, department = ?, email_notify = ?, avatar_url = ?
     WHERE id = ?
-  `).run(full_name.trim(), email || '', phone || '', position || '', department, email_notify ? 1 : 0, avatar_url || null, req.session.userId);
+  `).run(full_name.trim(), email || '', phone || '', position || '', newDept, email_notify ? 1 : 0, avatar_url || null, req.session.userId);
   res.json({ ok: true });
 });
 

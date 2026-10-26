@@ -282,13 +282,14 @@ export default function Customers() {
         <div className="card">
           <div className="card-body" style={{ padding: 0 }}>
             <table>
-              <thead><tr><th>รหัสลูกค้า</th><th>ชื่อบริษัท</th><th>Sales</th><th>ที่อยู่</th><th>Level</th><th>Company</th><th>เบอร์โทร</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+              <thead><tr><th>รหัสลูกค้า</th><th>ชื่อบริษัท</th><th>Sales</th><th>SSO</th><th>ที่อยู่</th><th>Level</th><th>Company</th><th>เบอร์โทร</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
               <tbody>
                 {customers.length ? customers.map(c => (
                   <tr key={c.id} style={c.is_archived ? { opacity: 0.55 } : undefined}>
                     <td>{c.code}</td>
                     <td>{c.name}</td>
                     <td>{c.contact_person || '-'}</td>
+                    <td>{c.sso || '-'}</td>
                     <td style={addrCell} title={c.address || ''}>{c.address || '-'}</td>
                     <td>
                       <select value={c.level || ''} onChange={e => changeLevel(c, e.target.value)}
@@ -306,7 +307,7 @@ export default function Customers() {
                       <button className="btn btn-danger btn-sm" onClick={() => remove(c.id)}>ลบ</button>
                     </td>
                   </tr>
-                )) : <tr><td colSpan={9} className="empty">ไม่พบข้อมูลลูกค้า</td></tr>}
+                )) : <tr><td colSpan={10} className="empty">ไม่พบข้อมูลลูกค้า</td></tr>}
               </tbody>
             </table>
           </div>
@@ -316,15 +317,15 @@ export default function Customers() {
         <div className="card">
           <div className="card-body" style={{ padding: 0 }}>
             <table>
-              <thead><tr><th>รหัสลูกค้า</th><th>ชื่อบริษัท</th><th>Sales</th><th>ที่อยู่</th><th>Level</th></tr></thead>
+              <thead><tr><th>รหัสลูกค้า</th><th>ชื่อบริษัท</th><th>Sales</th><th>SSO</th><th>ที่อยู่</th><th>Level</th></tr></thead>
               <tbody>
                 {customers.length ? customers.filter(c => !c.is_archived).map(c => (
                   <tr key={c.id}>
-                    <td>{c.code}</td><td>{c.name}</td><td>{c.contact_person || '-'}</td>
+                    <td>{c.code}</td><td>{c.name}</td><td>{c.contact_person || '-'}</td><td>{c.sso || '-'}</td>
                     <td style={addrCell} title={c.address || ''}>{c.address || '-'}</td>
                     <td><LevelPill value={c.level} /></td>
                   </tr>
-                )) : <tr><td colSpan={5} className="empty">ไม่พบข้อมูลลูกค้า</td></tr>}
+                )) : <tr><td colSpan={6} className="empty">ไม่พบข้อมูลลูกค้า</td></tr>}
               </tbody>
             </table>
           </div>

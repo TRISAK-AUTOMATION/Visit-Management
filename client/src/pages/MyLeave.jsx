@@ -4,6 +4,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+import { useAuth } from '../lib/AuthContext';
 
 const STATUS_TH = { draft: 'ฉบับร่าง', pending: 'รออนุมัติ', revision: 'รอแก้ไข', approved: 'อนุมัติแล้ว', rejected: 'ไม่อนุมัติ', cancelled: 'ยกเลิกแล้ว' };
 const TABS = [{ f: 'all', label: 'ทั้งหมด' }, { f: 'draft', label: 'ฉบับร่าง' }, { f: 'pending', label: 'รออนุมัติ' }, { f: 'revision', label: 'รอแก้ไข' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }];
@@ -52,13 +53,18 @@ export default function MyLeave() {
   const navigate = useNavigate();
   const toast = useToast();
   const [rows, setRows] = useState([]);
-  const [searchParams] = useSearchParams();
-  const [tab, setTab] = useState(() => { const s = searchParams.get('status'); return ['all','draft','pending','revision','approved','rejected'].includes(s) ? s : 'all'; });
+  const { me, refreshMyVisit } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // ขั้นตอนที่เลือกอยู่ผูกกับ URL (?status=) เพื่อให้เมนูซ้ายกับแท็บตรงกันเสมอ และกด back/ลิงก์ตรงมาได้
+  const statusParam = searchParams.get('status');
+  const tab = ['draft', 'pending', 'revision', 'approved', 'rejected'].includes(statusParam) ? statusParam : 'all';
+  const setTab = (f) => setSearchParams(f === 'all' ? {} : { status: f });
   const [detail, setDetail] = useState(null);
 
   const load = async () => {
     const { requests } = await api.get('/api/leave-requests?scope=mine');
     setRows(requests);
+    refreshMyVisit(); // อัปเดตตัวเลขแต่ละขั้นตอนที่เมนูซ้าย
   };
   useEffect(() => { load(); }, []);
 
@@ -71,6 +77,13 @@ export default function MyLeave() {
 
   const submitDraft = async (id) => {
     try { await api.post(`/api/leave-requests/${id}/submit`); toast('ส่งคำขอสำเร็จ', 'success'); load(); }
+    catch (err) { toast(err.message, 'error'); }
+  };
+
+  const adminCancel = async (id) => {
+    const note = prompt('ยกเลิกใบลาที่อนุมัติแล้ว — ระบบจะคืนวันลาให้\nระบุเหตุผล (ถ้ามี):');
+    if (note === null) return;
+    try { await api.post(`/api/leave-requests/${id}/cancel`, { note }); toast('ยกเลิกใบลาและคืนวันลาแล้ว', 'success'); load(); }
     catch (err) { toast(err.message, 'error'); }
   };
 
@@ -112,6 +125,7 @@ export default function MyLeave() {
                   <td>
                     <button className="btn btn-outline btn-sm" onClick={() => openDetail(r.id)}>ดูรายละเอียด</button>{' '}
                     {r.status === 'approved' && <><a className="btn btn-outline btn-sm" href={`/api/leave-requests/${r.id}/pdf`} target="_blank" rel="noreferrer">PDF</a>{' '}</>}
+                    {r.status === 'approved' && me.role === 'Admin' && <><button className="btn btn-danger btn-sm" onClick={() => adminCancel(r.id)}>ยกเลิก</button>{' '}</>}
                     {['draft', 'pending', 'revision'].includes(r.status) && (
                       <>
                         {/* ห้ามแก้ไขตอน pending เพราะกำลังอยู่ระหว่างอนุมัติ (อาจผ่านบาง State ไปแล้ว) - แก้ได้เฉพาะ draft/revision */}

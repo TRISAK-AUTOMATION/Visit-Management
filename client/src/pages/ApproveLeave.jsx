@@ -47,7 +47,7 @@ function durationLabel(r) {
 
 export default function ApproveLeave() {
   const toast = useToast();
-  const { refreshBadges } = useAuth();
+  const { me, refreshBadges } = useAuth();
   const [rows, setRows] = useState([]);
   const [tab, setTab] = useState(() => { const s = new URLSearchParams(window.location.search).get('status'); return ['pending','approved','rejected','revision'].includes(s) ? s : 'pending'; });
   const [detail, setDetail] = useState(null);
@@ -70,6 +70,18 @@ export default function ApproveLeave() {
     try {
       const r = await api.post(`/api/leave-requests/${id}/resync-workflow`);
       toast(`รีเซ็ตสายอนุมัติแล้ว — รอ ${(r.waiting_for || []).join(', ') || 'ผู้อนุมัติ'}`, 'success');
+      setDetail(null);
+      load();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+
+  // Admin ยกเลิกใบลาที่อนุมัติแล้ว (ระบบคืนวันลาให้ผู้ขอ และแจ้งเตือนผู้ขอ)
+  const adminCancel = async (id) => {
+    const note = prompt('ยกเลิกใบลาที่อนุมัติแล้ว — ระบบจะคืนวันลาให้ผู้ขอ\nระบุเหตุผล (ถ้ามี):');
+    if (note === null) return;
+    try {
+      await api.post(`/api/leave-requests/${id}/cancel`, { note });
+      toast('ยกเลิกใบลาและคืนวันลาแล้ว', 'success');
       setDetail(null);
       load();
     } catch (err) { toast(err.message, 'error'); }
@@ -106,6 +118,9 @@ export default function ApproveLeave() {
                   <td>{durationLabel(r)}</td>
                   <td>
                     <button className="btn btn-outline btn-sm" onClick={() => openDetail(r.id)}>ดู</button>{' '}
+                    {r.status === 'approved' && me.role === 'Admin' && (
+                      <button className="btn btn-danger btn-sm" onClick={() => adminCancel(r.id)}>ยกเลิกใบลา</button>
+                    )}
                     {r.status === 'pending' && r.can_act && (
                       <>
                         <button className="btn btn-success btn-sm" onClick={() => decide(r.id, 'approve')}>อนุมัติ</button>{' '}
@@ -141,6 +156,11 @@ export default function ApproveLeave() {
               <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '14px 0' }} />
               <b>ขั้นตอนการอนุมัติ</b>
               <WorkflowTimeline workflow={detail.workflow} />
+              {detail.request.status === 'approved' && me.role === 'Admin' && (
+                <div className="form-actions" style={{ justifyContent: 'flex-start', marginTop: 12 }}>
+                  <button className="btn btn-danger" onClick={() => adminCancel(detail.request.id)}>ยกเลิกใบลา (คืนวันลา)</button>
+                </div>
+              )}
               {detail.request.status === 'pending' && detail.can_act && (
                 <div className="form-actions" style={{ justifyContent: 'flex-start', marginTop: 12 }}>
                   <button className="btn btn-success" onClick={() => decide(detail.request.id, 'approve')}>อนุมัติ</button>
