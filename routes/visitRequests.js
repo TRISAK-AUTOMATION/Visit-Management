@@ -193,7 +193,7 @@ function generateCode() {
 // GET /api/visit-requests/my-status-counts  -> จำนวนคำขอ Visit ของฉัน แยกตามขั้นตอน (ใช้โชว์ตัวเลขที่เมนูข้างซ้าย)
 // ต้องอยู่ก่อน route '/:id' ไม่งั้นจะถูกตีความว่า id = 'my-status-counts'
 router.get('/my-status-counts', requireAuth, (req, res) => {
-  // approved = อนุมัติแล้วแต่ยังไม่แจ้งเสร็จสิ้น (กำลังดำเนินการ), completed = ผู้ขอกด "Visit เสร็จสิ้น" แล้ว
+  // approved = อนุมัติแล้วแต่ยังไม่แจ้งเสร็จสิ้น (กำลังดำเนินการ), completed = ผู้ขอกด "Visit Completed" แล้ว
   const rows = db.prepare(`
     SELECT CASE WHEN status = 'approved' AND completed_at IS NOT NULL THEN 'completed' ELSE status END AS st, COUNT(*) AS c
     FROM visit_requests WHERE requester_id = ? GROUP BY st`).all(req.session.userId);
@@ -609,7 +609,7 @@ function todayBangkok() {
   return new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
-// COMPLETE: ผู้ขอแจ้งว่า "Visit เสร็จสิ้น" หลังไปพบลูกค้าแล้ว -> คำขอย้ายไปขั้น "Visit เสร็จสิ้น"
+// COMPLETE: ผู้ขอแจ้งว่า "Visit Completed" หลังไปพบลูกค้าแล้ว -> คำขอย้ายไปขั้น "Visit Completed"
 // ทำได้เฉพาะคำขอที่อนุมัติแล้ว และถึงวันที่ไป Visit แล้ว (ไม่เปลี่ยนสถานะอนุมัติ ไม่ต้องขออนุมัติใหม่)
 router.post('/:id/complete', requireAuth, (req, res) => {
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
@@ -620,12 +620,12 @@ router.post('/:id/complete', requireAuth, (req, res) => {
   if (vr.visit_date > todayBangkok()) return res.status(400).json({ error: 'ยังไม่ถึงวันที่ไป Visit จึงยังแจ้งเสร็จสิ้นไม่ได้' });
   const note = String(req.body.note || '').trim().slice(0, 1000);
   db.prepare(`UPDATE visit_requests SET completed_at = CURRENT_TIMESTAMP, completion_note = ? WHERE id = ?`).run(note || null, vr.id);
-  db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, note, channel) VALUES (?, ?, 'แจ้ง Visit เสร็จสิ้น', ?, 'web')`).run(vr.id, req.session.userId, note || null);
-  logAction(req.session.userId, 'complete_visit', `แจ้ง Visit เสร็จสิ้น #${vr.code}`);
+  db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, note, channel) VALUES (?, ?, 'แจ้ง Visit Completed', ?, 'web')`).run(vr.id, req.session.userId, note || null);
+  logAction(req.session.userId, 'complete_visit', `แจ้ง Visit Completed #${vr.code}`);
   res.json({ ok: true });
 });
 
-// REOPEN: ผู้ขอย้อนกลับจาก "Visit เสร็จสิ้น" มาเป็น "อนุมัติแล้ว (กำลังดำเนินการ)" เผื่อกดผิด
+// REOPEN: ผู้ขอย้อนกลับจาก "Visit Completed" มาเป็น "อนุมัติแล้ว (กำลังดำเนินการ)" เผื่อกดผิด
 router.post('/:id/reopen', requireAuth, (req, res) => {
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
   if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });

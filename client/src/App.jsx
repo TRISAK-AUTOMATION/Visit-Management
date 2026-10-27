@@ -19,7 +19,9 @@ import OTRequest from './pages/OTRequest';
 import MyOT from './pages/MyOT';
 import ApproveOT from './pages/ApproveOT';
 import AdminLeaveBalances from './pages/AdminLeaveBalances';
-import ReportDashboard from './pages/ReportDashboard';
+import ReportHub from './pages/ReportHub';
+import ReportList from './pages/ReportList';
+import ReportSummary from './pages/ReportSummary';
 import ReportEmployee from './pages/ReportEmployee';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
@@ -37,11 +39,11 @@ import AdminPdfSettings from './pages/AdminPdfSettings';
 import AdminBrands from './pages/AdminBrands';
 import AdminApprovalTemplates from './pages/AdminApprovalTemplates';
 
-// /report: Approver/Admin เห็นภาพรวมทุกคน, พนักงานทั่วไปเข้ารายงานของตัวเองโดยตรง
-function ReportHome() {
+// Employee Summary: เฉพาะ Approver/Admin (Backend ตรวจสิทธิ์ซ้ำอีกชั้น)
+function ReportSummaryGuard() {
   const { me } = useAuth();
   if (me && me.role !== 'Approver' && me.role !== 'Admin') return <Navigate to={`/report/employee/${me.id}`} replace />;
-  return <ReportDashboard />;
+  return <ReportSummary />;
 }
 
 function ReportEmployeeGuard() {
@@ -69,7 +71,11 @@ export default function App() {
       <Route path="/my-ot" element={<ProtectedRoute><MyOT /></ProtectedRoute>} />
       <Route path="/approve-ot" element={<ProtectedRoute check={(me) => me.role === 'Approver' || me.role === 'Admin' || me.can_approve}><ApproveOT /></ProtectedRoute>} />
       <Route path="/admin-leave-balances" element={<ProtectedRoute roles={['Admin']}><AdminLeaveBalances /></ProtectedRoute>} />
-      <Route path="/report" element={<ProtectedRoute><ReportHome /></ProtectedRoute>} />
+      <Route path="/report" element={<ProtectedRoute><ReportHub /></ProtectedRoute>} />
+      <Route path="/report/visit" element={<ProtectedRoute><ReportList key="visit" type="visit" /></ProtectedRoute>} />
+      <Route path="/report/ot" element={<ProtectedRoute><ReportList key="ot" type="ot" /></ProtectedRoute>} />
+      <Route path="/report/leave" element={<ProtectedRoute><ReportList key="leave" type="leave" /></ProtectedRoute>} />
+      <Route path="/report/summary" element={<ProtectedRoute><ReportSummaryGuard /></ProtectedRoute>} />
       <Route path="/report/employee/:id" element={<ProtectedRoute><ReportEmployeeGuard /></ProtectedRoute>} />
       <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />

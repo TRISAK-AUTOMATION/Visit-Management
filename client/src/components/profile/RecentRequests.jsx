@@ -19,7 +19,7 @@ export default function RecentRequests({ rows }) {
                   <td><span className={`pd-kind k-${r.kind}`}>{KIND[r.kind]}</span></td>
                   <td><div className="pd-ttl">{r.title || '-'}</div><div className="muted" style={{ fontSize: 11 }}>{r.code}</div></td>
                   <td>{fmtDate(r.d)}{r.d2 && r.d2 !== r.d ? ` – ${fmtDate(r.d2)}` : ''}</td>
-                  <td><span className={`badge ${r.status}`}>{r.status === 'completed' ? 'เสร็จสิ้น' : statusLabel(r.status)}</span></td>
+                  <td><span className={`badge ${r.status}`}>{r.status === 'completed' ? 'Visit Completed' : statusLabel(r.status)}</span></td>
                   <td><Link to={`${PATH[r.kind]}?status=${r.status === 'completed' ? 'completed' : r.status}`}>ดู</Link></td>
                 </tr>
               ))}

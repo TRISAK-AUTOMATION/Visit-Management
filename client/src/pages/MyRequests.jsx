@@ -14,14 +14,14 @@ const TABS = [
   { f: 'pending', label: 'รออนุมัติ' },
   { f: 'revision', label: 'รอแก้ไข' },
   { f: 'approved', label: 'Approve@Visiting' },
-  { f: 'completed', label: 'Visit เสร็จสิ้น' },
+  { f: 'completed', label: 'Visit Completed' },
   { f: 'rejected', label: 'ไม่อนุมัติ' }
 ];
 
-// "ขั้นตอน" ของคำขอ = สถานะอนุมัติ + การที่ผู้ขอกดแจ้ง Visit เสร็จสิ้นแล้วหรือยัง
+// "ขั้นตอน" ของคำขอ = สถานะอนุมัติ + การที่ผู้ขอกดแจ้ง Visit Completed แล้วหรือยัง
 // (approved + completed_at = เสร็จสิ้น ; สถานะอนุมัติในระบบยังเป็น approved เหมือนเดิม)
 const stageOf = (v) => (v.status === 'approved' && v.completed_at ? 'completed' : v.status);
-const STAGE_LABEL = { approved: 'Approve@Visiting', completed: 'Visit เสร็จสิ้น' };
+const STAGE_LABEL = { approved: 'Approve@Visiting', completed: 'Visit Completed' };
 const stageLabel = (st) => STAGE_LABEL[st] || statusLabel(st);
 
 // แถบขั้นตอนเล็กๆ ในแต่ละแถว: ร่าง -> รออนุมัติ -> อนุมัติ -> เสร็จสิ้น (ให้พนักงานเห็นว่าคำขอถึงขั้นไหนแล้ว)
@@ -60,7 +60,7 @@ export default function MyRequests() {
     setSearchParams(next);
   };
   const [modalData, setModalData] = useState(null); // { request, history }
-  const [completing, setCompleting] = useState(null); // { id, code, note } — กล่องแจ้ง Visit เสร็จสิ้น
+  const [completing, setCompleting] = useState(null); // { id, code, note } — กล่องแจ้ง Visit Completed
 
   const load = async () => {
     const { requests } = await api.get('/api/visit-requests?scope=mine');
@@ -100,7 +100,7 @@ export default function MyRequests() {
   const confirmComplete = async () => {
     try {
       await api.post(`/api/visit-requests/${completing.id}/complete`, { note: completing.note });
-      toast('แจ้ง Visit เสร็จสิ้นแล้ว คำขอย้ายไปขั้น "Visit เสร็จสิ้น"', 'success');
+      toast('แจ้ง Visit Completed แล้ว คำขอย้ายไปขั้น "Visit Completed"', 'success');
       setCompleting(null);
       load();
     } catch (err) { toast(err.message, 'error'); }
@@ -167,7 +167,7 @@ export default function MyRequests() {
                     )}{' '}
                     {v.status === 'approved' && !v.completed_at && (
                       <button className="btn btn-success btn-sm" onClick={() => setCompleting({ id: v.id, code: v.code, note: '' })}>
-                        ✓ แจ้ง Visit เสร็จสิ้น
+                        ✓ แจ้ง Visit Completed
                       </button>
                     )}{' '}
                     {v.status === 'approved' && v.completed_at && (
@@ -199,17 +199,17 @@ export default function MyRequests() {
         <div className="modal-bg" onClick={(e) => { if (e.target === e.currentTarget) setCompleting(null); }}>
           <div className="modal">
             <div className="modal-head">
-              <h3>แจ้ง Visit เสร็จสิ้น #{completing.code}</h3>
+              <h3>แจ้ง Visit Completed #{completing.code}</h3>
               <button className="modal-close" onClick={() => setCompleting(null)}>&times;</button>
             </div>
             <div className="modal-body">
-              <p className="muted" style={{ marginTop: 0 }}>ไปพบลูกค้าเรียบร้อยแล้ว? คำขอนี้จะย้ายไปขั้น "Visit เสร็จสิ้น" (ย้อนกลับได้ภายหลัง)</p>
+              <p className="muted" style={{ marginTop: 0 }}>ไปพบลูกค้าเรียบร้อยแล้ว? คำขอนี้จะย้ายไปขั้น "Visit Completed" (ย้อนกลับได้ภายหลัง)</p>
               <label className="muted" style={{ fontSize: 12 }}>สรุปผลการเข้าพบ (ไม่บังคับ)</label>
               <textarea style={{ width: '100%', minHeight: 90, marginTop: 4 }} maxLength={1000} value={completing.note}
                 onChange={(e) => setCompleting(c => ({ ...c, note: e.target.value }))} placeholder="เช่น ลูกค้าสนใจสินค้า ขอใบเสนอราคา..." />
               <div className="form-actions" style={{ marginTop: 12 }}>
                 <button className="btn btn-outline" onClick={() => setCompleting(null)}>ยกเลิก</button>
-                <button className="btn btn-success" onClick={confirmComplete}>ยืนยัน Visit เสร็จสิ้น</button>
+                <button className="btn btn-success" onClick={confirmComplete}>ยืนยัน Visit Completed</button>
               </div>
             </div>
           </div>

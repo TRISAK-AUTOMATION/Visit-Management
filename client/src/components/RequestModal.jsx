@@ -71,7 +71,7 @@ export default function RequestModal({ request, history, customFields, workflow,
           )}
           {request.status === 'approved' && request.completed_at && (
             <p style={{ background: '#d5f5f0', color: '#0f766e', padding: '6px 10px', borderRadius: 8 }}>
-              <b>Visit เสร็จสิ้น</b> · {fmtDateTime(request.completed_at)}{request.completion_note ? ` — ${request.completion_note}` : ''}
+              <b>Visit Completed</b> · {fmtDateTime(request.completed_at)}{request.completion_note ? ` — ${request.completion_note}` : ''}
             </p>
           )}
           <p><b>ลูกค้า/บริษัท:</b> {request.customer_name || '-'}</p>

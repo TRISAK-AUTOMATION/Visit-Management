@@ -22,7 +22,7 @@ export const ADMIN_TOOLS = [
 ];
 
 // เมนูย่อยของ Visit แยกตาม "ขั้นตอนของคำขอ" — คำขอแต่ละใบจะอยู่ในขั้นตอนเดียวตามสถานะปัจจุบัน
-// สร้าง -> ฉบับร่าง -> (ส่งคำขอ) รออนุมัติ -> รอแก้ไข / อนุมัติแล้ว (กำลังดำเนินการ) -> Visit เสร็จสิ้น (ผู้ขอกดเองหลังไปพบลูกค้า) / ไม่อนุมัติ ; My Requests = ดูทุกสถานะรวมกัน
+// สร้าง -> ฉบับร่าง -> (ส่งคำขอ) รออนุมัติ -> รอแก้ไข / อนุมัติแล้ว (กำลังดำเนินการ) -> Visit Completed (ผู้ขอกดเองหลังไปพบลูกค้า) / ไม่อนุมัติ ; My Requests = ดูทุกสถานะรวมกัน
 // badgeKey = จำนวนคำขอของฉันในขั้นตอนนั้น (นับจาก /api/visit-requests/my-status-counts)
 const VISIT_STAGES = [
   { href: '/visit-request', icon: '\uD83D\uDCDD', label: 'สร้างคำขอ' },
@@ -30,7 +30,7 @@ const VISIT_STAGES = [
   { href: '/my-requests?status=pending', icon: '\u23F3', label: 'รออนุมัติ', badgeKey: 'vPending', badgeTone: 'soft' },
   { href: '/my-requests?status=revision', icon: '\uD83D\uDD04', label: 'รอแก้ไข', badgeKey: 'vRevision', badgeTone: 'warn' },
   { href: '/my-requests?status=approved', icon: '\u2705', label: 'Approve@Visiting', badgeKey: 'vApproved', badgeTone: 'soft' },
-  { href: '/my-requests?status=completed', icon: '\uD83C\uDFC1', label: 'Visit เสร็จสิ้น', badgeKey: 'vCompleted', badgeTone: 'soft' },
+  { href: '/my-requests?status=completed', icon: '\uD83C\uDFC1', label: 'Visit Completed', badgeKey: 'vCompleted', badgeTone: 'soft' },
   { href: '/my-requests?status=rejected', icon: '\u26D4', label: 'ไม่อนุมัติ', badgeKey: 'vRejected', badgeTone: 'soft' },
   { href: '/my-requests', icon: '\uD83D\uDCCB', label: 'My Requests' },
 ];

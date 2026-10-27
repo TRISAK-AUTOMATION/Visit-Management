@@ -51,6 +51,7 @@ app.use('/api/ot-requests', require('./routes/otPdf'));
 app.use('/api/profile-dashboard', require('./routes/profileDashboard'));
 app.use('/api/kpi', require('./routes/kpi'));
 app.use('/api/report', require('./routes/report'));
+app.use('/api/report', require('./routes/reportData')); // รายงาน Visit/OT/Leave/Employee Summary + Export
 app.use('/api/approval-templates', require('./routes/approvalTemplates'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/users', require('./routes/users'));

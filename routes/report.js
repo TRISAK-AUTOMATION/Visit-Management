@@ -229,4 +229,7 @@ router.get('/employee/:id', (req, res) => {
   }
 });
 
+// ให้ routes/reportData.js ใช้นิยามเดียวกัน (Employee Summary ต้องตรงกับหน้าภาพรวมเดิมเสมอ)
+router.helpers = { selectEmployees, aggregatePerUser, kpiCounters, parseRange, round1 };
+
 module.exports = router;
