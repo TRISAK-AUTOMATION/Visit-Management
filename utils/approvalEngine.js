@@ -79,6 +79,10 @@ function resolvePlan(module, requesterId) {
   let plan = findTemplateForRequester(module, requesterId);
   if (!plan || !plan.states.length) plan = buildFallbackPlan(requesterId, module);
   plan.states = plan.states.filter(s => s.approverIds.length);
+  // คนเดียวไม่อนุมัติสองขั้น: ถ้าใครอยู่ในขั้นก่อนหน้าแล้ว ตัดชื่อเขาออกจากขั้นหลัง ๆ (ขั้นที่ว่างแล้วจะถูกข้าม)
+  const seen = new Set();
+  plan.states.forEach(s => { s.approverIds = s.approverIds.filter(id => !seen.has(id)); s.approverIds.forEach(id => seen.add(id)); });
+  plan.states = plan.states.filter(s => s.approverIds.length);
   if (!plan.states.length) {
     const allAdmins = dbModule.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
     const admins = eligibleApproverIds(allAdmins, requesterId, module);
@@ -271,6 +275,10 @@ function decide(module, requestId, userId, action, comment, requesterId) {
   const approverRow = dbModule.prepare(`SELECT * FROM request_workflow_approvers WHERE workflow_state_id = ? AND user_id = ?`).get(state.id, userId);
   if (!approverRow) throw new ApprovalError('คุณไม่ได้อยู่ในลำดับผู้อนุมัติของคำขอนี้ในขั้นตอนปัจจุบัน');
   if (approverRow.decision) throw new ApprovalError('คุณตัดสินใจคำขอนี้ไปแล้ว');
+  // กันคำขอเดิมที่สร้างไว้ก่อนมีกฎนี้: ถ้าเคยอนุมัติในขั้นก่อนหน้าของ workflow เดียวกันแล้ว ห้ามอนุมัติซ้ำในขั้นนี้
+  const prior = dbModule.prepare(`SELECT 1 FROM request_workflow_approvers a JOIN request_workflow_states s ON s.id = a.workflow_state_id
+    WHERE s.workflow_id = ? AND s.state_index < ? AND a.user_id = ? AND a.decision = 'approve' LIMIT 1`).get(wf.id, wf.current_state_index, userId);
+  if (prior) throw new ApprovalError('คุณอนุมัติคำขอนี้ในขั้นก่อนหน้าไปแล้ว ขั้นนี้ต้องให้ผู้อื่นอนุมัติ');
 
   dbModule.prepare(`UPDATE request_workflow_approvers SET decision = ?, comment = ?, decided_at = datetime('now') WHERE id = ?`)
     .run(action, comment || '', approverRow.id);
