@@ -120,7 +120,7 @@ router.get('/', requireAuth, (req, res) => {
     const rows = db.prepare(`
       SELECT o.*, u.full_name AS requester_name, u.department AS requester_department
       FROM ot_requests o JOIN users u ON u.id = o.requester_id
-      WHERE o.requester_id = ? ORDER BY o.created_at DESC
+      WHERE o.requester_id = ? ORDER BY o.created_at DESC, o.id DESC
     `).all(req.session.userId);
     return res.json({ requests: rows });
   }
@@ -136,13 +136,16 @@ router.get('/', requireAuth, (req, res) => {
     rows = db.prepare(`
       SELECT o.*, u.full_name AS requester_name, u.department AS requester_department
       FROM ot_requests o JOIN users u ON u.id = o.requester_id
-      WHERE o.status = ? ORDER BY o.created_at DESC
+      WHERE o.status = ? ORDER BY o.created_at DESC, o.id DESC
     `).all(wantedStatus);
     for (const r of rows) {
       if (r.status !== 'pending') continue;
       r.can_act = approvalEngine.canActOn('ot', r.id, req.session.userId);
       r.waiting_for = approvalEngine.currentApproverNames('ot', r.id).join(', ');
       r.can_resync = req.session.role === 'Admin' && approvalEngine.canResync('ot', r.id);
+      // "ส่งใหม่หลังแก้ไข" (Updated) แยกจากคำขอใหม่ (New): ดูรายการล่าสุดในประวัติ
+      const last = db.prepare(`SELECT action FROM ot_history WHERE ot_request_id = ? AND action LIKE 'ส่งคำขอ%' ORDER BY id DESC LIMIT 1`).get(r.id);
+      r.is_update = !!(last && last.action.startsWith('ส่งคำขอใหม่'));
     }
     return res.json({ requests: rows });
   }
@@ -199,7 +202,7 @@ router.get('/:id', requireAuth, (req, res) => {
   const history = db.prepare(`
     SELECT h.*, u.full_name AS actor_name FROM ot_history h
     LEFT JOIN users u ON u.id = h.action_by
-    WHERE h.ot_request_id = ? ORDER BY h.created_at ASC
+    WHERE h.ot_request_id = ? ORDER BY h.created_at ASC, h.id ASC
   `).all(req.params.id);
   const workflow = approvalEngine.getWorkflow('ot', ot.id);
   res.json({

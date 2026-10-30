@@ -56,12 +56,14 @@ app.use('/api/approval-templates', require('./routes/approvalTemplates'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/departments', require('./routes/departments'));
-app.use('/api/visit-requests', require('./routes/pdf'));
+app.use('/api/visit-requests', require('./routes/visitFormPdf')); // ใบขออนุมัติออกนอกสถานที่ (ครึ่ง A4) = /:id/pdf
+app.use('/api/visit-requests', require('./routes/pdf')); // ใบรายงานแบบเต็ม = /:id/pdf-report
 app.use('/api/system-logs', require('./routes/systemLogs'));
 app.use('/api/form-fields', require('./routes/formFields'));
 app.use('/api/core-field-settings', require('./routes/coreFields'));
 app.use('/api/retention-settings', require('./routes/retentionSettings'));
 app.use('/api/page-content', require('./routes/pageContent'));
+app.use('/api/form-options', require('./routes/formOptions'));
 app.use('/api/email-settings', require('./routes/emailSettings'));
 app.use('/api/pdf-settings', require('./routes/pdfSettings'));
 

@@ -1,6 +1,7 @@
 // client/src/components/report/ReportDetailModal.jsx - รายละเอียดรายการในรายงาน (อ่านอย่างเดียว) โหลดด้วย Record ID จริง
 import React, { useEffect, useState } from 'react';
 import RIcon from './ReportIcons';
+import VisitDetailView from './VisitDetailView';
 import { api, fmtDate, fmtDateTime } from '../../lib/api';
 
 const DATE_LABELS = new Set(['Visit Date', 'OT Date', 'Start Date', 'End Date']);
@@ -31,19 +32,22 @@ export default function ReportDetailModal({ type, id, onClose }) {
 
   return (
     <div className="rx-modal-bg" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="rx-modal" role="dialog" aria-modal="true" aria-label="รายละเอียดรายการ">
+      <div className={`rx-modal${data && data.visit ? ' rx-modal-visit' : ''}`} role="dialog" aria-modal="true" aria-label="รายละเอียดรายการ">
         <div className="rx-modal-head">
           <div>
             <div className="rx-modal-kicker">{TYPE_TITLE[type]} Request</div>
             <h3>{data ? `#${data.code}` : 'กำลังโหลด...'}</h3>
           </div>
           {data && <span className={`rx-badge s-${data.status}`}>{data.status_label}</span>}
+          {data && data.visit && <a className="rx-pdfbtn" href={`/api/visit-requests/${id}/pdf`} target="_blank" rel="noreferrer">เปิด PDF</a>}
           <button type="button" className="rx-x" onClick={onClose} aria-label="ปิด"><RIcon name="x" size={20} /></button>
         </div>
-        <div className="rx-modal-body">
+        {data && data.visit && <div className="vd-ro">🔒 โหมดดูอย่างเดียว — แก้ไขได้เฉพาะเจ้าของคำขอที่หน้า Visit ของตัวเอง</div>}
+        <div className={`rx-modal-body${data && data.visit ? ' vd-mode' : ''}`}>
           {error && <div className="rx-err">{error}</div>}
           {!data && !error && <div className="rx-skel-stack"><div className="rx-skel" /><div className="rx-skel" /><div className="rx-skel" style={{ width: '70%' }} /></div>}
-          {data && (
+          {data && data.visit && <VisitDetailView data={data} />}
+          {data && !data.visit && (
             <>
               <dl className="rx-fields">
                 {data.fields.map(f => (

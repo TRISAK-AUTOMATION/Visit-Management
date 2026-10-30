@@ -6,6 +6,10 @@ import Layout from '../components/Layout';
 import { usePageContent } from '../lib/PageContentContext';
 import { useAuth } from '../lib/AuthContext';
 import { api, fmtDate, statusLabel, canAccessVisit } from '../lib/api';
+import CountUp from '../components/profile/CountUp';
+import RIcon from '../components/report/ReportIcons';
+import ReportHubCards, { PERIODS } from '../components/report/ReportHubCards';
+import './dashboard-ui.css';
 
 const KIND_TH = { visit: 'Visit', leave: 'ลา', ot: 'OT' };
 const ZERO = { total: 0, pending: 0, approved: 0, rejected: 0 };
@@ -17,6 +21,7 @@ export default function Dashboard() {
   const { me } = useAuth();
   const [data, setData] = useState(null);
   const [tab, setTab] = useState('all'); // all | visit | leave | ot
+  const [period, setPeriod] = useState('month'); // ช่วงเวลาของตัวเลขบนการ์ดรายงาน
 
   useEffect(() => { api.get('/api/dashboard/stats').then(setData); }, []);
 
@@ -65,51 +70,72 @@ export default function Dashboard() {
   ].map(r => ({ ...r, items: kinds.filter(k => (todo[r.key]?.[k] || 0) > 0 && (r.key !== 'waiting' || !isEmployee)) }))
     .filter(r => r.items.length) : [];
 
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? 'สวัสดีตอนเช้า' : hour < 17 ? 'สวัสดีตอนบ่าย' : 'สวัสดีตอนเย็น';
+  const firstName = (me.full_name || '').split(' ')[0];
+  const todayText = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
+  const pendingTotal = data ? (isEmployee ? 0 : (data.stats?.pending || 0) + (data.leave_stats?.pending || 0) + (data.ot_stats?.pending || 0)) : 0;
+  const quick = [
+    ...(showVisit ? [{ to: '/visit-request', label: 'สร้างคำขอ Visit', icon: 'car' }] : []),
+    { to: '/leave-request', label: 'ขอลา', icon: 'calendar' },
+    { to: '/ot-request', label: 'ขอ OT', icon: 'clock' }
+  ];
+  const STAT = [
+    { k: 'total', label: scopeLabel, tone: 'blue', icon: 'sheet', val: stats.total, link: linkFor() },
+    { k: 'approved', label: 'อนุมัติแล้ว', tone: 'green', icon: 'check', val: stats.approved, link: linkFor('approved') },
+    { k: 'pending', label: 'รออนุมัติ', tone: 'orange', icon: 'clock', val: stats.pending, link: linkFor('pending') },
+    { k: 'rejected', label: 'ไม่อนุมัติ', tone: 'red', icon: 'x', val: stats.rejected, link: linkFor('rejected') }
+  ];
+
   return (
     <Layout title={pc('dashboard.title', 'Dashboard')}>
-      {!data ? <p className="muted">กำลังโหลดข้อมูล...</p> : (
+      <section className="rx-hero rx-rise" style={{ '--i': 0 }}>
+        <span className="rx-orbs"><i className="rx-orb o1" /><i className="rx-orb o2" /><i className="rx-orb o3" /></span>
+        <div className="rx-hero-text">
+          <h2>{greet}, {firstName}</h2>
+          <p>{todayText}{pendingTotal > 0 ? ` · มี ${pendingTotal} รายการรอการอนุมัติ` : ''}</p>
+        </div>
+        <div className="dx-quick">
+          {quick.map(q => <Link key={q.to} to={q.to} className="dx-quick-btn"><RIcon name={q.icon} size={16} />{q.label}</Link>)}
+        </div>
+      </section>
+
+      {!data ? (
+        <div className="dx-skel-row"><span className="rx-skel" /><span className="rx-skel" /><span className="rx-skel" /><span className="rx-skel" /></div>
+      ) : (
         <>
-          <div className="tabs">
-            {['all', ...kinds].map(t => (
-              <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{t === 'all' ? 'ทั้งหมด' : KIND_TH[t]}</div>
+          <div className="dx-sechead rx-rise" style={{ '--i': 1 }}>
+            <h3>ภาพรวมคำขอ</h3>
+            <div className="dx-tabs">
+              {['all', ...kinds].map(t => (
+                <button key={t} type="button" className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t === 'all' ? 'ทั้งหมด' : KIND_TH[t]}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="dx-stats">
+            {STAT.map((c, i) => (
+              <Link key={c.k} to={c.link} className={`dx-stat tone-${c.tone} rx-rise`} style={{ '--i': i + 2 }}>
+                <span className="dx-stat-ico"><RIcon name={c.icon} size={22} /></span>
+                <div>
+                  <div className="dx-stat-label">{c.label}</div>
+                  <div className="dx-stat-value"><b><CountUp key={`${tab}-${c.k}-${c.val}`} value={c.val} /></b><small>คำขอ</small></div>
+                </div>
+                <span className="dx-stat-go">ดูทั้งหมด &rarr;</span>
+              </Link>
             ))}
           </div>
 
-          <div className="stat-grid">
-            <div className="stat-card blue">
-              <div className="label">{scopeLabel}</div>
-              <div className="value">{stats.total}<span className="unit">คำขอ</span></div>
-              <Link className="more" to={linkFor()}>ดูทั้งหมด &rarr;</Link>
-            </div>
-            <div className="stat-card green">
-              <div className="label">อนุมัติแล้ว</div>
-              <div className="value">{stats.approved}<span className="unit">คำขอ</span></div>
-              <Link className="more" to={linkFor('approved')}>ดูทั้งหมด &rarr;</Link>
-            </div>
-            <div className="stat-card orange">
-              <div className="label">รออนุมัติ</div>
-              <div className="value">{stats.pending}<span className="unit">คำขอ</span></div>
-              <Link className="more" to={linkFor('pending')}>ดูทั้งหมด &rarr;</Link>
-            </div>
-            <div className="stat-card red">
-              <div className="label">ไม่อนุมัติ</div>
-              <div className="value">{stats.rejected}<span className="unit">คำขอ</span></div>
-              <Link className="more" to={linkFor('rejected')}>ดูทั้งหมด &rarr;</Link>
-            </div>
-          </div>
-
           {todoRows.length > 0 && (
-            <div className="card" style={{ marginBottom: 20 }}>
-              <div className="card-head"><h3>สิ่งที่ต้องทำ</h3></div>
-              <div className="card-body">
+            <div className="dx-card rx-rise" style={{ '--i': 6 }}>
+              <div className="dx-card-head"><h3>สิ่งที่ต้องทำ</h3></div>
+              <div className="dx-todo">
                 {todoRows.map(r => (
-                  <div key={r.key} className="flex between" style={{ padding: '8px 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', gap: 8 }}>
-                    <b>{r.label}</b>
-                    <div className="flex" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <div key={r.key} className="dx-todo-row">
+                    <span className={`dx-dot ${r.cls}`} /><b>{r.label}</b>
+                    <div className="dx-todo-chips">
                       {r.items.map(k => (
-                        <Link key={k} to={r.to[k]} className="tab" style={{ textDecoration: 'none' }}>
-                          {KIND_TH[k]} <b>{todo[r.key][k]}</b>
-                        </Link>
+                        <Link key={k} to={r.to[k]} className="dx-chip">{KIND_TH[k]} <b>{todo[r.key][k]}</b></Link>
                       ))}
                     </div>
                   </div>
@@ -118,20 +144,28 @@ export default function Dashboard() {
             </div>
           )}
 
-          <div className="grid-2">
-            <div className="card">
-              <div className="card-head">
+          <div className="dx-sechead rx-rise" style={{ '--i': 7 }}>
+            <h3>รายงาน <span className="muted">Reports</span></h3>
+            <div className="dx-tabs" role="tablist" aria-label="ช่วงเวลาของตัวเลขบนการ์ดรายงาน">
+              {PERIODS.map(p => <button key={p.v} type="button" role="tab" aria-selected={period === p.v} className={period === p.v ? 'on' : ''} onClick={() => setPeriod(p.v)}>{p.label}</button>)}
+            </div>
+          </div>
+          <ReportHubCards period={period} baseDelay={8} />
+
+          <div className="dx-two">
+            <div className="dx-card rx-rise" style={{ '--i': 14 }}>
+              <div className="dx-card-head">
                 <h3>คำขอล่าสุด</h3>
                 {tab !== 'all' && <Link to={MY_PATH[tab]}>ดูทั้งหมด &rarr;</Link>}
               </div>
-              <div className="card-body" style={{ padding: 0 }}>
+              <div style={{ overflowX: 'auto' }}>
                 <table>
                   <thead><tr><th>วันที่</th><th>รายการ</th><th>เวลา</th><th>สถานะ</th></tr></thead>
                   <tbody>
                     {latest.length ? latest.map(v => (
                       <tr key={`${v.kind}-${v.id}`}>
                         <td>{fmtDate(v.date)}</td>
-                        <td><span className="muted" style={{ fontSize: 11, marginRight: 6 }}>{KIND_TH[v.kind]}</span>{v.title}</td>
+                        <td><span className={`dx-kind k-${v.kind}`}>{KIND_TH[v.kind]}</span>{v.title}</td>
                         <td>{v.time}</td>
                         <td><span className={`badge ${v.status}`}>{statusLabel(v.status)}</span></td>
                       </tr>
@@ -140,14 +174,14 @@ export default function Dashboard() {
                 </table>
               </div>
             </div>
-            <div className="card">
-              <div className="card-head"><h3>กำหนดการที่จะถึง</h3></div>
-              <div className="card-body">
+            <div className="dx-card rx-rise" style={{ '--i': 15 }}>
+              <div className="dx-card-head"><h3>กำหนดการที่จะถึง</h3></div>
+              <div className="dx-upcoming">
                 {upcoming.length ? upcoming.map(v => (
-                  <div className="flex gap-12" key={`${v.kind}-${v.id}`} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-                    <div className="pill-avatar">{fmtDate(v.date).slice(0, 2)}</div>
+                  <div className="dx-up" key={`${v.kind}-${v.id}`}>
+                    <div className="dx-up-date"><b>{fmtDate(v.date).slice(0, 2)}</b><small>{fmtDate(v.date).slice(3, 5)}</small></div>
                     <div>
-                      <div style={{ fontWeight: 600 }}><span className="muted" style={{ fontSize: 11, marginRight: 6 }}>{KIND_TH[v.kind]}</span>{v.title}</div>
+                      <div className="dx-up-title"><span className={`dx-kind k-${v.kind}`}>{KIND_TH[v.kind]}</span>{v.title}</div>
                       <div className="muted" style={{ fontSize: 12 }}>{fmtDate(v.date)} · {v.time}</div>
                     </div>
                   </div>

@@ -2,6 +2,7 @@
 // ชิ้นส่วน UI ที่ใช้ซ้ำในฟอร์ม Visit Request (Accordion / Field / Checkbox group / Radio cards / Multi picker)
 // สไตล์อยู่ที่ pages/visit-form.css (prefix vf-)
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { usePageContent } from '../lib/PageContentContext';
 
 const Chevron = () => (
   <svg className="vf-chev" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 7.5l5 5 5-5" /></svg>
@@ -13,6 +14,10 @@ const SearchIcon = () => (
 // ---------- Section (Accordion หลัก) ----------
 // status: 'done' | 'error' | 'req' | '' (ชิปแสดงสถานะที่หัว section)
 export function Section({ id, no, title, th, open, onToggle, status, statusText, summary, children }) {
+  const { pc } = usePageContent();
+  const k = `form.${String(id).replace('vf-', '')}`; // ชื่อ/ซ่อนหัวข้อ ปรับได้ที่ Settings > จัดการหน้า/หัวข้อ
+  if (pc(`${k}.hidden`, '0') === '1') return null;
+  title = pc(`${k}.title`, title); th = pc(`${k}.th`, th);
   return (
     <section id={id} className={`vf-sec ${open ? 'open' : ''}`} data-vf-section={id}>
       <button type="button" className="vf-sec-head" aria-expanded={open} aria-controls={`${id}-body`} onClick={onToggle}>
@@ -32,6 +37,10 @@ export function Section({ id, no, title, th, open, onToggle, status, statusText,
 
 // ---------- SubAccordion (3.1 – 3.5) ----------
 export function SubAccordion({ no, title, th, open, onToggle, summary, statusText, status, children }) {
+  const { pc } = usePageContent();
+  const k = `form.sub.${no}`;
+  if (pc(`${k}.hidden`, '0') === '1') return null;
+  title = pc(`${k}.title`, title); th = pc(`${k}.th`, th);
   return (
     <div className={`vf-sub-acc ${open ? 'open' : ''}`}>
       <button type="button" className="vf-sub-head" aria-expanded={open} onClick={onToggle}>
@@ -51,6 +60,9 @@ export function SubAccordion({ no, title, th, open, onToggle, summary, statusTex
 
 // ---------- Group (หัวข้อย่อยในหน้า เช่น VISIT INFORMATION) ----------
 export function Group({ title, th, tools, children }) {
+  const { pc } = usePageContent();
+  th = pc(`form.group.${title}.th`, th);
+  title = pc(`form.group.${title}.title`, title);
   return (
     <div className="vf-group">
       <div className="vf-group-head">
@@ -102,7 +114,7 @@ export function CheckGroup({ options, value, onChange, exclusive = [] }) {
 }
 
 // ---------- Radio แบบ pill ----------
-export function PillRadio({ name, options, value, onChange }) {
+export function PillRadio({ name, options, value, onChange, clearable = false }) {
   return (
     <div className="vf-pills" role="radiogroup">
       {options.map(opt => {
@@ -110,7 +122,8 @@ export function PillRadio({ name, options, value, onChange }) {
         const l = typeof opt === 'string' ? opt : opt.label;
         return (
           <label key={v} className={`vf-pill ${value === v ? 'on' : ''}`}>
-            <input type="radio" name={name} checked={value === v} onChange={() => onChange(v)} />
+            <input type="radio" name={name} checked={value === v} onChange={() => onChange(v)}
+              onClick={clearable ? () => { if (value === v) onChange(''); } : undefined} />
             {l}
           </label>
         );
@@ -121,12 +134,13 @@ export function PillRadio({ name, options, value, onChange }) {
 
 // ---------- Radio card ----------
 // options: [{ value, label, desc, color, tint }]
-export function RadioCards({ name, options, value, onChange }) {
+export function RadioCards({ name, options, value, onChange, clearable = false }) {
   return (
     <div className="vf-cards" role="radiogroup">
       {options.map(o => (
         <label key={o.value} className={`vf-rcard ${value === o.value ? 'on' : ''}`} style={{ '--dot': o.color, '--tint': o.tint }}>
-          <input type="radio" name={name} checked={value === o.value} onChange={() => onChange(o.value)} />
+          <input type="radio" name={name} checked={value === o.value} onChange={() => onChange(o.value)}
+            onClick={clearable ? () => { if (value === o.value) onChange(''); } : undefined} />
           <div className="vf-rcard-top">
             <span className="vf-rcard-dot" />
             <span className="vf-rcard-name">{o.label}</span>

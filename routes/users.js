@@ -6,6 +6,7 @@ const { requireAuth, requireRole } = require('./middleware');
 const { logAction } = require('../utils/systemLog');
 const { isValidDepartment } = require('../utils/departments');
 const { getDepartmentsForUser, setDepartmentsForUser } = require('../utils/userDepartments');
+const signature = require('../utils/signature');
 
 const router = express.Router();
 
@@ -40,6 +41,22 @@ router.put('/me', requireAuth, (req, res) => {
     UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, department = ?, email_notify = ?, avatar_url = ?
     WHERE id = ?
   `).run(full_name.trim(), email || '', phone || '', position || '', newDept, email_notify ? 1 : 0, avatar_url || null, req.session.userId);
+  res.json({ ok: true });
+});
+
+// ลายเซ็นของตัวเอง (ใช้ฝังในเอกสาร PDF ที่อนุมัติแล้ว) — ดู/แก้ได้เฉพาะของตัวเองเท่านั้น
+router.get('/me/signature', requireAuth, (req, res) => {
+  res.json({ data_url: signature.getDataUrl(req.session.userId) });
+});
+router.put('/me/signature', requireAuth, (req, res) => {
+  const r = signature.save(req.session.userId, req.body && req.body.data_url);
+  if (r.error) return res.status(400).json({ error: r.error });
+  logAction(req.session.userId, 'update_signature', 'อัปโหลด/เปลี่ยนลายเซ็น');
+  res.json({ ok: true });
+});
+router.delete('/me/signature', requireAuth, (req, res) => {
+  signature.remove(req.session.userId);
+  logAction(req.session.userId, 'delete_signature', 'ลบลายเซ็น');
   res.json({ ok: true });
 });
 

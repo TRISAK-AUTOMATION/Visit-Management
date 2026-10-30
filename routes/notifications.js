@@ -7,7 +7,7 @@ const router = express.Router();
 
 router.get('/', requireAuth, (req, res) => {
   const rows = db.prepare(`
-    SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50
+    SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 50
   `).all(req.session.userId);
   const unread = db.prepare(`SELECT COUNT(*) c FROM notifications WHERE user_id = ? AND is_read = 0`).get(req.session.userId).c;
   res.json({ notifications: rows, unread });

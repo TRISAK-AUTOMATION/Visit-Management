@@ -12,7 +12,7 @@ const cardStyle = { padding: 20, display: 'block', position: 'relative' };
 // การ์ดทั่วไปที่ทุกคนเห็น
 const COMMON_CARDS = [
   { href: '/profile', icon: '\uD83D\uDC64', label: 'โปรไฟล์ของฉัน', desc: 'แก้ไขข้อมูลส่วนตัวและรหัสผ่าน' },
-  { href: '/customers', icon: '\uD83C\uDFE2', label: 'ข้อมูลลูกค้า', desc: 'จัดการรายชื่อลูกค้า/บริษัท', visitOnly: true },
+  { href: '/customers', icon: '\uD83C\uDFE2', label: 'ข้อมูลลูกค้า', desc: 'จัดการรายชื่อลูกค้า/บริษัท', adminOnly: true },
   { href: '/my-leave', icon: '\uD83D\uDCC6', label: 'การลาของฉัน', desc: 'สร้างคำขอลา ดูสถานะและประวัติการลา' },
   { href: '/my-ot', icon: '\u23F0', label: 'OT ของฉัน', desc: 'สร้างคำขอ OT ดูสถานะและพิมพ์ PDF' },
 ];
@@ -34,7 +34,7 @@ export default function Settings() {
     <Layout title="ตั้งค่า">
       {(
         <div className="grid-3">
-          {COMMON_CARDS.filter(c => !c.visitOnly || canAccessVisit(me)).map(c => (
+          {COMMON_CARDS.filter(c => !c.adminOnly || me.role === 'Admin').map(c => (
             <Link key={c.href} className="card" style={cardStyle} to={c.href}>
               <div style={{ fontSize: 22 }}>{c.icon}</div>
               <div style={{ fontWeight: 700, marginTop: 8 }}>{c.label}</div>

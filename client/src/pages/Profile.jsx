@@ -11,6 +11,7 @@ import LeaveBalance from '../components/profile/LeaveBalance';
 import KPIOverview from '../components/profile/KPIOverview';
 import RecentRequests from '../components/profile/RecentRequests';
 import QuickActions from '../components/profile/QuickActions';
+import SignatureCard from '../components/profile/SignatureCard';
 import Modal from '../components/profile/Modal';
 import KpiPanel from '../components/KpiPanel';
 import '../components/profile/profile.css';
@@ -47,6 +48,7 @@ export default function Profile() {
               <div className="pd-col">
                 <QuickActions canVisit={canVisit} />
                 <KPIOverview kpi={data.kpi} onOpen={() => setModal('kpi')} />
+                <SignatureCard />
               </div>
             </div>
           </>

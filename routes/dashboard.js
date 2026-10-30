@@ -39,7 +39,7 @@ router.get('/stats', requireAuth, (req, res) => {
     SELECT vr.*, c.name AS customer_name
     FROM visit_requests vr JOIN customers c ON c.id = vr.customer_id ${joinUser}
     WHERE 1=1 ${scope}
-    ORDER BY vr.created_at DESC LIMIT 5
+    ORDER BY vr.created_at DESC, vr.id DESC LIMIT 5
   `).all(...params);
 
   const upcoming = db.prepare(`
@@ -88,11 +88,11 @@ router.get('/stats', requireAuth, (req, res) => {
   const leaveLatest = db.prepare(`
     SELECT t.id, t.leave_type, t.leave_mode, t.date_from, t.date_to, t.time_from, t.time_to, t.status, t.created_at, u.full_name AS requester_name
     FROM leave_requests t JOIN users u ON u.id = t.requester_id
-    WHERE ${leaveScope.where} AND t.status != 'cancelled' ORDER BY t.created_at DESC LIMIT 5`).all(...leaveScope.p);
+    WHERE ${leaveScope.where} AND t.status != 'cancelled' ORDER BY t.created_at DESC, t.id DESC LIMIT 5`).all(...leaveScope.p);
   const otLatest = db.prepare(`
     SELECT t.id, t.ot_date, t.time_from, t.time_to, t.hours, t.ot_type, t.status, t.created_at, u.full_name AS requester_name
     FROM ot_requests t JOIN users u ON u.id = t.requester_id
-    WHERE ${otScope.where} AND t.status != 'cancelled' ORDER BY t.created_at DESC LIMIT 5`).all(...otScope.p);
+    WHERE ${otScope.where} AND t.status != 'cancelled' ORDER BY t.created_at DESC, t.id DESC LIMIT 5`).all(...otScope.p);
   const leaveUpcoming = db.prepare(`
     SELECT t.id, t.leave_type, t.leave_mode, t.date_from, t.date_to, t.time_from, t.time_to, u.full_name AS requester_name
     FROM leave_requests t JOIN users u ON u.id = t.requester_id

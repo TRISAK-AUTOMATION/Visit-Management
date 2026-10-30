@@ -236,7 +236,7 @@ router.get('/', requireAuth, (req, res) => {
     JOIN customers c ON c.id = vr.customer_id
     JOIN users u ON u.id = vr.requester_id
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-    ORDER BY vr.created_at DESC
+    ORDER BY vr.created_at DESC, vr.id DESC
   `;
   const rows = db.prepare(sql).all(...params);
   if (scope === 'pending') {
@@ -307,7 +307,7 @@ router.get('/:id', requireAuth, (req, res) => {
     FROM approval_history h
     LEFT JOIN users u ON u.id = h.action_by
     WHERE h.visit_request_id = ?
-    ORDER BY h.created_at ASC
+    ORDER BY h.created_at ASC, h.id ASC
   `).all(req.params.id);
 
   const customFields = getCustomFieldValues(req.params.id);

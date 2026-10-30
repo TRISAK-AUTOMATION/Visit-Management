@@ -8,6 +8,8 @@ const { requireAuth } = require('./middleware');
 const { toThaiDate } = require('../utils/dateFormat');
 const { canViewRequest } = require('../utils/requestAccess');
 const approvalEngine = require('../utils/approvalEngine');
+const signature = require('../utils/signature');
+const { readSettings } = require('./pdfSettings');
 
 const router = express.Router();
 
@@ -29,6 +31,7 @@ function bangkokDate(utcStr) {
 const num = (n) => (Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100));
 
 router.get('/:id/pdf', requireAuth, (req, res) => {
+  const cfg = readSettings().docs.leave; // ตั้งค่าได้ที่ Settings > ออกแบบ PDF
   const lr = db.prepare(`
     SELECT lr.*, u.full_name AS requester_name, a.full_name AS approver_name
     FROM leave_requests lr
@@ -42,13 +45,24 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
 
   // ชื่อผู้ลงนาม: หัวหน้า = ขั้นแรกของสายอนุมัติ, ผู้อนุมัติ = ขั้นสุดท้าย (ถ้ามีขั้นเดียวให้เป็นผู้อนุมัติ)
   const wf = approvalEngine.getWorkflow('leave', lr.id);
-  const namesOf = (st) => st ? st.approvers.filter(a => a.decision === 'approved').map(a => a.full_name).join(', ') : '';
-  let headName = '', approverName = lr.approver_name || '';
+  const namesOf = (st) => st ? st.approvers.filter(a => a.decision === 'approve').map(a => a.full_name).join(', ') : '';
+  // ลายเซ็น: ใช้ของผู้ที่ "อนุมัติแล้ว" จริงเท่านั้น (คนแรกในขั้นนั้นที่อัปโหลดลายเซ็นไว้)
+  const sigOf = (st) => { if (!st) return null; for (const a of st.approvers) { if (a.decision === 'approve') { const b = signature.getBuffer(a.user_id); if (b) return b; } } return null; };
+  let headName = '', approverName = lr.approver_name || '', headSig = null, approverSig = null;
   if (wf && wf.states.length) {
-    const last = wf.states[wf.states.length - 1];
-    approverName = namesOf(last) || approverName;
-    if (wf.states.length > 1) headName = namesOf(wf.states[0]);
+    if (wf.states.some(s => s.slot)) {
+      // ตั้งช่องลงนามไว้ใน Template: ขั้นที่เป็น 'head' ลงช่องหัวหน้า ที่เหลือลงช่องผู้อนุมัติ
+      const hs = wf.states.filter(s => s.slot === 'head'), as = wf.states.filter(s => s.slot !== 'head');
+      headName = hs.map(namesOf).filter(Boolean).join(', '); headSig = hs.map(sigOf).find(Boolean) || null;
+      approverName = as.map(namesOf).filter(Boolean).join(', ') || approverName; approverSig = as.map(sigOf).find(Boolean) || null;
+    } else {
+      const last = wf.states[wf.states.length - 1];
+      approverName = namesOf(last) || approverName;
+      approverSig = sigOf(last);
+      if (wf.states.length > 1) { headName = namesOf(wf.states[0]); headSig = sigOf(wf.states[0]); }
+    }
   }
+  const requesterSig = signature.getBuffer(lr.requester_id);
 
   const doc = new PDFDocument({ size: 'A4', margin: 0 });
   doc.registerFont('regular', FONT_REGULAR);
@@ -80,9 +94,9 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
   }
 
   // หัวกระดาษ
-  doc.font('bold').fontSize(15).fillColor(INK).text(COMPANY, L, y, { width: W, align: 'center' });
+  doc.font('bold').fontSize(15).fillColor(INK).text(cfg.company || COMPANY, L, y, { width: W, align: 'center' });
   y += 22;
-  doc.font('bold').fontSize(14).text('ใบลา', L, y, { width: W, align: 'center' });
+  doc.font('bold').fontSize(14).text(cfg.title, L, y, { width: W, align: 'center' });
   y += 28;
 
   // วันที่ (ชิดขวา)
@@ -130,12 +144,13 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
   // ลายเซ็น 3 ช่อง (ช่องเซ็นว่างไว้ให้เซ็นมือ ชื่อพิมพ์อยู่ใต้ตำแหน่ง)
   const colW = (W - 20) / 3;
   const cols = [
-    ['ผู้ยื่นคำร้อง', lr.requester_name],
-    ['หัวหน้า', headName],
-    ['ผู้อนุมัติ', approverName]
+    ['ผู้ยื่นคำร้อง', lr.requester_name, requesterSig],
+    ['หัวหน้า', headName, headSig],
+    ['ผู้อนุมัติ', approverName, approverSig]
   ];
-  cols.forEach(([role, name], i) => {
+  if (cfg.show_signature) cols.forEach(([role, name, sig], i) => {
     const cx = L + i * (colW + 10);
+    signature.draw(doc, sig, cx, colW, y, 36);
     dots(cx + 12, cx + colW - 12, y);
     doc.font('regular').fontSize(FS).fillColor(INK).text(role, cx, y + 6, { width: colW, align: 'center', lineBreak: false });
     if (name) doc.fontSize(10).text(`(${name})`, cx, y + 22, { width: colW, align: 'center', lineBreak: false, ellipsis: true });

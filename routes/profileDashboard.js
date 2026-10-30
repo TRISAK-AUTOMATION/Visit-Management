@@ -30,7 +30,7 @@ router.get('/', requireAuth, (req, res) => {
 
   const yr = `strftime('%Y', datetime(created_at, '+7 hours')) = ?`;
   const N = (sql, ...p) => db.prepare(sql).get(...p).c;
-  const canVisit = u.role !== 'Employee' || departments.includes('Engineer') || (u.department === 'Engineer');
+  const canVisit = true; // ทุกคนขอ Visit ได้
 
   // ===== สรุป 4 การ์ด (ของฉันเท่านั้น) =====
   const total = {

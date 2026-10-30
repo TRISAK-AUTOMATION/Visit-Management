@@ -70,11 +70,7 @@ export function initials(name) {
 
 export const ROLE_TH = { Employee: 'พนักงาน', Approver: 'ผู้อนุมัติ', Admin: 'ผู้ดูแลระบบ' };
 
-// การไป Visit ลูกค้า: อนุญาตเฉพาะพนักงานแผนก Engineer หรือระดับหัวหน้าขึ้นไป (Approver/Admin)
-// พนักงานแผนกอื่นที่ไม่ใช่หัวหน้า จะไม่เห็นเมนู/เข้าหน้าสร้างคำขอ Visit และ My Requests
+// การขอ Visit ลูกค้า: เปิดให้ทุกคน (เดิมจำกัดเฉพาะ Engineer/หัวหน้า)
 export function canAccessVisit(me) {
-  if (!me) return false;
-  if (me.role !== 'Employee') return true; // Approver/Admin = ระดับหัวหน้า เข้าได้เสมอไม่ว่าแผนกไหน
-  const depts = (Array.isArray(me.departments) && me.departments.length) ? me.departments : (me.department ? [me.department] : []);
-  return depts.includes('Engineer');
+  return !!me; // ทุกคนที่ล็อกอินขอ Visit ได้ (ไม่จำกัดเฉพาะแผนก Engineer)
 }

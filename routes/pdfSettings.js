@@ -9,8 +9,19 @@ const router = express.Router();
 
 const KEYS = [
   'pdf_primary_color', 'pdf_accent_color', 'pdf_logo_base64', 'pdf_org_name',
-  'pdf_org_subtitle', 'pdf_doc_title', 'pdf_show_signature', 'pdf_section_order', 'pdf_section_visible'
+  'pdf_org_subtitle', 'pdf_doc_title', 'pdf_show_signature', 'pdf_section_order', 'pdf_section_visible', 'pdf_docs_json'
 ];
+
+// ตั้งค่าแยกรายเอกสาร (ค่าเริ่มต้น = ข้อความที่พิมพ์อยู่ในปัจจุบัน)
+const DOC_DEFAULTS = {
+  visit_form: { label: 'ใบขออนุมัติออกนอกสถานที่ (ครึ่ง A4)', title: 'ใบขออนุมัติออกนอกสถานที่', subtitle: '(Visit Request Form)', show_signature: true, footer: '' },
+  visit_report: { label: 'รายงาน Visit แบบละเอียด (A4 เต็มหน้า)', title: 'Visit Report', subtitle: 'ใบรายงานการเข้าพบลูกค้า', show_signature: true, footer: '' },
+  leave: { label: 'ใบลา', company: 'Factory Automation Centre Co.,Ltd', title: 'ใบลา', show_signature: true },
+  ot: { label: 'ใบขอทำงานล่วงเวลา (OT)', company: 'Factory Automation Centre Co.,Ltd', title: 'Overtime Request and Approval', show_signature: true }
+};
+const DOC_TEXT_KEYS = ['title', 'subtitle', 'footer', 'company'];
+const DOC_TEXT_MAX = 120;
+const DOC_KEYS = Object.keys(DOC_DEFAULTS);
 
 const SECTION_LABELS = {
   requester: 'ข้อมูลผู้ขออนุมัติ',
@@ -38,12 +49,26 @@ function readSettings() {
     doc_title: map.pdf_doc_title || 'ใบขออนุมัติออกนอกสถานที่ (Visit Request Form)',
     show_signature: (map.pdf_show_signature ?? '1') === '1',
     section_order: sectionOrder,
-    section_visible: sectionVisible
+    section_visible: sectionVisible,
+    docs: readDocs(map.pdf_docs_json)
   };
 }
 
+function readDocs(raw) {
+  let saved = {};
+  try { saved = JSON.parse(raw || '{}') || {}; } catch (e) { /* ใช้ default */ }
+  const out = {};
+  DOC_KEYS.forEach((k) => {
+    const d = { ...DOC_DEFAULTS[k] }; const sv = saved[k] || {};
+    DOC_TEXT_KEYS.forEach((f) => { if (f in d && typeof sv[f] === 'string' && (sv[f].trim() || f === 'footer' || f === 'subtitle')) d[f] = sv[f].trim().slice(0, DOC_TEXT_MAX); });
+    if (typeof sv.show_signature === 'boolean') d.show_signature = sv.show_signature;
+    out[k] = d;
+  });
+  return out;
+}
+
 router.get('/', requireAuth, requireRole('Admin'), (req, res) => {
-  res.json({ settings: readSettings(), section_labels: SECTION_LABELS });
+  res.json({ settings: readSettings(), section_labels: SECTION_LABELS, doc_defaults: DOC_DEFAULTS });
 });
 
 router.put('/', requireAuth, requireRole('Admin'), (req, res) => {
@@ -65,6 +90,16 @@ router.put('/', requireAuth, requireRole('Admin'), (req, res) => {
     if (b.org_subtitle !== undefined) upsert.run('pdf_org_subtitle', b.org_subtitle);
     if (b.doc_title !== undefined) upsert.run('pdf_doc_title', b.doc_title);
     if (b.show_signature !== undefined) upsert.run('pdf_show_signature', b.show_signature ? '1' : '0');
+    if (b.docs && typeof b.docs === 'object') {
+      const clean = {};
+      DOC_KEYS.forEach((k) => {
+        const sv = b.docs[k]; if (!sv || typeof sv !== 'object') return;
+        clean[k] = {};
+        DOC_TEXT_KEYS.forEach((f) => { if (f in DOC_DEFAULTS[k] && typeof sv[f] === 'string') clean[k][f] = sv[f].trim().slice(0, DOC_TEXT_MAX); });
+        if (typeof sv.show_signature === 'boolean') clean[k].show_signature = sv.show_signature;
+      });
+      upsert.run('pdf_docs_json', JSON.stringify(clean));
+    }
     if (b.section_order !== undefined) upsert.run('pdf_section_order', JSON.stringify(b.section_order));
     if (b.section_visible !== undefined) upsert.run('pdf_section_visible', JSON.stringify(b.section_visible));
   });
@@ -72,6 +107,16 @@ router.put('/', requireAuth, requireRole('Admin'), (req, res) => {
 
   logAction(req.session.userId, 'update_pdf_settings', 'ปรับการตั้งค่าหน้าตาเอกสาร PDF');
   res.json({ ok: true, settings: readSettings() });
+});
+
+// GET /api/pdf-settings/preview/:doc -> id ของคำขอล่าสุด (ไม่ใช่ draft) ใช้เปิดดูตัวอย่าง PDF จริงหลังบันทึก
+router.get('/preview/:doc', requireAuth, requireRole('Admin'), (req, res) => {
+  const T = { visit_form: ['visit_requests', '/api/visit-requests/{id}/pdf'], visit_report: ['visit_requests', '/api/visit-requests/{id}/pdf-report'],
+    leave: ['leave_requests', '/api/leave-requests/{id}/pdf'], ot: ['ot_requests', '/api/ot-requests/{id}/pdf'] }[req.params.doc];
+  if (!T) return res.status(404).json({ error: 'ไม่พบประเภทเอกสาร' });
+  const cond = ['leave', 'ot'].includes(req.params.doc) ? "status = 'approved'" : "status != 'draft'"; // PDF ลา/OT พิมพ์ได้เฉพาะที่อนุมัติแล้ว
+  const row = db.prepare(`SELECT id FROM ${T[0]} WHERE ${cond} ORDER BY id DESC LIMIT 1`).get();
+  res.json({ url: row ? T[1].replace('{id}', row.id) : null });
 });
 
 module.exports = router;

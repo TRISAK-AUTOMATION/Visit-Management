@@ -110,8 +110,13 @@ export default function ApproveLeave() {
             <thead><tr><th>วันที่ยื่น</th><th>ผู้ขอ</th><th>ประเภท</th><th>วันที่ลา</th><th>จำนวน</th><th>จัดการ</th></tr></thead>
             <tbody>
               {rows.length ? rows.map(r => (
-                <tr key={r.id}>
-                  <td>{fmtDateTime(r.created_at)}</td>
+                <tr key={r.id} style={r.status === 'pending' && r.is_update ? { background: '#fff8ea', boxShadow: 'inset 4px 0 0 #f5a524' } : undefined}>
+                  <td>
+                    {r.status === 'pending' && (r.is_update
+                      ? <span className="req-tag upd">Updated</span>
+                      : <span className="req-tag new">New Leave</span>)}
+                    <div>{fmtDateTime(r.created_at)}</div>
+                  </td>
                   <td>{r.requester_name} {r.requester_department ? `· ${r.requester_department}` : ''}</td>
                   <td>{r.leave_type}</td>
                   <td>{fmtDate(r.date_from)}{r.date_to !== r.date_from ? ` - ${fmtDate(r.date_to)}` : ''}</td>

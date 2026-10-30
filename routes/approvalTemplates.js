@@ -4,6 +4,8 @@ const db = require('../db/database');
 const { requireAuth, requireRole } = require('./middleware');
 const { logAction } = require('../utils/systemLog');
 const approvalEngine = require('../utils/approvalEngine');
+const { getDepartments } = require('../utils/departments');
+const SLOTS = ['head', 'checker', 'approver'];
 
 const router = express.Router();
 const MODULES = ['leave', 'ot', 'visit']; // V1 รองรับแค่ Leave, ตอนนี้ขยายรองรับ OT และ Visit ด้วยแล้ว
@@ -22,6 +24,8 @@ function loadTemplateDetail(id) {
     id: s.id,
     name: s.name,
     mode: s.mode,
+    slot: s.slot || null,
+    approver_source: s.approver_source || 'manual',
     approvers: db.prepare(`
       SELECT u.id, u.full_name, u.department FROM template_state_approvers a
       JOIN users u ON u.id = a.user_id WHERE a.state_id = ? ORDER BY u.full_name
@@ -39,6 +43,26 @@ router.get('/', (req, res) => {
     state_count: db.prepare(`SELECT COUNT(*) AS c FROM template_states WHERE template_id = ?`).get(t.id).c
   }));
   res.json({ templates: withCounts });
+});
+
+// หัวหน้าแผนก (ต้องประกาศก่อน '/:id')
+router.get('/department-heads', (req, res) => {
+  const rows = db.prepare(`SELECT department, user_id FROM department_heads`).all();
+  const names = new Set(getDepartments());
+  db.prepare(`SELECT DISTINCT department FROM users WHERE department IS NOT NULL AND department != ''`).all().forEach(r => names.add(r.department));
+  res.json({ departments: [...names].map(d => ({ department: d, user_ids: rows.filter(r => r.department === d).map(r => r.user_id) })) });
+});
+router.put('/department-heads', (req, res) => {
+  const department = String(req.body.department || '').trim();
+  if (!department) return res.status(400).json({ error: 'ไม่ระบุแผนก' });
+  const ids = Array.from(new Set((req.body.user_ids || []).map(Number).filter(Boolean)));
+  db.transaction(() => {
+    db.prepare(`DELETE FROM department_heads WHERE department = ?`).run(department);
+    const ins = db.prepare(`INSERT OR IGNORE INTO department_heads (department, user_id) VALUES (?, ?)`);
+    ids.forEach(uid => ins.run(department, uid));
+  })();
+  logAction(req.session.userId, 'update_department_heads', `ตั้งหัวหน้าแผนก \"${department}\" (${ids.length} คน)`);
+  res.json({ ok: true });
 });
 
 router.get('/:id', (req, res) => {
@@ -98,15 +122,18 @@ router.put('/:id/states', (req, res) => {
   if (!states.length) return res.status(400).json({ error: 'ต้องมีอย่างน้อย 1 ขั้นตอนอนุมัติ' });
   for (const s of states) {
     if (!s.name || !s.name.trim()) return res.status(400).json({ error: 'กรุณาระบุชื่อทุกขั้นตอน' });
+    if (s.slot && !SLOTS.includes(s.slot)) return res.status(400).json({ error: 'ช่องลงนามไม่ถูกต้อง' });
+    if (s.approver_source === 'dept_head') continue; // ผู้อนุมัติดึงจากหัวหน้าแผนกของผู้ขอตอนส่งคำขอ ไม่ต้องเลือกรายชื่อ
     if (!Array.isArray(s.approver_ids) || !s.approver_ids.length) return res.status(400).json({ error: `ขั้นตอน "${s.name}" ต้องมีผู้อนุมัติอย่างน้อย 1 คน` });
   }
   const tx = db.transaction(() => {
     db.prepare(`DELETE FROM template_states WHERE template_id = ?`).run(req.params.id); // CASCADE ลบ approvers ตามไปด้วย
-    const insertState = db.prepare(`INSERT INTO template_states (template_id, name, sort_order, mode) VALUES (?, ?, ?, ?)`);
+    const insertState = db.prepare(`INSERT INTO template_states (template_id, name, sort_order, mode, slot, approver_source) VALUES (?, ?, ?, ?, ?, ?)`);
     const insertApprover = db.prepare(`INSERT INTO template_state_approvers (state_id, user_id) VALUES (?, ?)`);
     states.forEach((s, idx) => {
-      const info = insertState.run(req.params.id, s.name.trim(), idx, s.mode === 'ALL' ? 'ALL' : 'ANY');
-      Array.from(new Set((s.approver_ids || []).map(Number))).forEach(uid => insertApprover.run(info.lastInsertRowid, uid));
+      const src = s.approver_source === 'dept_head' ? 'dept_head' : 'manual';
+      const info = insertState.run(req.params.id, s.name.trim(), idx, s.mode === 'ALL' ? 'ALL' : 'ANY', s.slot || null, src);
+      if (src === 'manual') Array.from(new Set((s.approver_ids || []).map(Number))).forEach(uid => insertApprover.run(info.lastInsertRowid, uid));
     });
     db.prepare(`UPDATE approval_templates SET updated_at = datetime('now') WHERE id = ?`).run(req.params.id);
   });

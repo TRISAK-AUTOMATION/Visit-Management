@@ -1,4 +1,5 @@
 // client/src/pages/AdminApprovalTemplates.jsx - Admin: Template Builder สำหรับระบบอนุมัติแบบ Template-Based Workflow (V1: โมดูล Leave)
+// client/src/pages/AdminApprovalTemplates.jsx - Admin: Template Builder สำหรับระบบอนุมัติแบบ Template-Based Workflow
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { api } from '../lib/api';
@@ -9,20 +10,72 @@ const MODULE_TABS = [
   { v: 'leave', label: 'การลา' },
   { v: 'ot', label: 'OT' },
   { v: 'visit', label: 'Visit (ออกนอกสถานที่)' },
+  { v: 'heads', label: 'หัวหน้าแผนก' },
 ];
-// .form-group input{width:100%;padding:...;border:...} ของทั้งเว็บไซต์จะไปโดน checkbox ด้วย (ทำให้กล่องยืดเต็มแถว บีบข้อความข้าง ๆ จนวรรณยุกต์ตัดบรรทัดมั่ว)
-// ต้อง reset ค่ากลับเป็นของ checkbox ปกติเฉพาะจุดนี้
+// ช่องลงนามบนเอกสาร PDF ของแต่ละโมดูล (Visit ไม่มี)
+const SLOT_OPTIONS = {
+  leave: [['head', 'หัวหน้า'], ['approver', 'ผู้อนุมัติ']],
+  ot: [['checker', 'ผู้ตรวจสอบ'], ['approver', 'ผู้อนุมัติ']],
+};
+const SLOT_LABEL = { head: 'หัวหน้า', checker: 'ผู้ตรวจสอบ', approver: 'ผู้อนุมัติ' };
+// .form-group input{width:100%;...} ของทั้งเว็บไซต์จะไปโดน checkbox ด้วย จึงต้อง reset เฉพาะจุดนี้
 const CHECKBOX_STYLE = { width: 16, height: 16, minWidth: 16, flexShrink: 0, padding: 0, border: '1px solid var(--border)', borderRadius: 4, background: '#fff', accentColor: 'var(--blue-500, #2563eb)' };
 
-function UserPicker({ users, selected, onChange }) {
+const Chip = ({ children, onRemove, tone }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: tone || '#eef2ff', color: '#1e3a8a', borderRadius: 999, padding: '2px 9px', fontSize: 12, margin: '0 4px 4px 0' }}>
+    {children}
+    {onRemove && <span onClick={onRemove} style={{ cursor: 'pointer', fontWeight: 700, marginLeft: 2 }}>×</span>}
+  </span>
+);
+
+// ตัวเลือกผู้ใช้: ค้นหา + เลือกทั้งหมด/ล้างทั้งหมด + เลือกทั้งแผนก + แสดงคนที่เลือกเป็น chip (กด × เอาออกได้)
+function UserPicker({ users, selected, onChange, maxList = 170 }) {
   const [q, setQ] = useState('');
-  const filtered = users.filter(u => !q || u.full_name.includes(q) || (u.department || '').includes(q));
+  const ql = q.trim().toLowerCase();
+  const filtered = users.filter(u => !ql || u.full_name.toLowerCase().includes(ql) || (u.department || '').toLowerCase().includes(ql));
+  const depts = [...new Set(users.map(u => u.department).filter(Boolean))].sort();
   const toggle = (id) => onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]);
+  const addMany = (ids) => onChange([...new Set([...selected, ...ids])]);
+  const removeMany = (ids) => onChange(selected.filter(x => !ids.includes(x)));
+  const toggleDept = (d) => {
+    const ids = users.filter(u => u.department === d).map(u => u.id);
+    ids.every(id => selected.includes(id)) ? removeMany(ids) : addMany(ids);
+  };
+  const byId = new Map(users.map(u => [u.id, u]));
+  const btn = { fontSize: 12, padding: '3px 10px' };
   return (
     <div>
-      <input type="text" placeholder="ค้นหาชื่อ/แผนก..." value={q} onChange={e => setQ(e.target.value)}
-        style={{ width: '100%', fontSize: 12.5, padding: '5px 8px', border: '1px solid var(--border)', borderRadius: 6, marginBottom: 6 }} />
-      <div style={{ maxHeight: 170, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6, padding: 6 }}>
+      <div className="flex gap-8" style={{ marginBottom: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input type="text" placeholder="ค้นหาชื่อ/แผนก..." value={q} onChange={e => setQ(e.target.value)}
+          style={{ flex: 1, minWidth: 140, fontSize: 12.5, padding: '5px 8px', border: '1px solid var(--border)', borderRadius: 6 }} />
+        <button type="button" className="btn btn-outline btn-sm" style={btn} onClick={() => addMany(filtered.map(u => u.id))}>
+          ✓ เลือกทั้งหมด{ql ? ' (ที่ค้นหา)' : ''}
+        </button>
+        <button type="button" className="btn btn-outline btn-sm" style={btn} onClick={() => removeMany(filtered.map(u => u.id))}>ล้าง</button>
+      </div>
+      {depts.length > 1 && (
+        <div style={{ marginBottom: 6 }}>
+          <span className="muted" style={{ fontSize: 11.5, marginRight: 6 }}>เลือกทั้งแผนก:</span>
+          {depts.map(d => {
+            const ids = users.filter(u => u.department === d).map(u => u.id);
+            const n = ids.filter(id => selected.includes(id)).length;
+            return (
+              <button type="button" key={d} onClick={() => toggleDept(d)}
+                style={{ fontSize: 11.5, padding: '2px 9px', margin: '0 4px 4px 0', borderRadius: 999, cursor: 'pointer',
+                  border: '1px solid ' + (n === ids.length ? '#2563eb' : 'var(--border)'),
+                  background: n === ids.length ? '#2563eb' : n ? '#dbeafe' : '#fff', color: n === ids.length ? '#fff' : '#1f2937' }}>
+                {d} {n}/{ids.length}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {selected.length > 0 && (
+        <div style={{ marginBottom: 6, maxHeight: 74, overflowY: 'auto' }}>
+          {selected.map(id => <Chip key={id} onRemove={() => toggle(id)}>{byId.get(id)?.full_name || `#${id}`}</Chip>)}
+        </div>
+      )}
+      <div style={{ maxHeight: maxList, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6, padding: 6 }}>
         {filtered.length ? filtered.map(u => (
           <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 2px', fontSize: 12.5, cursor: 'pointer' }}>
             <input type="checkbox" checked={selected.includes(u.id)} onChange={() => toggle(u.id)} style={CHECKBOX_STYLE} />
@@ -31,10 +84,90 @@ function UserPicker({ users, selected, onChange }) {
           </label>
         )) : <div className="muted" style={{ fontSize: 12, padding: 4 }}>ไม่พบผู้ใช้</div>}
       </div>
-      <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>เลือกแล้ว {selected.length} คน</div>
+      <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>เลือกแล้ว {selected.length} / {users.length} คน</div>
     </div>
   );
 }
+
+// ภาพรวมลำดับการอนุมัติ: ผู้ขอ → ขั้นที่ 1 → ขั้นที่ 2 ...
+function Flow({ states, module }) {
+  const hasSlot = !!SLOT_OPTIONS[module];
+  return (
+    <div style={{ background: '#f8fafc', border: '1px dashed var(--border)', borderRadius: 8, padding: '8px 10px', marginBottom: 10 }}>
+      <div className="muted" style={{ fontSize: 11.5, marginBottom: 4 }}>ลำดับการอนุมัติ</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+        <Chip tone="#e5e7eb">ผู้ขอ</Chip>
+        {states.map((s, i) => (
+          <React.Fragment key={i}>
+            <span style={{ color: '#94a3b8', marginBottom: 4 }}>→</span>
+            <Chip tone={s.slot === 'approver' ? '#dcfce7' : '#fef3c7'}>
+              {s.name || '(ยังไม่ตั้งชื่อ)'}
+              {s.approver_source === 'dept_head' ? ' · หัวหน้าตามแผนกผู้ขอ' : ` · ${s.approver_ids.length} คน`}
+              {hasSlot && s.slot ? ` · ลงช่อง "${SLOT_LABEL[s.slot]}"` : ''}
+            </Chip>
+          </React.Fragment>
+        ))}
+      </div>
+      {states.some(s => s.approver_source === 'dept_head') && (
+        <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+          ถ้าแผนกของผู้ขอยังไม่มีหัวหน้า (หรือผู้ขอเป็นหัวหน้าเอง) ระบบจะข้ามขั้นหัวหน้า แล้วให้ผู้อนุมัติอนุมัติคนเดียว
+        </div>
+      )}
+    </div>
+  );
+}
+
+// แท็บ "หัวหน้าแผนก": ตั้งว่าแต่ละแผนกใครเป็นหัวหน้า (ใช้กับขั้นตอนแบบ "หัวหน้าตามแผนกผู้ขอ")
+function DeptHeads({ users, toast }) {
+  const [rows, setRows] = useState(null);
+  const [sel, setSel] = useState(null);
+  const [ids, setIds] = useState([]);
+  const load = async () => { const { departments } = await api.get('/api/approval-templates/department-heads'); setRows(departments); return departments; };
+  useEffect(() => { load().catch(() => setRows([])); }, []);
+  const nameOf = (id) => users.find(u => u.id === id)?.full_name || `#${id}`;
+  const open = (d) => { setSel(d.department); setIds(d.user_ids); };
+  const save = async () => {
+    try {
+      await api.put('/api/approval-templates/department-heads', { department: sel, user_ids: ids });
+      toast(`บันทึกหัวหน้าแผนก ${sel} แล้ว`, 'success');
+      await load();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+  const sorted = [...users].sort((a, b) => (a.department === sel ? 0 : 1) - (b.department === sel ? 0 : 1) || a.full_name.localeCompare(b.full_name));
+  return (
+    <div className="grid-2" style={{ alignItems: 'flex-start' }}>
+      <div className="card">
+        <div className="card-head"><h3>แผนกทั้งหมด</h3></div>
+        <div className="card-body">
+          {rows === null ? <div className="muted">กำลังโหลด...</div> : rows.length ? rows.map(d => (
+            <div key={d.department} onClick={() => open(d)} style={{ padding: '9px 10px', borderRadius: 8, cursor: 'pointer', marginBottom: 6, border: '1px solid var(--border)', background: sel === d.department ? '#eef2ff' : 'transparent' }}>
+              <b style={{ fontSize: 13.5 }}>{d.department}</b>
+              <div style={{ marginTop: 4 }}>
+                {d.user_ids.length ? d.user_ids.map(id => <Chip key={id}>{nameOf(id)}</Chip>) : <span style={{ fontSize: 12, color: '#b45309' }}>ยังไม่ได้ตั้งหัวหน้า</span>}
+              </div>
+            </div>
+          )) : <div className="empty">ยังไม่มีแผนก</div>}
+        </div>
+      </div>
+      <div className="card">
+        {!sel ? <div className="card-body"><div className="empty">เลือกแผนกทางซ้ายเพื่อตั้งหัวหน้า</div></div> : (
+          <>
+            <div className="card-head"><h3>หัวหน้าแผนก {sel}</h3></div>
+            <div className="card-body">
+              <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                ตั้งได้หลายคน (ใครคนใดคนหนึ่งอนุมัติก็ผ่าน) ผู้ใช้ในแผนกนี้จะอยู่ด้านบนของรายการ — พนักงานแผนกนี้ที่ใช้ขั้นตอนแบบ "หัวหน้าตามแผนกผู้ขอ" จะส่งให้หัวหน้าชุดนี้
+              </div>
+              <UserPicker users={sorted} selected={ids} onChange={setIds} maxList={260} />
+              <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} onClick={save}>บันทึกหัวหน้าแผนก</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const toEditState = (s) => ({ name: s.name, mode: s.mode, slot: s.slot || '', approver_source: s.approver_source || 'manual', approver_ids: s.approvers.map(a => a.id) });
 
 export default function AdminApprovalTemplates() {
   const toast = useToast();
@@ -46,15 +179,18 @@ export default function AdminApprovalTemplates() {
   const [newName, setNewName] = useState('');
   const [states, setStates] = useState([]);
   const [requesterIds, setRequesterIds] = useState([]);
+  const [deptHeads, setDeptHeads] = useState([]);
 
   const loadList = async (mod = module) => {
     const { templates } = await api.get(`/api/approval-templates?module=${mod}`);
     setTemplates(templates);
   };
   useEffect(() => {
+    if (module === 'heads') return;
     loadList(module);
     setSelectedId(null);
     setDetail(null);
+    api.get('/api/approval-templates/department-heads').then(r => setDeptHeads(r.departments)).catch(() => {});
   }, [module]);
   useEffect(() => {
     api.get('/api/users').then(({ users }) => setUsers(users)).catch(() => {});
@@ -70,7 +206,7 @@ export default function AdminApprovalTemplates() {
     const { template } = await api.get(`/api/approval-templates/${id}`);
     setDetail(template);
     setRequesterIds(template.requesters.map(r => r.id));
-    setStates(template.states.map(s => ({ name: s.name, mode: s.mode, approver_ids: s.approvers.map(a => a.id) })));
+    setStates(template.states.map(toEditState));
   };
 
   const createTemplate = async () => {
@@ -130,7 +266,13 @@ export default function AdminApprovalTemplates() {
     [...requesterIds].sort().join(',') !== detail.requesters.map(r => r.id).sort().join(',')
   );
 
-  const addState = () => setStates(s => [...s, { name: '', mode: 'ANY', approver_ids: [] }]);
+  const hasSlots = !!SLOT_OPTIONS[module];
+  const addState = () => setStates(s => [...s, { name: '', mode: 'ANY', slot: hasSlots ? 'approver' : '', approver_source: 'manual', approver_ids: [] }]);
+  // รูปแบบมาตรฐาน: หัวหน้า/ผู้ตรวจสอบตามแผนกผู้ขอ → ผู้อนุมัติ (เลือกรายชื่อเอง)
+  const quickStart = () => setStates([
+    { name: module === 'ot' ? 'ผู้ตรวจสอบ (หัวหน้าแผนก)' : 'หัวหน้าแผนก', mode: 'ANY', slot: module === 'ot' ? 'checker' : 'head', approver_source: 'dept_head', approver_ids: [] },
+    { name: 'ผู้อนุมัติ', mode: 'ANY', slot: 'approver', approver_source: 'manual', approver_ids: [] }
+  ]);
   const removeState = (idx) => setStates(s => s.filter((_, i) => i !== idx));
   const moveState = (idx, dir) => setStates(s => {
     const arr = [...s]; const j = idx + dir;
@@ -144,8 +286,9 @@ export default function AdminApprovalTemplates() {
     if (!states.length) { toast('ต้องมีอย่างน้อย 1 ขั้นตอนอนุมัติ', 'error'); return; }
     for (const s of states) {
       if (!s.name.trim()) { toast('กรุณาระบุชื่อทุกขั้นตอน', 'error'); return; }
-      if (!s.approver_ids.length) { toast(`ขั้นตอน "${s.name || '(ไม่มีชื่อ)'}" ต้องมีผู้อนุมัติอย่างน้อย 1 คน`, 'error'); return; }
+      if (s.approver_source !== 'dept_head' && !s.approver_ids.length) { toast(`ขั้นตอน "${s.name || '(ไม่มีชื่อ)'}" ต้องมีผู้อนุมัติอย่างน้อย 1 คน`, 'error'); return; }
     }
+    if (!states.some(s => s.approver_source !== 'dept_head')) { toast('ต้องมีอย่างน้อย 1 ขั้นที่เลือกรายชื่อผู้อนุมัติเอง (ใช้อนุมัติเมื่อแผนกไหนไม่มีหัวหน้า)', 'error'); return; }
     try {
       await api.put(`/api/approval-templates/${selectedId}/states`, { states });
       toast('บันทึกขั้นตอนอนุมัติสำเร็จ', 'success');
@@ -155,14 +298,14 @@ export default function AdminApprovalTemplates() {
       //  การ reload ตรงนี้จะไปทับค่าที่ยังไม่ได้บันทึกของ Requester ทิ้งโดยไม่ตั้งใจ — นี่คือจุดที่ทำให้ติ๊กหน้าชื่อ requester หายไปเองตอนกดปุ่มนี้)
       const { template } = await api.get(`/api/approval-templates/${selectedId}`);
       setDetail(d => ({ ...d, states: template.states }));
-      setStates(template.states.map(s => ({ name: s.name, mode: s.mode, approver_ids: s.approvers.map(a => a.id) })));
+      setStates(template.states.map(toEditState));
     } catch (err) { toast(err.message, 'error'); }
   };
 
   return (
     <Layout title="Template อนุมัติ (Approval Templates)">
       <div className="muted" style={{ fontSize: 12.5, marginBottom: 14 }}>
-        กำหนด Workflow การอนุมัติล่วงหน้าเป็น Template — ระบุว่าใครใช้ Template นี้ได้ (Requester), มีกี่ขั้นตอน, และแต่ละขั้นตอนใครอนุมัติได้บ้าง (ANY = คนใดคนหนึ่งพอ, ALL = ต้องครบทุกคน)
+        กำหนด Workflow การอนุมัติล่วงหน้าเป็น Template — ระบุว่าใครใช้ Template นี้ได้ (Requester), มีกี่ขั้นตอน, ใครอนุมัติ และให้ชื่อไปลงช่องไหนบนเอกสาร PDF (ANY = คนใดคนหนึ่งพอ, ALL = ต้องครบทุกคน)
         พนักงานที่ไม่มี Template ครอบคลุม จะใช้ระบบเดิม (หัวหน้าแผนกอนุมัติคนเดียวจบ) โดยอัตโนมัติ ไม่ต้องตั้งให้ครบทุกคนก่อนถึงจะใช้งานได้
       </div>
       <div className="tabs" style={{ marginBottom: 14 }}>
@@ -170,6 +313,7 @@ export default function AdminApprovalTemplates() {
           <div key={t.v} className={`tab ${module === t.v ? 'active' : ''}`} onClick={() => changeModule(t.v)}>{t.label}</div>
         ))}
       </div>
+      {module === 'heads' ? <DeptHeads users={users} toast={toast} /> : (
       <div className="grid-2" style={{ alignItems: 'flex-start' }}>
         <div className="card">
           <div className="card-head"><h3>Template ทั้งหมด (โมดูล: {MODULE_TABS.find(t => t.v === module)?.label})</h3></div>
@@ -238,27 +382,63 @@ export default function AdminApprovalTemplates() {
 
                 <div className="form-group">
                   <label>ขั้นตอนการอนุมัติ (เรียงตามลำดับ)</label>
-                  {states.map((s, idx) => (
+                  {states.length > 0 && <Flow states={states} module={module} />}
+                  {!states.length && hasSlots && (
+                    <div style={{ marginBottom: 10 }}>
+                      <button className="btn btn-outline btn-sm" onClick={quickStart}>
+                        ⚡ ใช้รูปแบบมาตรฐาน: {module === 'ot' ? 'ผู้ตรวจสอบ (หัวหน้าแผนก)' : 'หัวหน้าแผนก'} → ผู้อนุมัติ
+                      </button>
+                    </div>
+                  )}
+                  {states.map((s, idx) => {
+                    const isHead = s.approver_source === 'dept_head';
+                    const reqDepts = [...new Set(users.filter(u => requesterIds.includes(u.id)).map(u => u.department).filter(Boolean))];
+                    const noHead = reqDepts.filter(d => !(deptHeads.find(x => x.department === d)?.user_ids.length));
+                    return (
                     <div key={idx} className="card" style={{ marginBottom: 10, background: '#fafbfc' }}>
                       <div className="card-body">
                         <div className="flex gap-8" style={{ alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
                           <span className="badge" style={{ background: '#eef0f5' }}>State {idx + 1}</span>
-                          <input placeholder="ชื่อขั้นตอน เช่น หัวหน้าแผนกอนุมัติ" value={s.name}
+                          <input placeholder="ชื่อขั้นตอน เช่น หัวหน้าแผนก" value={s.name}
                             onChange={e => updateState(idx, { name: e.target.value })} style={{ flex: 1, fontSize: 13, minWidth: 160 }} />
-                          <select value={s.mode} onChange={e => updateState(idx, { mode: e.target.value })} style={{ fontSize: 12.5 }}>
-                            {MODE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
-                          </select>
                           <button className="btn btn-outline btn-sm" disabled={idx === 0} onClick={() => moveState(idx, -1)}>↑</button>
                           <button className="btn btn-outline btn-sm" disabled={idx === states.length - 1} onClick={() => moveState(idx, 1)}>↓</button>
                           <button className="btn btn-danger btn-sm" onClick={() => removeState(idx)}>ลบ</button>
                         </div>
-                        <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>
-                          {s.mode === 'ALL' ? 'ต้องอนุมัติครบทุกคนที่เลือกไว้ State นี้ถึงจะผ่าน' : 'อนุมัติคนใดคนหนึ่งพอ State นี้ก็ผ่านทันที'}
+                        <div className="flex gap-8" style={{ alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+                          {hasSlots && (
+                            <label style={{ fontSize: 12.5 }}>ชื่อไปลงช่อง:{' '}
+                              <select value={s.slot} onChange={e => updateState(idx, { slot: e.target.value })} style={{ fontSize: 12.5 }}>
+                                {SLOT_OPTIONS[module].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                              </select>
+                            </label>
+                          )}
+                          <label style={{ fontSize: 12.5 }}>ผู้อนุมัติ:{' '}
+                            <select value={s.approver_source} onChange={e => updateState(idx, { approver_source: e.target.value })} style={{ fontSize: 12.5 }}>
+                              <option value="manual">เลือกรายชื่อเอง</option>
+                              <option value="dept_head">หัวหน้าตามแผนกของผู้ขอ (อัตโนมัติ)</option>
+                            </select>
+                          </label>
+                          {!isHead && (
+                            <label style={{ fontSize: 12.5 }}>เงื่อนไข:{' '}
+                              <select value={s.mode} onChange={e => updateState(idx, { mode: e.target.value })} style={{ fontSize: 12.5 }}>
+                                {MODE_OPTIONS.map(m => <option key={m} value={m}>{m === 'ANY' ? 'ANY (คนใดคนหนึ่งพอ)' : 'ALL (ครบทุกคน)'}</option>)}
+                              </select>
+                            </label>
+                          )}
                         </div>
-                        <UserPicker users={users} selected={s.approver_ids} onChange={ids => updateState(idx, { approver_ids: ids })} />
+                        {isHead ? (
+                          <div style={{ fontSize: 12.5, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 10px' }}>
+                            ระบบจะส่งให้ <b>หัวหน้าของแผนกที่ผู้ขอสังกัด</b> (ตั้งหัวหน้าได้ที่แท็บ "หัวหน้าแผนก") — ถ้าแผนกไม่มีหัวหน้า หรือผู้ขอเป็นหัวหน้าเอง จะข้ามขั้นนี้ไปที่ขั้นถัดไป
+                            {noHead.length > 0 && <div style={{ color: '#b45309', marginTop: 4 }}>⚠ แผนกของผู้ขอที่ยังไม่ตั้งหัวหน้า: {noHead.join(', ')} (คนในแผนกเหล่านี้จะข้ามไปผู้อนุมัติเลย)</div>}
+                          </div>
+                        ) : (
+                          <UserPicker users={users} selected={s.approver_ids} onChange={ids => updateState(idx, { approver_ids: ids })} />
+                        )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   <div className="flex gap-8">
                     <button className="btn btn-outline btn-sm" onClick={addState}>+ เพิ่มขั้นตอน</button>
                     <button className="btn btn-primary btn-sm" onClick={saveStates}>บันทึกขั้นตอนทั้งหมด</button>
@@ -269,6 +449,7 @@ export default function AdminApprovalTemplates() {
           )}
         </div>
       </div>
+      )}
     </Layout>
   );
 }

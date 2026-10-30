@@ -5,6 +5,7 @@ import { useAuth } from '../lib/AuthContext';
 import { ROLE_TH, canAccessVisit } from '../lib/api';
 import { getPinnedAdminTools } from '../lib/pinnedTools';
 import NotificationBell from './NotificationBell';
+import { usePageContent } from '../lib/PageContentContext';
 
 // เครื่องมือผู้ดูแลระบบทั้งหมด - อยู่ที่หน้า "ตั้งค่า" เป็นหลัก เลือกปักหมุดบางอันให้โชว์ในเมนูซ้ายได้ (ดู pinnedTools.js)
 export const ADMIN_TOOLS = [
@@ -78,7 +79,6 @@ const MENU = {
   tail: [
     { href: '/calendar', icon: '\uD83D\uDCC5', label: 'ปฏิทิน' },
     { href: '/customers', icon: '\uD83D\uDC65', label: 'Customer' },
-    { href: '/report', icon: '\uD83D\uDCCA', label: 'Report' },
     { href: '/notifications', icon: '\uD83D\uDD14', label: 'Notifications', badgeKey: 'unread' },
     { href: '/settings', icon: '\u2699', label: 'ตั้งค่า' },
   ],
@@ -115,7 +115,7 @@ function buildMenu(me) {
   // "ทีมของฉัน" โชว์ตามสิทธิ์จริง (can_evaluate) ไม่ใช่ role ตายตัว เพราะ Admin อาจมอบสิทธิ์พิเศษให้พนักงาน role Employee ก็ได้
   if (me.can_evaluate) items.push({ href: '/my-team', icon: '\uD83C\uDFC5', label: 'ทีมของฉัน' });
   // Report: ทุกคนเห็นเมนู (Approver/Admin = ทุกคน, พนักงาน = ของตัวเอง)
-  items = items.concat(MENU.tail.filter(item => (item.href !== '/customers' || canAccessVisit(me))));
+  items = items.concat(MENU.tail.filter(item => (item.href !== '/customers' || me.role === 'Admin')));
   // เครื่องมือ Admin ย้ายไปรวมไว้ที่หน้า "ตั้งค่า" ทั้งหมดแล้ว (กันเมนูซ้ายยาวเกินไป)
   // จะโชว์ตรงนี้เฉพาะอันที่ผู้ใช้เลือกปักหมุดเองเท่านั้น (สูงสุด 4 อัน ดูหน้าตั้งค่า)
   if (me.role === 'Admin') {
@@ -138,7 +138,24 @@ function initialOpenGroups(items, pathname) {
   return open;
 }
 
+// รายการที่ Admin เปลี่ยนชื่อได้ที่ Settings > จัดการหน้า/หัวข้อ (key = menu.<href|group>) — ใช้เป็น catalog ของหน้า Admin ด้วย
+export const MENU_CATALOG = [
+  ...MENU.common.map(i => ({ key: `menu.${i.href}`, label: i.label, group: 'เมนูหลัก' })),
+  { key: 'menu.visit', label: 'Visit', group: 'กลุ่มเมนู' }, { key: 'menu.leave', label: 'ลา', group: 'กลุ่มเมนู' }, { key: 'menu.ot', label: 'OT', group: 'กลุ่มเมนู' },
+  { key: 'menu.approvals', label: 'รออนุมัติ', group: 'กลุ่มเมนู' },
+  ...VISIT_STAGES.map(i => ({ key: `menu.${i.href}`, label: i.label, group: 'เมนูย่อย Visit' })),
+  ...LEAVE_STAGES.map(i => ({ key: `menu.${i.href}`, label: i.label, group: 'เมนูย่อย ลา' })),
+  ...OT_STAGES.map(i => ({ key: `menu.${i.href}`, label: i.label, group: 'เมนูย่อย OT' })),
+  { key: 'menu./approve-requests', label: 'Approve Requests', group: 'เมนูรออนุมัติ' },
+  { key: 'menu./approve-ot', label: 'อนุมัติ OT', group: 'เมนูรออนุมัติ' },
+  { key: 'menu./approve-leave', label: 'อนุมัติการลา', group: 'เมนูรออนุมัติ' },
+  { key: 'menu./my-team', label: 'ทีมของฉัน', group: 'เมนูหลัก' },
+  ...MENU.tail.map(i => ({ key: `menu.${i.href}`, label: i.label, group: 'เมนูหลัก' })),
+];
+
 export default function Layout({ title, children }) {
+  const { pc } = usePageContent();
+  const menuLabel = (it) => pc(`menu.${it.group || it.href}`, it.label);
   const { me, badgeCounts, logout, refreshMyVisit } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -194,7 +211,7 @@ export default function Layout({ title, children }) {
                 <li key={it.group} className="nav-group">
                   <a className={`nav-group-head ${activeInside ? 'active-inside' : ''}`} onClick={() => toggleGroup(it.group)}>
                     <span className="icon" dangerouslySetInnerHTML={{ __html: it.icon }} />
-                    {it.label}
+                    {menuLabel(it)}
                     {groupBadge > 0 && <span className="badge" style={{ background: 'var(--red-600)', color: '#fff' }}>{groupBadge}</span>}
                     <span className={`chev ${isOpen ? 'open' : ''}`}>{'\u203A'}</span>
                   </a>
@@ -206,7 +223,7 @@ export default function Layout({ title, children }) {
                         <li key={sub.href}>
                           <Link to={sub.href} className={subActive} onClick={closeSidebar}>
                             <span className="icon" dangerouslySetInnerHTML={{ __html: sub.icon }} />
-                            {sub.label}
+                            {menuLabel(sub)}
                             {subBadge && <span className="badge" style={BADGE_STYLE[sub.badgeTone] || { background: 'var(--red-600)', color: '#fff' }}>{badgeCounts[sub.badgeKey]}</span>}
                           </Link>
                         </li>
@@ -223,7 +240,7 @@ export default function Layout({ title, children }) {
               <li key={it.href}>
                 <Link to={it.href} className={active} onClick={closeSidebar}>
                   <span className="icon" dangerouslySetInnerHTML={{ __html: it.icon }} />
-                  {it.label}
+                  {menuLabel(it)}
                   {badge && <span className="badge" style={{ background: 'var(--red-600)', color: '#fff' }}>{badgeCounts[it.badgeKey]}</span>}
                 </Link>
               </li>
@@ -237,7 +254,7 @@ export default function Layout({ title, children }) {
             <button className="hamburger-btn" onClick={() => setSidebarOpen(o => !o)} title="เมนู">
               {'\u2630'}
             </button>
-            <h1>{title}</h1>
+            <h1>{pc(`page.${location.pathname}`, title)}</h1>
           </div>
           <div className="topbar-right">
             <NotificationBell />

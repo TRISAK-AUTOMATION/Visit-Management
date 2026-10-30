@@ -42,14 +42,23 @@ function findTemplateForRequester(module, userId) {
   const states = dbModule.prepare(`SELECT * FROM template_states WHERE template_id = ? ORDER BY sort_order ASC, id ASC`).all(tpl.id);
   if (!states.length) return null; // Template ไม่มี state เลย ถือว่ายังใช้งานไม่ได้ ปล่อยให้ fallback แทน
   const stateApprovers = new Map();
+  const me = dbModule.prepare(`SELECT department FROM users WHERE id = ?`).get(userId);
   states.forEach(s => {
-    const approvers = dbModule.prepare(`SELECT user_id FROM template_state_approvers WHERE state_id = ?`).all(s.id).map(r => r.user_id);
+    let approvers;
+    if (s.approver_source === 'dept_head') {
+      // หัวหน้าตามแผนกของผู้ขอ - ไม่นับตัวผู้ขอเอง (ถ้าผู้ขอเป็นหัวหน้าเอง หรือแผนกไม่มีหัวหน้า ขั้นนี้จะถูกข้าม ไปที่ผู้อนุมัติเลย)
+      approvers = me && me.department
+        ? dbModule.prepare(`SELECT user_id FROM department_heads WHERE department = ?`).all(me.department).map(r => r.user_id).filter(id => id !== Number(userId))
+        : [];
+    } else {
+      approvers = dbModule.prepare(`SELECT user_id FROM template_state_approvers WHERE state_id = ?`).all(s.id).map(r => r.user_id);
+    }
     stateApprovers.set(s.id, approvers);
   });
   return {
     templateId: tpl.id,
     templateName: tpl.name,
-    states: states.map(s => ({ name: s.name, mode: s.mode === 'ALL' ? 'ALL' : 'ANY', approverIds: eligibleApproverIds(stateApprovers.get(s.id) || [], userId, module) }))
+    states: states.map(s => ({ name: s.name, slot: s.slot || null, mode: s.mode === 'ALL' ? 'ALL' : 'ANY', approverIds: eligibleApproverIds(stateApprovers.get(s.id) || [], userId, module) }))
       .filter(s => s.approverIds.length) // State ที่ไม่มีผู้อนุมัติเลยข้ามไป กัน workflow ค้าง
   };
 }
@@ -99,10 +108,10 @@ function createWorkflow(module, requestId, requesterId) {
   `).run(module, requestId, plan.templateId, plan.templateName);
   const workflowId = wfInfo.lastInsertRowid;
 
-  const insertState = dbModule.prepare(`INSERT INTO request_workflow_states (workflow_id, state_index, name, mode, status) VALUES (?, ?, ?, ?, ?)`);
+  const insertState = dbModule.prepare(`INSERT INTO request_workflow_states (workflow_id, state_index, name, mode, status, slot) VALUES (?, ?, ?, ?, ?, ?)`);
   const insertApprover = dbModule.prepare(`INSERT INTO request_workflow_approvers (workflow_state_id, user_id) VALUES (?, ?)`);
   plan.states.forEach((s, idx) => {
-    const stateInfo = insertState.run(workflowId, idx, s.name, s.mode, idx === 0 ? 'pending' : 'waiting');
+    const stateInfo = insertState.run(workflowId, idx, s.name, s.mode, idx === 0 ? 'pending' : 'waiting', s.slot || null);
     const stateId = stateInfo.lastInsertRowid;
     Array.from(new Set(s.approverIds)).forEach(uid => insertApprover.run(stateId, uid));
   });
@@ -120,7 +129,7 @@ function getWorkflow(module, requestId) {
       FROM request_workflow_approvers a JOIN users u ON u.id = a.user_id
       WHERE a.workflow_state_id = ?
     `).all(s.id);
-    return { index: s.state_index, name: s.name, mode: s.mode, status: s.status, approvers };
+    return { index: s.state_index, name: s.name, slot: s.slot || null, mode: s.mode, status: s.status, approvers };
   });
   return {
     workflowId: wf.id,
@@ -299,10 +308,15 @@ function decide(module, requestId, userId, action, comment, requesterId) {
 // เคยถูกตั้งเป็นผู้อนุมัติในระบบ Template หรือมี workflow ที่ตัวเองอยู่ในสายอนุมัติอยู่ไหม (ไม่ว่า role จะเป็นอะไรก็ตาม)
 // ใช้แสดงเมนู "อนุมัติการลา" / อนุญาตเข้าหน้าและ endpoint อนุมัติ ให้คนที่ Admin ตั้งเป็นผู้อนุมัติผ่าน Template แม้ role จะเป็น Employee ก็ตาม
 function hasEverBeenApprover(userId) {
+  // นับเฉพาะ: (1) ยังอยู่ใน Template ปัจจุบัน หรือ (2) เป็นผู้อนุมัติของคำขอที่ยังค้างอยู่จริง (ยังไม่ตัดสินใจ)
+  // ไม่นับประวัติ workflow เก่าที่จบไปแล้ว
   const inTemplate = dbModule.prepare(`SELECT 1 FROM template_state_approvers WHERE user_id = ? LIMIT 1`).get(userId);
   if (inTemplate) return true;
-  const inWorkflow = dbModule.prepare(`SELECT 1 FROM request_workflow_approvers WHERE user_id = ? LIMIT 1`).get(userId);
-  return !!inWorkflow;
+  return !!dbModule.prepare(`
+    SELECT 1 FROM request_workflow_approvers a
+    JOIN request_workflow_states s ON s.id = a.workflow_state_id
+    JOIN request_workflows w ON w.id = s.workflow_id
+    WHERE a.user_id = ? AND a.decision IS NULL AND w.status = 'pending' LIMIT 1`).get(userId);
 }
 
 module.exports = {

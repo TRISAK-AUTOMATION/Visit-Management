@@ -91,8 +91,13 @@ export default function ApproveOT() {
             <thead><tr><th>วันที่ยื่น</th><th>ผู้ขอ</th><th>วันที่ทำ OT</th><th>เวลา</th><th>ชั่วโมง</th><th>จัดการ</th></tr></thead>
             <tbody>
               {rows.length ? rows.map(r => (
-                <tr key={r.id}>
-                  <td>{fmtDateTime(r.created_at)}</td>
+                <tr key={r.id} style={r.status === 'pending' && r.is_update ? { background: '#fff8ea', boxShadow: 'inset 4px 0 0 #f5a524' } : undefined}>
+                  <td>
+                    {r.status === 'pending' && (r.is_update
+                      ? <span className="req-tag upd">Updated</span>
+                      : <span className="req-tag new">New OT</span>)}
+                    <div>{fmtDateTime(r.created_at)}</div>
+                  </td>
                   <td>{r.requester_name} {r.requester_department ? `· ${r.requester_department}` : ''}</td>
                   <td>{fmtDate(r.ot_date)}</td>
                   <td>{r.time_from} - {r.time_to}</td>

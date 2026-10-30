@@ -13,6 +13,8 @@ import {
 import { api, todayLocal } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
+import { usePageContent } from '../lib/PageContentContext';
+import { useFormOptions } from '../lib/useFormOptions';
 import './visit-form.css';
 
 // ---------------------------------------------------------------- ค่าคงที่
@@ -157,6 +159,13 @@ export default function VisitRequest() {
   const toast = useToast();
   const navigate = useNavigate();
   const { me } = useAuth();
+  const { pc } = usePageContent();
+  // ตัวเลือกจากฐานข้อมูล (Admin แก้ได้ที่ Form Builder) — ชื่อตัวแปรเดิมถูกบังด้วยค่าที่โหลดมา
+  const fo = useFormOptions();
+  const { job_type: JOB_TYPES, transport: TRANSPORTS, company: COMPANIES, objective: OBJECTIVES, problems: PROBLEMS, projects: PROJECTS,
+    timings: TIMINGS, potentials: POTENTIALS, found: FOUND, actions: ACTIONS } = fo.lists;
+  const isOther = (g, items) => !!fo.other[g] && (items || []).includes(fo.other[g]);
+  const excl = (g) => fo.exclusive[g] || [];
   const [searchParams] = useSearchParams();
   const editId = searchParams.get('id');
   const draftKey = `vf-draft:${me ? me.id : 0}:${editId || 'new'}`;
@@ -480,10 +489,12 @@ export default function VisitRequest() {
   const hasExtra = useMemo(() => customFieldDefs.some(f => !ANCHOR_KEYS.has(f.position_after || '')), [customFieldDefs]);
   const notesVisible = cf('notes').is_visible;
   const sections = useMemo(() => {
-    const list = SECTIONS.filter(s => s.id !== 'vf-s8' || notesVisible);
-    return hasExtra ? [...list, EXTRA_SECTION] : list;
+    const hid = (s) => s.id !== 'vf-s1' && pc(`form.${s.id.replace('vf-', '')}.hidden`, '0') === '1';
+    const nm = (s) => ({ ...s, title: pc(`form.${s.id.replace('vf-', '')}.title`, s.title), th: pc(`form.${s.id.replace('vf-', '')}.th`, s.th), nav: pc(`form.${s.id.replace('vf-', '')}.nav`, s.nav) });
+    const list = SECTIONS.filter(s => (s.id !== 'vf-s8' || notesVisible) && !hid(s)).map(nm);
+    return hasExtra ? [...list, nm(EXTRA_SECTION)] : list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasExtra, notesVisible, coreSettings]);
+  }, [hasExtra, notesVisible, coreSettings, pc]);
 
   const secInfo = useMemo(() => {
     const missingBy = (id) => checks.filter(c => !c.ok && c.sec === id).length;
@@ -628,7 +639,7 @@ export default function VisitRequest() {
     }));
     const rows = plan.rows.filter(r => r.next_action.trim() || r.owner_id || r.contact || r.due_date || r.expected_result.trim());
     // Purpose (ฟิลด์เดิมที่ระบบบังคับ): ถ้าเว้นว่าง ใช้ข้อที่เลือกใน Visit Objective แทน
-    const purpose = form.purpose.trim() || objective.items.map(i => (i === 'Other' && objective.other.trim() ? `Other: ${objective.other.trim()}` : i)).join(', ');
+    const purpose = form.purpose.trim() || objective.items.map(i => (i === fo.other.objective && objective.other.trim() ? `Other: ${objective.other.trim()}` : i)).join(', ');
     return {
       ...form,
       purpose,
@@ -795,7 +806,10 @@ export default function VisitRequest() {
   // ฟิลด์เดิม 1 ตัว (ตามชนิดที่กำหนดใน CORE_SPEC) + Custom Field ที่ Admin วางต่อท้าย
   const renderCore = (key) => {
     const s = cf(key);
-    const spec = CORE_SPEC[key];
+    const spec0 = CORE_SPEC[key];
+    const optList = key === 'job_type' ? JOB_TYPES : key === 'transport' ? TRANSPORTS : null;
+    // ถ้าค่าที่บันทึกไว้ถูก Admin ลบจากตัวเลือกไปแล้ว ยังแสดงค่าเดิมให้เห็น (ไม่ทำให้ข้อมูลเก่าหาย)
+    const spec = optList ? { ...spec0, options: form[key] && !optList.includes(form[key]) ? [...optList, form[key]] : optList } : spec0;
     const out = [];
     if (s.is_visible && spec) {
       const v = form[key];
@@ -1113,7 +1127,7 @@ export default function VisitRequest() {
               status={sIn('vf-s2').state} statusText={sIn('vf-s2').text} summary={sIn('vf-s2').summary}>
               <p className="vf-question">What do we want to find from this visit?<small>เราต้องการหาอะไรจากการเข้าพบครั้งนี้</small></p>
               <CheckGroup options={OBJECTIVES} value={objective.items} onChange={(v) => setObjective(o => ({ ...o, items: v }))} />
-              {objective.items.includes('Other') && (
+              {isOther('objective', objective.items) && (
                 <div className="vf-cond">
                   <Field label="Other (please specify)" th="ระบุเพิ่มเติม">
                     <input type="text" className="vf-input" value={objective.other} onChange={(e) => setObjective(o => ({ ...o, other: e.target.value }))} placeholder="Specify other objective" />
@@ -1139,7 +1153,7 @@ export default function VisitRequest() {
 
               <SubAccordion no="3.2" title="Recurring Part Demand" th="ความต้องการอะไหล่/สินค้าต่อเนื่อง" open={!!subOpen.d2} onToggle={() => setSubOpen(o => ({ ...o, d2: !o.d2 }))}
                 summary={during.recurring.value === 'yes' ? 'Yes' : during.recurring.value === 'no' ? 'No' : during.recurring.value === 'need_info' ? 'Need More Information' : ''}>
-                <PillRadio name="recurring" value={during.recurring.value} onChange={(v) => setDuring(d => ({ ...d, recurring: { ...d.recurring, value: v } }))}
+                <PillRadio clearable name="recurring" value={during.recurring.value} onChange={(v) => setDuring(d => ({ ...d, recurring: { ...d.recurring, value: v } }))}
                   options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }, { value: 'need_info', label: 'Need More Information' }]} />
                 {during.recurring.value === 'yes' && (
                   <div className="vf-cond">
@@ -1152,8 +1166,8 @@ export default function VisitRequest() {
 
               <SubAccordion no="3.3" title="Customer Problem / Improvement" th="ปัญหา/สิ่งที่ลูกค้าต้องการปรับปรุง" open={!!subOpen.d3} onToggle={() => setSubOpen(o => ({ ...o, d3: !o.d3 }))}
                 summary={during.problems.items.join(', ')}>
-                <CheckGroup options={PROBLEMS} exclusive={['No Current Problem']} value={during.problems.items} onChange={(v) => setDuring(d => ({ ...d, problems: { ...d.problems, items: v } }))} />
-                {during.problems.items.includes('Other') && (
+                <CheckGroup options={PROBLEMS} exclusive={excl('problems')} value={during.problems.items} onChange={(v) => setDuring(d => ({ ...d, problems: { ...d.problems, items: v } }))} />
+                {isOther('problems', during.problems.items) && (
                   <div className="vf-cond">
                     <Field label="Other (please specify)" th="ระบุเพิ่มเติม">
                       <input type="text" className="vf-input" value={during.problems.other} onChange={(e) => setDuring(d => ({ ...d, problems: { ...d.problems, other: e.target.value } }))} />
@@ -1168,8 +1182,8 @@ export default function VisitRequest() {
 
               <SubAccordion no="3.4" title="Upcoming Project / Future Plan" th="โครงการ/แผนในอนาคตของลูกค้า" open={!!subOpen.d4} onToggle={() => setSubOpen(o => ({ ...o, d4: !o.d4 }))}
                 summary={during.projects.items.join(', ')}>
-                <CheckGroup options={PROJECTS} exclusive={['No Known Project']} value={during.projects.items} onChange={(v) => setDuring(d => ({ ...d, projects: { ...d.projects, items: v } }))} />
-                {during.projects.items.includes('Other') && (
+                <CheckGroup options={PROJECTS} exclusive={excl('projects')} value={during.projects.items} onChange={(v) => setDuring(d => ({ ...d, projects: { ...d.projects, items: v } }))} />
+                {isOther('projects', during.projects.items) && (
                   <div className="vf-cond">
                     <Field label="Other (please specify)" th="ระบุเพิ่มเติม">
                       <input type="text" className="vf-input" value={during.projects.other} onChange={(e) => setDuring(d => ({ ...d, projects: { ...d.projects, other: e.target.value } }))} />
@@ -1182,7 +1196,7 @@ export default function VisitRequest() {
                 </Field>
                 <div style={{ height: 14 }} />
                 <Field label="Expected Timing" th="ช่วงเวลาที่คาดว่าจะเกิดขึ้น">
-                  <PillRadio name="timing" options={TIMINGS} value={during.projects.timing} onChange={(v) => setDuring(d => ({ ...d, projects: { ...d.projects, timing: v } }))} />
+                  <PillRadio clearable name="timing" options={TIMINGS} value={during.projects.timing} onChange={(v) => setDuring(d => ({ ...d, projects: { ...d.projects, timing: v } }))} />
                 </Field>
               </SubAccordion>
 
@@ -1190,7 +1204,7 @@ export default function VisitRequest() {
                 summary={during.potential.items.join(', ')}>
                 <p className="vf-question">What else can Trisak introduce?<small>Trisak สามารถนำเสนออะไรเพิ่มเติมได้บ้าง</small></p>
                 <CheckGroup options={POTENTIALS} value={during.potential.items} onChange={(v) => setDuring(d => ({ ...d, potential: { ...d.potential, items: v } }))} />
-                {during.potential.items.includes('Other') && (
+                {isOther('potentials', during.potential.items) && (
                   <div className="vf-cond">
                     <Field label="Other (please specify)" th="ระบุเพิ่มเติม">
                       <input type="text" className="vf-input" value={during.potential.other} onChange={(e) => setDuring(d => ({ ...d, potential: { ...d.potential, other: e.target.value } }))} />
@@ -1216,10 +1230,10 @@ export default function VisitRequest() {
             <Section id="vf-s4" no={4} title="Opportunity Summary" th="สรุปโอกาสทางธุรกิจ" open={!!open['vf-s4']} onToggle={() => toggleSec('vf-s4')}
               status={sIn('vf-s4').state} statusText={sIn('vf-s4').text} summary={sIn('vf-s4').summary}>
               <Group title="What did we find?" th="เราพบอะไรจากการเข้าพบ">
-                <CheckGroup options={FOUND} exclusive={['No Opportunity']} value={opp.found} onChange={(v) => setOpp(o => ({ ...o, found: v }))} />
+                <CheckGroup options={FOUND} exclusive={excl('found')} value={opp.found} onChange={(v) => setOpp(o => ({ ...o, found: v }))} />
               </Group>
               <Group title="Opportunity Level" th="ระดับโอกาส">
-                <RadioCards name="opp_level" options={OPP_LEVELS} value={opp.level} onChange={(v) => setOpp(o => ({ ...o, level: v }))} />
+                <RadioCards clearable name="opp_level" options={OPP_LEVELS} value={opp.level} onChange={(v) => setOpp(o => ({ ...o, level: v }))} />
               </Group>
               <Group title="Opportunity Description" th="รายละเอียดโอกาส">
                 <textarea className="vf-textarea lg" value={opp.description} onChange={(e) => setOpp(o => ({ ...o, description: e.target.value }))} placeholder="Describe the opportunity, expected value, and key points..." />
@@ -1230,7 +1244,7 @@ export default function VisitRequest() {
             <Section id="vf-s5" no={5} title="Action Plan" th="แผนดำเนินงาน" open={!!open['vf-s5']} onToggle={() => toggleSec('vf-s5')}
               status={sIn('vf-s5').state} statusText={sIn('vf-s5').text} summary={sIn('vf-s5').summary}>
               <p className="vf-question">What needs to happen next?<small>ขั้นตอนต่อไปที่ต้องทำคืออะไร</small></p>
-              <CheckGroup options={ACTIONS} exclusive={['No Action']} value={plan.actions} onChange={(v) => setPlan(p => ({ ...p, actions: v }))} />
+              <CheckGroup options={ACTIONS} exclusive={excl('actions')} value={plan.actions} onChange={(v) => setPlan(p => ({ ...p, actions: v }))} />
               <Group title="Action Plan Table" th="ตารางแผนดำเนินงาน">
                 <div className="vf-plan">
                   <div className="vf-plan-row head">
@@ -1250,7 +1264,7 @@ export default function VisitRequest() {
                         <div className="vf-plan-cell">
                           <span className="vf-cell-label">Next Action</span>
                           <input type="text" className="vf-input" list={listId} value={r.next_action} onChange={(e) => updRow(r.id, { next_action: e.target.value })} placeholder="e.g. Send datasheet" />
-                          <datalist id={listId}>{plan.actions.filter(a => a !== 'No Action').map(a => <option key={a} value={a} />)}</datalist>
+                          <datalist id={listId}>{plan.actions.filter(a => !excl('actions').includes(a)).map(a => <option key={a} value={a} />)}</datalist>
                         </div>
                         <div className="vf-plan-cell">
                           <span className="vf-cell-label">Action Owner</span>
@@ -1308,7 +1322,7 @@ export default function VisitRequest() {
             <Section id="vf-s7" no={7} title="Next Visit" th="การเข้าพบครั้งถัดไป" open={!!open['vf-s7']} onToggle={() => toggleSec('vf-s7')}
               status={sIn('vf-s7').state} statusText={sIn('vf-s7').text} summary={sIn('vf-s7').summary}>
               <Field label="Is a next visit planned?" th="มีแผนเข้าพบครั้งถัดไปหรือไม่">
-                <PillRadio name="next_needed" value={next.needed} onChange={(v) => setNext(n => ({ ...n, needed: v }))}
+                <PillRadio clearable name="next_needed" value={next.needed} onChange={(v) => setNext(n => ({ ...n, needed: v }))}
                   options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]} />
               </Field>
               {next.needed === 'yes' && (

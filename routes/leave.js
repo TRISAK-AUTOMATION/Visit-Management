@@ -123,7 +123,7 @@ router.get('/', requireAuth, (req, res) => {
     const rows = db.prepare(`
       SELECT lr.*, u.full_name AS requester_name, u.department AS requester_department
       FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
-      WHERE lr.requester_id = ? ORDER BY lr.created_at DESC
+      WHERE lr.requester_id = ? ORDER BY lr.created_at DESC, lr.id DESC
     `).all(req.session.userId);
     return res.json({ requests: rows });
   }
@@ -139,7 +139,7 @@ router.get('/', requireAuth, (req, res) => {
     rows = db.prepare(`
       SELECT lr.*, u.full_name AS requester_name, u.department AS requester_department
       FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
-      WHERE lr.status = ? ORDER BY lr.created_at DESC
+      WHERE lr.status = ? ORDER BY lr.created_at DESC, lr.id DESC
     `).all(wantedStatus);
     // บอกหน้าเว็บว่าคนนี้ "กดอนุมัติใบนี้ได้จริงไหม" + ให้ Admin รีเซ็ตสายอนุมัติได้เมื่อใบที่ค้างอยู่ใช้รายชื่อเก่า
     for (const r of rows) {
@@ -147,6 +147,9 @@ router.get('/', requireAuth, (req, res) => {
       r.can_act = approvalEngine.canActOn('leave', r.id, req.session.userId);
       r.waiting_for = approvalEngine.currentApproverNames('leave', r.id).join(', ');
       r.can_resync = req.session.role === 'Admin' && approvalEngine.canResync('leave', r.id);
+      // "ส่งใหม่หลังแก้ไข" (Updated) แยกจากคำขอใหม่ (New): ดูรายการล่าสุดในประวัติ
+      const last = db.prepare(`SELECT action FROM leave_history WHERE leave_request_id = ? AND action LIKE 'ส่งคำขอ%' ORDER BY id DESC LIMIT 1`).get(r.id);
+      r.is_update = !!(last && last.action.startsWith('ส่งคำขอใหม่'));
     }
     return res.json({ requests: rows });
   }
@@ -206,7 +209,7 @@ router.get('/:id', requireAuth, (req, res) => {
   const history = db.prepare(`
     SELECT h.*, u.full_name AS actor_name FROM leave_history h
     LEFT JOIN users u ON u.id = h.action_by
-    WHERE h.leave_request_id = ? ORDER BY h.created_at ASC
+    WHERE h.leave_request_id = ? ORDER BY h.created_at ASC, h.id ASC
   `).all(req.params.id);
   const workflow = approvalEngine.getWorkflow('leave', lr.id);
   res.json({

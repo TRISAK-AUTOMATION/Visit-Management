@@ -155,6 +155,25 @@ const HIST = {
 };
 const MODE_LABEL = { full_day: 'เต็มวัน', half_day_morning: 'ครึ่งวัน (เช้า)', half_day_afternoon: 'ครึ่งวัน (บ่าย)', hours: 'รายชั่วโมง' };
 
+// ข้อมูลฟอร์ม Visit ครบทุกหัวข้อ (อ่านอย่างเดียว) — สิทธิ์ตรวจแล้วที่ตัว route
+const jparse = (v, fb) => { try { const x = typeof v === 'string' ? JSON.parse(v) : v; return x === null || x === undefined ? fb : x; } catch (e) { return fb; } };
+function visitFull(r) {
+  let contacts = jparse(r.contacts_json, []);
+  if (!Array.isArray(contacts) || !contacts.length) contacts = r.contact_person ? [{ name: r.contact_person, telephone: r.contact_phone || '' }] : [];
+  const pick = (keys) => Object.fromEntries(keys.map((k) => [k, r[k] === null || r[k] === undefined ? '' : r[k]]));
+  return {
+    info: pick(['request_date', 'visit_date', 'time_from', 'time_to', 'company', 'customer_name', 'job_type', 'sales_person', 'purpose', 'location', 'product',
+      'transport', 'license_plate', 'mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back', 'ot_hours', 'meeting_start', 'meeting_end', 'participants', 'notes', 'employee', 'dept']),
+    contacts,
+    objective: jparse(r.objective_json, {}) || {},
+    during: jparse(r.during_visit_json, {}) || {},
+    opportunity: jparse(r.opportunity_json, {}) || {},
+    plan: jparse(r.action_plan_json, {}) || {},
+    level: jparse(r.customer_level_json, {}) || {},
+    next: jparse(r.next_visit_json, {}) || {}
+  };
+}
+
 // GET /api/report/detail/:type/:id
 router.get('/detail/:type/:id', (req, res) => {
   const type = req.params.type;
@@ -217,7 +236,8 @@ router.get('/detail/:type/:id', (req, res) => {
     res.json({
       type, id: row.id, code: row.code, status: stage, status_label: sl, employee_id: row.requester_id,
       fields: fields.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([label, value]) => ({ label, value: String(value) })),
-      history
+      history,
+      visit: type === 'visit' ? visitFull(row) : undefined
     });
   } catch (err) { fail(res, err, 'ไม่สามารถโหลดรายละเอียดได้'); }
 });

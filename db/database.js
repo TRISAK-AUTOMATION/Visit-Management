@@ -349,6 +349,20 @@ CREATE TABLE IF NOT EXISTS request_workflow_approvers (
 );
 `);
 
+// ===== หัวหน้าแผนก + ช่องลงนามบนเอกสารของแต่ละขั้นตอนอนุมัติ =====
+// department_heads: หัวหน้าของแต่ละแผนก (1 แผนกมีหัวหน้าได้หลายคน) ใช้กับขั้นตอนที่เลือก "หัวหน้าตามแผนกของผู้ขอ"
+db.exec(`CREATE TABLE IF NOT EXISTS department_heads (
+  department TEXT NOT NULL,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (department, user_id)
+)`);
+// slot = ช่องบนเอกสาร PDF (head/checker/approver), approver_source = manual (ติ๊กรายชื่อเอง) | dept_head (หัวหน้าตามแผนกผู้ขอ)
+const tsCols = db.prepare(`PRAGMA table_info(template_states)`).all().map(c => c.name);
+if (!tsCols.includes('slot')) db.exec(`ALTER TABLE template_states ADD COLUMN slot TEXT`);
+if (!tsCols.includes('approver_source')) db.exec(`ALTER TABLE template_states ADD COLUMN approver_source TEXT NOT NULL DEFAULT 'manual'`);
+const wsCols = db.prepare(`PRAGMA table_info(request_workflow_states)`).all().map(c => c.name);
+if (!wsCols.includes('slot')) db.exec(`ALTER TABLE request_workflow_states ADD COLUMN slot TEXT`);
+
 // เผื่อฐานข้อมูลถูกสร้างจากเวอร์ชันก่อนหน้าที่ยังไม่มีคอลัมน์ sort_order (ตารางมีอยู่แล้วแต่ยังไม่มีคอลัมน์นี้)
 // ต้องรันก่อน seed ด้านล่าง เพราะ INSERT ด้านล่างอ้างอิงคอลัมน์นี้
 const coreFieldCols = db.prepare(`PRAGMA table_info(core_field_settings)`).all().map(c => c.name);
@@ -458,6 +472,45 @@ const PAGE_CONTENT_DEFAULTS = [
   tx3(PAGE_CONTENT_DEFAULTS);
 }
 
+// ---------- ตัวเลือกของฟอร์ม Visit (หัวข้อ 2–8 + Job Type/Transport/Company) ให้ Admin เพิ่ม/ลบ/แก้ไข/จัดลำดับได้ ----------
+// is_other = ตัวเลือกที่เมื่อติ๊กแล้วมีช่องกรอกข้อความเพิ่ม, is_exclusive = ตัวเลือกที่เลือกได้ตัวเดียว (ติ๊กแล้วล้างตัวอื่น)
+db.exec(`
+CREATE TABLE IF NOT EXISTS form_options (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_key    TEXT NOT NULL,
+  value        TEXT NOT NULL,
+  sort_order   INTEGER NOT NULL DEFAULT 0,
+  is_active    INTEGER NOT NULL DEFAULT 1,
+  is_other     INTEGER NOT NULL DEFAULT 0,
+  is_exclusive INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (group_key, value)
+);
+`);
+{
+  const D = {
+    job_type: ['เข้าพบลูกค้า', 'ติดตั้ง/บริการ', 'นำเสนอสินค้า', 'ติดตามงาน', 'ประชุมงาน', 'อื่นๆ'],
+    transport: ['รถยนต์ส่วนตัว', 'รถบริษัท', 'รถสาธารณะ', 'แท็กซี่/แอปเรียกรถ', 'อื่นๆ'],
+    company: ['TAC', 'FAC', 'HTC'],
+    objective: ['Part Opportunity', 'Product Expansion', 'Design-in', 'Replacement / Upgrade', 'Project Opportunity', 'Application Information', 'Customer / Market Information', 'Other'],
+    problems: ['Downtime', 'Productivity', 'Quality', 'Manpower', 'Maintenance', 'Safety', 'Energy', 'Obsolete Equipment', 'Other', 'No Current Problem'],
+    projects: ['New Machine', 'New Production Line', 'Factory Expansion', 'Automation', 'Replacement / Upgrade', 'Digitalization', 'Other', 'No Known Project'],
+    timings: ['Less than 3 Months', '3–6 Months', '6–12 Months', 'More than 12 Months', 'Unknown'],
+    potentials: ['Sensor', 'PLC', 'HMI', 'Inverter', 'Servo', 'Motion Control', 'Robot', 'Control Panel', 'Automation', 'Other'],
+    found: ['Part Opportunity', 'Product Expansion', 'Design-in', 'Replacement / Upgrade', 'Project Opportunity', 'No Opportunity'],
+    actions: ['Send Product Information', 'Technical Discussion', 'Site Survey', 'Demo / Test', 'Product Selection', 'Budgetary Quotation', 'Quotation', 'Project Proposal', 'Follow-up', 'No Action']
+  };
+  const EXCL = new Set(['No Current Problem', 'No Known Project', 'No Opportunity', 'No Action']);
+  const ins = db.prepare('INSERT OR IGNORE INTO form_options (group_key, value, sort_order, is_other, is_exclusive) VALUES (?, ?, ?, ?, ?)');
+  const seedOpts = db.transaction(() => {
+    for (const [g, list] of Object.entries(D)) {
+      const has = db.prepare('SELECT 1 FROM form_options WHERE group_key = ? LIMIT 1').get(g);
+      if (has) continue; // seed ครั้งแรกเท่านั้น — ไม่เขียนทับสิ่งที่ Admin แก้/ลบไปแล้ว
+      list.forEach((v, i) => ins.run(g, v, i, v === 'Other' ? 1 : 0, EXCL.has(v) ? 1 : 0));
+    }
+  });
+  seedOpts();
+}
+
 // ---------- ย้าย code จาก UNIQUE เดี่ยว (ทั้งระบบ) เป็น UNIQUE คู่กับ company ----------
 // เหตุผล: รหัสลูกค้าจาก SAP ของแต่ละบริษัท (TAC/FAC/HTC) เป็นคนละชุดเลข อาจซ้ำกันได้ข้ามบริษัท
 // SQLite แก้ constraint ของคอลัมน์ตรงๆ ไม่ได้ ถ้าฐานข้อมูลเก่ายังมี UNIQUE(code) แบบเดี่ยวติดมาจากตอนสร้างตารางครั้งแรก
@@ -545,6 +598,13 @@ db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_code_company ON custome
 }
 
 // ===== สิทธิ์วันลาอัตโนมัติตามอายุงาน =====
+// ลายเซ็นของผู้ใช้ (ไฟล์ภาพ PNG/JPEG เก็บเป็น data URL) แยกตารางเพื่อไม่ให้หลุดไปกับ SELECT * FROM users
+db.exec(`CREATE TABLE IF NOT EXISTS user_signatures (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id),
+  data_url   TEXT NOT NULL,
+  updated_at TEXT DEFAULT (datetime('now'))
+)`);
+
 // users.start_date = วันเริ่มทำงาน (YYYY-MM-DD) ; leave_balances.auto_entitlement = 1 -> ระบบคำนวณ *_total จากอายุงานตามกติกาด้านล่าง
 // leave_entitlement_rules: "ครบ min_months เดือน ได้ days วัน" ต่อประเภทลา — ใช้กติกาที่ min_months สูงสุดที่อายุงานถึง
 {

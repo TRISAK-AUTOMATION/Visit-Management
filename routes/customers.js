@@ -80,13 +80,7 @@ function normalizeName(s) {
 }
 
 function canCreatePendingCustomer(userId, role) {
-  if (role !== 'Employee') return true;
-  let depts = getDepartmentsForUser(userId);
-  if (!depts.length) {
-    const u = db.prepare('SELECT department FROM users WHERE id = ?').get(userId);
-    if (u && u.department) depts = [u.department];
-  }
-  return depts.includes('Engineer');
+  return true; // ทุกคนที่ขอ Visit ได้ เพิ่มลูกค้าใหม่ (รอตรวจสอบ) ได้
 }
 
 router.post('/pending', requireAuth, (req, res) => {

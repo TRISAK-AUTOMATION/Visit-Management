@@ -63,7 +63,7 @@ export default function App() {
       <Route path="/my-requests" element={<ProtectedRoute check={canAccessVisit}><MyRequests /></ProtectedRoute>} />
       <Route path="/approve-requests" element={<ProtectedRoute check={(me) => me.role === 'Approver' || me.role === 'Admin' || me.can_approve}><ApproveRequests /></ProtectedRoute>} />
       <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
-      <Route path="/customers" element={<ProtectedRoute check={canAccessVisit}><Customers /></ProtectedRoute>} />
+      <Route path="/customers" element={<ProtectedRoute check={(m) => m && m.role === 'Admin'}><Customers /></ProtectedRoute>} />
       <Route path="/leave-request" element={<ProtectedRoute><LeaveRequest /></ProtectedRoute>} />
       <Route path="/my-leave" element={<ProtectedRoute><MyLeave /></ProtectedRoute>} />
       <Route path="/approve-leave" element={<ProtectedRoute check={(me) => me.can_approve_leave}><ApproveLeave /></ProtectedRoute>} />

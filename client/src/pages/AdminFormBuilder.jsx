@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+import FormOptionsEditor from '../components/FormOptionsEditor';
 
 const FIELD_TYPES = [
   { v: 'text', label: 'ข้อความสั้น (Text)' },
@@ -66,6 +67,7 @@ function groupOfField(f, all) {
 }
 
 export default function AdminFormBuilder() {
+  const [tab, setTab] = useState('fields');
   const toast = useToast();
   const [fields, setFields] = useState([]);
   const [editing, setEditing] = useState(undefined); // undefined=ปิด, null=เพิ่มใหม่, object=แก้ไข
@@ -250,8 +252,17 @@ export default function AdminFormBuilder() {
     } catch (err) { toast(err.message, 'error'); load(); }
   };
 
+  const tabBar = (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        <button type="button" className={`btn btn-sm ${tab === 'fields' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab('fields')}>Field ในฟอร์ม (หัวข้อ 1)</button>
+        <button type="button" className={`btn btn-sm ${tab === 'options' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab('options')}>ตัวเลือกในหัวข้อ 1–8</button>
+      </div>
+  );
+  if (tab === 'options') return <Layout title="Form Builder — สร้างคำขอ Visit">{tabBar}<FormOptionsEditor /></Layout>;
+
   return (
     <Layout title="Form Builder — สร้างคำขอ Visit">
+      {tabBar}
       <div className="flex between mb-16">
         <div>
           <h3 style={{ margin: 0 }}>Field เพิ่มเติมในฟอร์ม "สร้างคำขอ Visit"</h3>

@@ -6,28 +6,44 @@ import { useToast } from '../lib/ToastContext';
 
 const emptySettings = {
   primary_color: '#0b1530', accent_color: '#2f5bff', logo_base64: '',
-  org_name: 'TRISAK', org_subtitle: 'VISIT MANAGEMENT SYSTEM',
-  doc_title: 'ใบขออนุมัติออกนอกสถานที่ (Visit Request Form)',
-  show_signature: true, section_order: ['requester', 'customer', 'work', 'approval'],
-  section_visible: { requester: true, customer: true, work: true, approval: true }
+  org_name: 'TRISAK', org_subtitle: 'VISIT MANAGEMENT SYSTEM', docs: {}
 };
+// ช่องที่แต่ละเอกสารปรับได้ + ส่วนที่ใช้ค่ากลาง (โลโก้/สี/ชื่อองค์กร)
+const DOC_TABS = [
+  { id: 'visit_form', fields: ['title', 'subtitle', 'footer'], uses: 'ใช้โลโก้กลาง (ถ้ามี) — สี/ชื่อองค์กรไม่ใช้ เพราะเป็นแบบฟอร์มขาว-ดำตามกระดาษ' },
+  { id: 'visit_report', fields: ['title', 'subtitle', 'footer'], uses: 'ใช้โลโก้ สี และชื่อองค์กรกลางทั้งหมด' },
+  { id: 'leave', fields: ['company', 'title'], uses: 'แบบฟอร์มตามกระดาษ — ปรับชื่อบริษัทและชื่อเอกสารได้' },
+  { id: 'ot', fields: ['company', 'title'], uses: 'แบบฟอร์มตามกระดาษ — ปรับชื่อบริษัทและชื่อเอกสารได้' }
+];
+const FIELD_LABEL = { title: 'ชื่อเอกสาร (บรรทัดบน)', subtitle: 'ชื่อรอง (บรรทัดล่าง)', footer: 'ข้อความท้ายเอกสาร', company: 'ชื่อบริษัท (หัวเอกสาร)' };
 
 export default function AdminPdfSettings() {
   const toast = useToast();
   const fileRef = useRef(null);
   const [settings, setSettings] = useState(emptySettings);
-  const [labels, setLabels] = useState({});
+  const [defaults, setDefaults] = useState({});
+  const [tab, setTab] = useState('global');
   const [saving, setSaving] = useState(false);
+  const [preview, setPreview] = useState({ url: undefined, nonce: 0 });
 
   const load = async () => {
-    const { settings: s, section_labels } = await api.get('/api/pdf-settings');
-    setSettings(s);
-    setLabels(section_labels);
+    const r = await api.get('/api/pdf-settings');
+    setSettings(r.settings);
+    setDefaults(r.doc_defaults || {});
   };
 
   useEffect(() => { load().catch(err => toast(err.message, 'error')); }, []);
 
+  // เปลี่ยนแท็บเอกสาร -> หา PDF ล่าสุดมาแสดงตัวอย่าง (เป็นค่าที่ "บันทึกแล้ว")
+  const loadPreview = async (doc) => {
+    setPreview({ url: undefined, nonce: Date.now() });
+    try { const r = await api.get(`/api/pdf-settings/preview/${doc}`); setPreview({ url: r.url, nonce: Date.now() }); }
+    catch (e) { setPreview({ url: null, nonce: Date.now() }); }
+  };
+  useEffect(() => { if (tab !== 'global') loadPreview(tab); }, [tab]);
+
   const set = (key) => (e) => setSettings(s => ({ ...s, [key]: e.target.value }));
+  const setDoc = (doc, key, val) => setSettings(s => ({ ...s, docs: { ...s.docs, [doc]: { ...s.docs[doc], [key]: val } } }));
 
   const onLogoChange = (e) => {
     const file = e.target.files[0];
@@ -46,27 +62,13 @@ export default function AdminPdfSettings() {
     if (fileRef.current) fileRef.current.value = '';
   };
 
-  const moveSection = (key, dir) => {
-    setSettings(s => {
-      const order = [...s.section_order];
-      const idx = order.indexOf(key);
-      const swapWith = idx + dir;
-      if (swapWith < 0 || swapWith >= order.length) return s;
-      [order[idx], order[swapWith]] = [order[swapWith], order[idx]];
-      return { ...s, section_order: order };
-    });
-  };
-
-  const toggleSection = (key, checked) => {
-    setSettings(s => ({ ...s, section_visible: { ...s.section_visible, [key]: checked } }));
-  };
-
   const save = async () => {
     setSaving(true);
     try {
-      const { settings: s } = await api.put('/api/pdf-settings', settings);
+      const { settings: s } = await api.put('/api/pdf-settings', { ...settings, section_order: undefined, section_visible: undefined });
       setSettings(s);
       toast('บันทึกการตั้งค่า PDF สำเร็จ', 'success');
+      if (tab !== 'global') loadPreview(tab);
     } catch (err) {
       toast(err.message, 'error');
     } finally {
@@ -78,11 +80,17 @@ export default function AdminPdfSettings() {
 
   return (
     <Layout title="ออกแบบ PDF">
-      <p className="muted" style={{ marginBottom: 16 }}>
-        ปรับหน้าตาเอกสาร PDF (ใบขออนุมัติ/รายงานการปฏิบัติงาน) ที่พิมพ์จากระบบ — สี, โลโก้, ข้อความหัวเอกสาร,
-        และเลือกได้ว่าจะให้พิมพ์หมวดไหนบ้างและเรียงลำดับอย่างไร
+      <p className="muted" style={{ marginBottom: 12 }}>
+        ระบบมีเอกสาร PDF 4 แบบ แยกตั้งค่าได้ทีละแบบ ส่วนโลโก้/สี/ชื่อองค์กรเป็นค่ากลางที่ใช้ร่วมกัน (ดูว่าเอกสารไหนใช้อะไรในแต่ละแท็บ)
       </p>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+        <button type="button" className={`btn btn-sm ${tab === 'global' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab('global')}>ค่ากลาง (โลโก้/สี)</button>
+        {DOC_TABS.map(t => (
+          <button key={t.id} type="button" className={`btn btn-sm ${tab === t.id ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab(t.id)}>{(defaults[t.id] || {}).label || t.id}</button>
+        ))}
+      </div>
 
+      {tab === 'global' && (<>
       <div className="card" style={{ marginBottom: 20 }}>
         <div className="card-head"><h3>สี</h3></div>
         <div className="card-body">
@@ -122,7 +130,7 @@ export default function AdminPdfSettings() {
       </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
-        <div className="card-head"><h3>ข้อความหัวเอกสาร</h3></div>
+        <div className="card-head"><h3>ชื่อองค์กร (ใช้กับรายงาน Visit แบบละเอียด เมื่อไม่มีโลโก้)</h3></div>
         <div className="card-body">
           <div className="form-grid">
             <div className="form-group">
@@ -133,49 +141,46 @@ export default function AdminPdfSettings() {
               <label>คำอธิบายใต้ชื่อองค์กร</label>
               <input type="text" value={settings.org_subtitle} onChange={set('org_subtitle')} style={inputStyle} />
             </div>
-            <div className="form-group full">
-              <label>ชื่อเอกสาร</label>
-              <input type="text" value={settings.doc_title} onChange={set('doc_title')} style={inputStyle} />
-            </div>
           </div>
         </div>
       </div>
+      </>)}
 
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div className="card-head"><h3>หมวดข้อมูลในเอกสาร</h3></div>
-        <div className="card-body" style={{ padding: 0 }}>
-          <table>
-            <thead><tr><th>หมวด</th><th>แสดง</th><th>ลำดับ</th></tr></thead>
-            <tbody>
-              {settings.section_order.map((key, idx) => (
-                <tr key={key}>
-                  <td>{labels[key] || key}</td>
-                  <td>
-                    <input type="checkbox" checked={settings.section_visible[key] !== false}
-                      onChange={e => toggleSection(key, e.target.checked)} />
-                  </td>
-                  <td>
-                    <button type="button" className="btn btn-outline btn-sm" disabled={idx === 0} onClick={() => moveSection(key, -1)}>&uarr;</button>{' '}
-                    <button type="button" className="btn btn-outline btn-sm" disabled={idx === settings.section_order.length - 1} onClick={() => moveSection(key, 1)}>&darr;</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {DOC_TABS.filter(t => t.id === tab).map(t => {
+        const d = (settings.docs || {})[t.id] || {};
+        const def = defaults[t.id] || {};
+        return (
+          <div key={t.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 420px) 1fr', gap: 16, alignItems: 'start' }}>
+            <div className="card">
+              <div className="card-head"><h3>{def.label}</h3></div>
+              <div className="card-body">
+                <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>{t.uses}</p>
+                {t.fields.map(f => (
+                  <div className="form-group" key={f}>
+                    <label>{FIELD_LABEL[f]}</label>
+                    <input type="text" maxLength={120} value={d[f] ?? ''} placeholder={f === 'title' || f === 'company' ? (def[f] || '') : 'เว้นว่าง = ไม่แสดง'} onChange={(e) => setDoc(t.id, f, e.target.value)} style={inputStyle} />
+                  </div>
+                ))}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 400, marginTop: 8 }}>
+                  <input type="checkbox" checked={d.show_signature !== false} onChange={e => setDoc(t.id, 'show_signature', e.target.checked)} style={{ width: 'auto' }} />
+                  แสดงช่องลายเซ็น
+                </label>
+                <button type="button" className="btn btn-outline btn-sm" style={{ marginTop: 12 }} onClick={() => setSettings(s => ({ ...s, docs: { ...s.docs, [t.id]: { ...def } } }))}>คืนค่าเริ่มต้นของเอกสารนี้</button>
+              </div>
+            </div>
+            <div className="card">
+              <div className="card-head"><h3>ตัวอย่าง (ใบล่าสุดในระบบ — เห็นผลหลังกดบันทึก)</h3></div>
+              <div className="card-body" style={{ padding: 0 }}>
+                {preview.url === undefined && <p className="muted" style={{ padding: 16 }}>กำลังโหลดตัวอย่าง...</p>}
+                {preview.url === null && <p className="muted" style={{ padding: 16 }}>ยังไม่มีเอกสารตัวอย่างในระบบ (ต้องมีคำขอที่ส่งแล้ว{['leave', 'ot'].includes(t.id) ? 'และอนุมัติแล้ว' : ''} อย่างน้อย 1 ใบ)</p>}
+                {preview.url && <iframe key={preview.nonce} title="ตัวอย่าง PDF" src={`${preview.url}#toolbar=0`} style={{ width: '100%', height: 620, border: 0 }} />}
+              </div>
+            </div>
+          </div>
+        );
+      })}
 
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div className="card-body">
-          <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 400 }}>
-            <input type="checkbox" checked={settings.show_signature}
-              onChange={e => setSettings(s => ({ ...s, show_signature: e.target.checked }))} style={{ width: 'auto' }} />
-            แสดงบล็อกลายเซ็น (ผู้ขอปฏิบัติงาน / ผู้ตรวจสอบ / ผู้อนุมัติ) ท้ายเอกสาร
-          </label>
-        </div>
-      </div>
-
-      <div className="form-actions">
+      <div className="form-actions" style={{ marginTop: 16 }}>
         <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>บันทึก</button>
       </div>
     </Layout>

@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { usePageContent } from '../lib/PageContentContext';
 import RequestModal from '../components/RequestModal';
-import { api, fmtDate } from '../lib/api';
+import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
 
@@ -91,9 +91,10 @@ export default function ApproveRequests() {
                 <tr key={v.id} style={v.is_update ? { background: '#fff8ea', boxShadow: 'inset 4px 0 0 #f5a524' } : undefined}>
                   <td>
                     {v.status === 'pending' && (v.is_update
-                      ? <span style={{ display: 'inline-block', background: '#f5a524', color: '#fff', borderRadius: 999, padding: '1px 9px', fontSize: 11, fontWeight: 700, marginBottom: 4 }}>อัปเดต</span>
-                      : <span style={{ display: 'inline-block', background: '#e3f6ec', color: '#188a51', borderRadius: 999, padding: '1px 9px', fontSize: 11, fontWeight: 700, marginBottom: 4 }}>คำขอใหม่</span>)}
+                      ? <span className="req-tag upd">Updated</span>
+                      : <span className="req-tag new">New Visit</span>)}
                     <div>{fmtDate(v.visit_date)}</div>
+                    <div className="muted" style={{ fontSize: 11.5 }}>ส่งเมื่อ {fmtDateTime(v.created_at)}</div>
                   </td>
                   <td>{v.requester_name}</td>
                   <td>

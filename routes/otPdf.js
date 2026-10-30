@@ -8,6 +8,8 @@ const { requireAuth } = require('./middleware');
 const { toThaiDate } = require('../utils/dateFormat');
 const { canViewRequest } = require('../utils/requestAccess');
 const approvalEngine = require('../utils/approvalEngine');
+const signature = require('../utils/signature');
+const { readSettings } = require('./pdfSettings');
 
 const router = express.Router();
 
@@ -36,6 +38,7 @@ function dayType(isoDate) {
 }
 
 router.get('/:id/pdf', requireAuth, (req, res) => {
+  const cfg = readSettings().docs.ot; // ตั้งค่าได้ที่ Settings > ออกแบบ PDF
   const ot = db.prepare(`
     SELECT o.*, u.full_name AS requester_name, a.full_name AS approver_name, c.name AS customer_name
     FROM ot_requests o
@@ -50,14 +53,24 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
 
   // ผู้ลงนาม: ขั้นสุดท้าย = ผู้อนุมัติ, ขั้นก่อนหน้า = ผู้ตรวจสอบ (ช่องที่ 1-2)
   const wf = approvalEngine.getWorkflow('ot', ot.id);
-  const namesOf = (st) => st ? st.approvers.filter(a => a.decision === 'approved').map(a => a.full_name).join(', ') : '';
-  let checker1 = '', checker2 = '', approverName = ot.approver_name || '';
+  const namesOf = (st) => st ? st.approvers.filter(a => a.decision === 'approve').map(a => a.full_name).join(', ') : '';
+  const sigOf = (st) => { if (!st) return null; for (const a of st.approvers) { if (a.decision === 'approve') { const b = signature.getBuffer(a.user_id); if (b) return b; } } return null; };
+  let checker1 = '', checker2 = '', approverName = ot.approver_name || '', checkerSig = null, approverSig = null;
   if (wf && wf.states.length) {
-    const n = wf.states.length;
-    approverName = namesOf(wf.states[n - 1]) || approverName;
-    if (n > 1) checker1 = namesOf(wf.states[0]);
-    if (n > 2) checker2 = namesOf(wf.states[1]);
+    if (wf.states.some(s => s.slot)) {
+      // ตั้งช่องลงนามไว้ใน Template: ขั้นที่เป็น 'checker' ลงช่องผู้ตรวจสอบ ที่เหลือลงช่องผู้อนุมัติ
+      const cs = wf.states.filter(s => s.slot === 'checker'), as = wf.states.filter(s => s.slot !== 'checker');
+      checker1 = cs.map(namesOf).filter(Boolean).join(', '); checkerSig = cs.map(sigOf).find(Boolean) || null;
+      approverName = as.map(namesOf).filter(Boolean).join(', ') || approverName; approverSig = as.map(sigOf).find(Boolean) || null;
+    } else {
+      const n = wf.states.length;
+      approverName = namesOf(wf.states[n - 1]) || approverName;
+      approverSig = sigOf(wf.states[n - 1]);
+      if (n > 1) { checker1 = namesOf(wf.states[0]); checkerSig = sigOf(wf.states[0]); }
+      if (n > 2) checker2 = namesOf(wf.states[1]);
+    }
   }
+  const requesterSig = signature.getBuffer(ot.requester_id);
 
   const doc = new PDFDocument({ size: 'A4', margin: 0 });
   doc.registerFont('regular', FONT_REGULAR);
@@ -79,9 +92,9 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
   const onLine = (lineY, size) => lineY - 2.5 - asc(size);
   const inMid = (midY, size) => midY + 0.34 * size - asc(size);
 
-  doc.font('bold').fontSize(15).fillColor(INK).text('Factory Automation Centre Co.,Ltd', L, y, { width: W, align: 'center' });
+  doc.font('bold').fontSize(15).fillColor(INK).text(cfg.company, L, y, { width: W, align: 'center' });
   y += 21;
-  doc.font('bold').fontSize(12.5).text('Overtime Request and Approval', L, y, { width: W, align: 'center' });
+  doc.font('bold').fontSize(12.5).text(cfg.title, L, y, { width: W, align: 'center' });
   y += 28;
 
   // Name / Date
@@ -146,8 +159,9 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
   // ลายเซ็น: เส้นประอยู่บน ชื่อตำแหน่งอยู่ใต้เส้นตรงกลางช่อง ชื่อในวงเล็บใต้ตำแหน่ง (โครงเดียวกับใบลา)
   y = tableTop + tableH + 40;
   const colW = (W - 20) / 3;
-  [['ผู้ยื่นคำร้อง', ot.requester_name], ['ผู้ตรวจสอบ', [checker1, checker2].filter(Boolean).join(', ')], ['ผู้อนุมัติ', approverName]].forEach(([role, name], i) => {
+  if (cfg.show_signature)   [['ผู้ยื่นคำร้อง', ot.requester_name, requesterSig], ['ผู้ตรวจสอบ', [checker1, checker2].filter(Boolean).join(', '), checkerSig], ['ผู้อนุมัติ', approverName, approverSig]].forEach(([role, name, sig], i) => {
     const cx = L + i * (colW + 10);
+    signature.draw(doc, sig, cx, colW, y, 34);
     dots(cx + 12, cx + colW - 12, y);
     doc.font('regular').fontSize(12).fillColor(INK).text(role, cx, y + 6, { width: colW, align: 'center', lineBreak: false });
     if (name) doc.fontSize(10).text(`(${name})`, cx, y + 22, { width: colW, align: 'center', lineBreak: false, ellipsis: true });
