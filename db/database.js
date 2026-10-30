@@ -276,7 +276,92 @@ CREATE TABLE IF NOT EXISTS core_field_settings (
   updated_at   TEXT DEFAULT (datetime('now')),
   updated_by   INTEGER REFERENCES users(id)
 );
+
+-- ===== ระบบอนุมัติแบบ Template-Based Workflow (V1: เฉพาะโมดูล Leave) =====
+-- Template = 1 workflow ที่ Admin ตั้งไว้ล่วงหน้า (Requester ที่ใช้ได้ + หลาย State + ผู้อนุมัติต่อ State)
+CREATE TABLE IF NOT EXISTS approval_templates (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  module      TEXT NOT NULL,             -- 'leave' (V1 มีแค่โมดูลเดียว เผื่อขยายเป็น ot/visit ภายหลัง)
+  name        TEXT NOT NULL,
+  is_active   INTEGER NOT NULL DEFAULT 1,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT DEFAULT (datetime('now')),
+  updated_at  TEXT DEFAULT (datetime('now'))
+);
+
+-- ใครมีสิทธิ์ใช้ Template นี้ (ผู้ขอ)
+CREATE TABLE IF NOT EXISTS template_requesters (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_id  INTEGER NOT NULL REFERENCES approval_templates(id) ON DELETE CASCADE,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(template_id, user_id)
+);
+
+-- ขั้นตอนการอนุมัติของ Template เรียงลำดับด้วย sort_order
+CREATE TABLE IF NOT EXISTS template_states (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_id  INTEGER NOT NULL REFERENCES approval_templates(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  sort_order   INTEGER NOT NULL DEFAULT 0,
+  mode         TEXT NOT NULL DEFAULT 'ANY'   -- ANY | ALL
+);
+
+-- ผู้อนุมัติของแต่ละ State ใน Template
+CREATE TABLE IF NOT EXISTS template_state_approvers (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  state_id  INTEGER NOT NULL REFERENCES template_states(id) ON DELETE CASCADE,
+  user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(state_id, user_id)
+);
+
+-- Snapshot ของ Workflow ที่ผูกกับ Request จริงแต่ละใบ (คัดลอกตอนสร้าง/ส่งคำขอ กัน Template เปลี่ยนภายหลังกระทบคำขอเก่า)
+-- template_id = NULL หมายถึงใช้ "ระบบเดิม" (อิงแผนก, 1 State/ANY) เป็นค่า fallback เพราะผู้ขอคนนี้ไม่มี Template ครอบคลุม
+CREATE TABLE IF NOT EXISTS request_workflows (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  module               TEXT NOT NULL,
+  request_id           INTEGER NOT NULL,
+  template_id          INTEGER REFERENCES approval_templates(id) ON DELETE SET NULL,
+  template_name        TEXT,             -- เก็บชื่อสำรองไว้ เผื่อ Template ถูกลบทีหลัง ป้ายยังแสดงถูก
+  current_state_index  INTEGER NOT NULL DEFAULT 0,
+  status               TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected | revision
+  created_at           TEXT DEFAULT (datetime('now')),
+  UNIQUE(module, request_id)
+);
+
+-- State ที่คัดลอกมาไว้ในแต่ละ Workflow (ไม่ผูกกับ template_states อีกต่อไปหลัง snapshot)
+CREATE TABLE IF NOT EXISTS request_workflow_states (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_id   INTEGER NOT NULL REFERENCES request_workflows(id) ON DELETE CASCADE,
+  state_index   INTEGER NOT NULL,
+  name          TEXT NOT NULL,
+  mode          TEXT NOT NULL DEFAULT 'ANY',
+  status        TEXT NOT NULL DEFAULT 'waiting'  -- waiting | pending | approved | rejected | revision
+);
+
+-- ผู้อนุมัติของแต่ละ State ใน Workflow + การตัดสินใจของแต่ละคน
+CREATE TABLE IF NOT EXISTS request_workflow_approvers (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_state_id   INTEGER NOT NULL REFERENCES request_workflow_states(id) ON DELETE CASCADE,
+  user_id             INTEGER NOT NULL REFERENCES users(id),
+  decision            TEXT,        -- NULL=ยังไม่ตัดสิน | approve | reject | revision
+  comment              TEXT,
+  decided_at          TEXT
+);
 `);
+
+// ===== หัวหน้าแผนก + ช่องลงนามบนเอกสารของแต่ละขั้นตอนอนุมัติ =====
+// department_heads: หัวหน้าของแต่ละแผนก (1 แผนกมีหัวหน้าได้หลายคน) ใช้กับขั้นตอนที่เลือก "หัวหน้าตามแผนกของผู้ขอ"
+db.exec(`CREATE TABLE IF NOT EXISTS department_heads (
+  department TEXT NOT NULL,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (department, user_id)
+)`);
+// slot = ช่องบนเอกสาร PDF (head/checker/approver), approver_source = manual (ติ๊กรายชื่อเอง) | dept_head (หัวหน้าตามแผนกผู้ขอ)
+const tsCols = db.prepare(`PRAGMA table_info(template_states)`).all().map(c => c.name);
+if (!tsCols.includes('slot')) db.exec(`ALTER TABLE template_states ADD COLUMN slot TEXT`);
+if (!tsCols.includes('approver_source')) db.exec(`ALTER TABLE template_states ADD COLUMN approver_source TEXT NOT NULL DEFAULT 'manual'`);
+const wsCols = db.prepare(`PRAGMA table_info(request_workflow_states)`).all().map(c => c.name);
+if (!wsCols.includes('slot')) db.exec(`ALTER TABLE request_workflow_states ADD COLUMN slot TEXT`);
 
 // เผื่อฐานข้อมูลถูกสร้างจากเวอร์ชันก่อนหน้าที่ยังไม่มีคอลัมน์ sort_order (ตารางมีอยู่แล้วแต่ยังไม่มีคอลัมน์นี้)
 // ต้องรันก่อน seed ด้านล่าง เพราะ INSERT ด้านล่างอ้างอิงคอลัมน์นี้
@@ -387,6 +472,45 @@ const PAGE_CONTENT_DEFAULTS = [
   tx3(PAGE_CONTENT_DEFAULTS);
 }
 
+// ---------- ตัวเลือกของฟอร์ม Visit (หัวข้อ 2–8 + Job Type/Transport/Company) ให้ Admin เพิ่ม/ลบ/แก้ไข/จัดลำดับได้ ----------
+// is_other = ตัวเลือกที่เมื่อติ๊กแล้วมีช่องกรอกข้อความเพิ่ม, is_exclusive = ตัวเลือกที่เลือกได้ตัวเดียว (ติ๊กแล้วล้างตัวอื่น)
+db.exec(`
+CREATE TABLE IF NOT EXISTS form_options (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_key    TEXT NOT NULL,
+  value        TEXT NOT NULL,
+  sort_order   INTEGER NOT NULL DEFAULT 0,
+  is_active    INTEGER NOT NULL DEFAULT 1,
+  is_other     INTEGER NOT NULL DEFAULT 0,
+  is_exclusive INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (group_key, value)
+);
+`);
+{
+  const D = {
+    job_type: ['เข้าพบลูกค้า', 'ติดตั้ง/บริการ', 'นำเสนอสินค้า', 'ติดตามงาน', 'ประชุมงาน', 'อื่นๆ'],
+    transport: ['รถยนต์ส่วนตัว', 'รถบริษัท', 'รถสาธารณะ', 'แท็กซี่/แอปเรียกรถ', 'อื่นๆ'],
+    company: ['TAC', 'FAC', 'HTC'],
+    objective: ['Part Opportunity', 'Product Expansion', 'Design-in', 'Replacement / Upgrade', 'Project Opportunity', 'Application Information', 'Customer / Market Information', 'Other'],
+    problems: ['Downtime', 'Productivity', 'Quality', 'Manpower', 'Maintenance', 'Safety', 'Energy', 'Obsolete Equipment', 'Other', 'No Current Problem'],
+    projects: ['New Machine', 'New Production Line', 'Factory Expansion', 'Automation', 'Replacement / Upgrade', 'Digitalization', 'Other', 'No Known Project'],
+    timings: ['Less than 3 Months', '3–6 Months', '6–12 Months', 'More than 12 Months', 'Unknown'],
+    potentials: ['Sensor', 'PLC', 'HMI', 'Inverter', 'Servo', 'Motion Control', 'Robot', 'Control Panel', 'Automation', 'Other'],
+    found: ['Part Opportunity', 'Product Expansion', 'Design-in', 'Replacement / Upgrade', 'Project Opportunity', 'No Opportunity'],
+    actions: ['Send Product Information', 'Technical Discussion', 'Site Survey', 'Demo / Test', 'Product Selection', 'Budgetary Quotation', 'Quotation', 'Project Proposal', 'Follow-up', 'No Action']
+  };
+  const EXCL = new Set(['No Current Problem', 'No Known Project', 'No Opportunity', 'No Action']);
+  const ins = db.prepare('INSERT OR IGNORE INTO form_options (group_key, value, sort_order, is_other, is_exclusive) VALUES (?, ?, ?, ?, ?)');
+  const seedOpts = db.transaction(() => {
+    for (const [g, list] of Object.entries(D)) {
+      const has = db.prepare('SELECT 1 FROM form_options WHERE group_key = ? LIMIT 1').get(g);
+      if (has) continue; // seed ครั้งแรกเท่านั้น — ไม่เขียนทับสิ่งที่ Admin แก้/ลบไปแล้ว
+      list.forEach((v, i) => ins.run(g, v, i, v === 'Other' ? 1 : 0, EXCL.has(v) ? 1 : 0));
+    }
+  });
+  seedOpts();
+}
+
 // ---------- ย้าย code จาก UNIQUE เดี่ยว (ทั้งระบบ) เป็น UNIQUE คู่กับ company ----------
 // เหตุผล: รหัสลูกค้าจาก SAP ของแต่ละบริษัท (TAC/FAC/HTC) เป็นคนละชุดเลข อาจซ้ำกันได้ข้ามบริษัท
 // SQLite แก้ constraint ของคอลัมน์ตรงๆ ไม่ได้ ถ้าฐานข้อมูลเก่ายังมี UNIQUE(code) แบบเดี่ยวติดมาจากตอนสร้างตารางครั้งแรก
@@ -473,9 +597,97 @@ db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_code_company ON custome
   }
 }
 
+// ===== สิทธิ์วันลาอัตโนมัติตามอายุงาน =====
+// ลายเซ็นของผู้ใช้ (ไฟล์ภาพ PNG/JPEG เก็บเป็น data URL) แยกตารางเพื่อไม่ให้หลุดไปกับ SELECT * FROM users
+db.exec(`CREATE TABLE IF NOT EXISTS user_signatures (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id),
+  data_url   TEXT NOT NULL,
+  updated_at TEXT DEFAULT (datetime('now'))
+)`);
+
+// users.start_date = วันเริ่มทำงาน (YYYY-MM-DD) ; leave_balances.auto_entitlement = 1 -> ระบบคำนวณ *_total จากอายุงานตามกติกาด้านล่าง
+// leave_entitlement_rules: "ครบ min_months เดือน ได้ days วัน" ต่อประเภทลา — ใช้กติกาที่ min_months สูงสุดที่อายุงานถึง
+{
+  if (!db.prepare(`PRAGMA table_info(users)`).all().some(c => c.name === 'start_date')) db.exec(`ALTER TABLE users ADD COLUMN start_date TEXT`);
+  if (!db.prepare(`PRAGMA table_info(leave_balances)`).all().some(c => c.name === 'auto_entitlement')) db.exec(`ALTER TABLE leave_balances ADD COLUMN auto_entitlement INTEGER NOT NULL DEFAULT 0`);
+  // รอบสิทธิ์: cycle_key = รอบที่ยอด "ใช้ไป" นับอยู่ (เช่น '2026' หรือวันครบรอบ) — ขึ้นรอบใหม่แล้วรีเซ็ตยอดใช้ไป และเก็บรอบก่อนลง leave_balance_history
+  if (!db.prepare(`PRAGMA table_info(leave_balances)`).all().some(c => c.name === 'cycle_key')) db.exec(`ALTER TABLE leave_balances ADD COLUMN cycle_key TEXT`);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS leave_balance_history (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      cycle_key      TEXT NOT NULL,
+      vacation_total REAL, vacation_used REAL,
+      personal_total REAL, personal_used REAL,
+      sick_total     REAL, sick_used REAL,
+      archived_at    TEXT DEFAULT (datetime('now'))
+    );
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS leave_entitlement_rules (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      leave_type TEXT NOT NULL,            -- ลาพักร้อน | ลากิจ | ลาป่วย
+      min_months INTEGER NOT NULL,         -- อายุงานขั้นต่ำ (เดือน) เช่น 12 = ครบ 1 ปี
+      days       REAL NOT NULL,            -- สิทธิ์ต่อปี (วัน) เมื่ออายุงานถึงเกณฑ์นี้
+      UNIQUE (leave_type, min_months)
+    );
+  `);
+  // ค่าเริ่มต้น (ใส่ครั้งแรกเท่านั้น แก้ได้ที่หน้า "จัดการสิทธิ์วันลา"): พักร้อน 6 วันเมื่อครบ 1 ปี (ตามกฎหมายแรงงาน), ลากิจ 3 วัน, ลาป่วย 30 วัน ตั้งแต่เริ่มงาน
+  // รอบสิทธิ์/สัดส่วนปีแรกเก็บใน system_settings (leave_cycle, leave_prorate_first_year) — ไม่มีแถว = ค่าตั้งต้น: ปฏิทิน, ไม่คิดสัดส่วน (ดู utils/leaveEntitlement.js)
+  if (db.prepare('SELECT COUNT(*) c FROM leave_entitlement_rules').get().c === 0) {
+    const ins = db.prepare('INSERT INTO leave_entitlement_rules (leave_type, min_months, days) VALUES (?, ?, ?)');
+    [['ลาพักร้อน', 0, 0], ['ลาพักร้อน', 12, 6], ['ลากิจ', 0, 3], ['ลาป่วย', 0, 30]].forEach(r => ins.run(...r));
+  }
+}
+
 // archived_at: วันเวลาที่ลูกค้ารายนี้ถูกเก็บถาวร ใช้คำนวณว่า "เก็บถาวรมานานแค่ไหนแล้ว" สำหรับกฎลบอัตโนมัติ
 if (!db.prepare(`PRAGMA table_info(customers)`).all().map(c => c.name).includes('archived_at')) {
   db.exec(`ALTER TABLE customers ADD COLUMN archived_at TEXT`);
+}
+
+// is_pending: ลูกค้าใหม่ที่พนักงานเพิ่มเองจากหน้าสร้างคำขอ Visit (ยังไม่อยู่ในฐานข้อมูลหลัก/SAP) รอ Admin ตรวจสอบ
+//   - ใช้รหัสชั่วคราวรูปแบบ NEW-0001 จนกว่า Admin จะใส่รหัสจริง (แล้ว is_pending จะเป็น 0) หรือรวมเข้ากับลูกค้าเดิม
+//   - ไม่ถูกลบ/เก็บถาวรโดยการนำเข้าไฟล์หรือ "ลบข้อมูลทั้งหมด"
+// created_by: ผู้ใช้ที่สร้างลูกค้ารายนี้ (ใช้เฉพาะลูกค้ารอตรวจสอบ)
+{
+  const custCols2 = db.prepare(`PRAGMA table_info(customers)`).all().map(c => c.name);
+  if (!custCols2.includes('is_pending')) db.exec(`ALTER TABLE customers ADD COLUMN is_pending INTEGER NOT NULL DEFAULT 0`);
+  if (!custCols2.includes('created_by')) db.exec(`ALTER TABLE customers ADD COLUMN created_by INTEGER`);
+}
+
+// ===== Visit Request ฟอร์มใหม่ (Single Page): คอลัมน์เพิ่มเติม — ไม่แตะ/ไม่ลบคอลัมน์เดิมของ visit_requests เลย =====
+// ส่วนที่เป็นรายการซ้อน (ผู้ติดต่อหลายคน, แผนงาน ฯลฯ) เก็บเป็น JSON ในคอลัมน์ *_json
+{
+  const vrCols = db.prepare(`PRAGMA table_info(visit_requests)`).all().map(c => c.name);
+  const newVrCols = {
+    request_date: 'TEXT', company: 'TEXT', customer_type: 'TEXT', meeting_start: 'TEXT', meeting_end: 'TEXT',
+    contacts_json: 'TEXT', objective_json: 'TEXT', during_visit_json: 'TEXT', opportunity_json: 'TEXT',
+    action_plan_json: 'TEXT', customer_level_json: 'TEXT', next_visit_json: 'TEXT',
+    // ผู้ขอกด "Visit เสร็จสิ้น" หลังไปพบลูกค้าแล้ว (สถานะอนุมัติยังเป็น approved เหมือนเดิม เพื่อไม่กระทบรายงาน/ปฏิทิน/Dashboard)
+    completed_at: 'TEXT', completion_note: 'TEXT'
+  };
+  for (const [name, type] of Object.entries(newVrCols)) {
+    if (!vrCols.includes(name)) db.exec(`ALTER TABLE visit_requests ADD COLUMN ${name} ${type}`);
+  }
+  const custCols3 = db.prepare(`PRAGMA table_info(customers)`).all().map(c => c.name);
+  for (const name of ['sso', 'website', 'industry']) {
+    if (!custCols3.includes(name)) db.exec(`ALTER TABLE customers ADD COLUMN ${name} TEXT`);
+  }
+}
+
+// Brand Master: รายการยี่ห้อสำหรับช่อง "Current Products / Brands" ในฟอร์ม Visit (Admin จัดการได้ที่ Settings > Brand Master)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS brands (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE,
+    is_active  INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+if (db.prepare('SELECT COUNT(*) AS c FROM brands').get().c === 0) {
+  const ins = db.prepare('INSERT OR IGNORE INTO brands (name, sort_order) VALUES (?, ?)');
+  ['Omron', 'Yaskawa', 'Mitsubishi', 'Panasonic', 'Keyence', 'Siemens', 'Schneider', 'ABB'].forEach((n, i) => ins.run(n, i + 1));
 }
 
 // ot_requests: เพิ่มช่องลูกค้า/โปรเจกต์ (ไม่บังคับ - ใช้เมื่อ OT เกี่ยวข้องกับลูกค้า เช่นแผนก Engineer)
@@ -484,6 +696,11 @@ if (!db.prepare(`PRAGMA table_info(customers)`).all().map(c => c.name).includes(
   if (!otCols.includes('customer_id')) db.exec(`ALTER TABLE ot_requests ADD COLUMN customer_id INTEGER REFERENCES customers(id)`);
   if (!otCols.includes('project_no')) db.exec(`ALTER TABLE ot_requests ADD COLUMN project_no TEXT`);
   if (!otCols.includes('type_service')) db.exec(`ALTER TABLE ot_requests ADD COLUMN type_service TEXT`);
+  // OT Type (Project | Service | Visit | Site Survey | Internal) และ Job No. — customer_id / project_no ใช้ช่องที่มีอยู่แล้วข้างบน
+  if (!otCols.includes('ot_type')) db.exec(`ALTER TABLE ot_requests ADD COLUMN ot_type TEXT`);
+  if (!otCols.includes('job_no')) db.exec(`ALTER TABLE ot_requests ADD COLUMN job_no TEXT`);
+  // ประเภทวันของ OT: workday (วันทำงาน) | holiday (วันหยุด) — ฟอร์มเลือกให้อัตโนมัติตามปฏิทิน แต่ผู้ขอแก้เองได้ (เช่น เสาร์ที่เป็นเวร)
+  if (!otCols.includes('day_type')) db.exec(`ALTER TABLE ot_requests ADD COLUMN day_type TEXT`);
 }
 
 // ---------- Index เพิ่มความเร็วให้คอลัมน์ที่ค้นหา/join บ่อย ----------
@@ -583,6 +800,18 @@ const ESSENTIAL_LABEL_DEFAULTS = [
 {
   const insertEssentialLabel = db.prepare('INSERT OR IGNORE INTO essential_field_labels (field_key, label) VALUES (?, ?)');
   ESSENTIAL_LABEL_DEFAULTS.forEach(([k, l]) => insertEssentialLabel.run(k, l));
+}
+
+// "วัตถุประสงค์ / รายละเอียดงาน" (purpose) ย้ายจาก field จำเป็น (label-only) มาเป็น field ที่ Admin ซ่อน/ปิดบังคับกรอก/แก้ชื่อได้
+// ไม่ลบแถวทิ้งเพราะผูกกับคอลัมน์ visit_requests.purpose (NOT NULL) ที่ PDF/Report/Email ใช้ — "ซ่อน" = ไม่โชว์ช่องนี้ในฟอร์ม
+// default: แสดง + ไม่บังคับ (ฟอร์มเติมจาก Visit Objective ให้อัตโนมัติอยู่แล้ว) ใช้ชื่อ label เดิมที่ Admin เคยตั้งไว้
+{
+  if (!db.prepare(`SELECT 1 FROM core_field_settings WHERE field_key = 'purpose'`).get()) {
+    const old = db.prepare(`SELECT label FROM essential_field_labels WHERE field_key = 'purpose'`).get();
+    const nextOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM core_field_settings').get().n;
+    db.prepare(`INSERT INTO core_field_settings (field_key, label, is_visible, is_required, sort_order, show_in_email) VALUES ('purpose', ?, 1, 0, ?, 0)`)
+      .run(old ? old.label : 'วัตถุประสงค์ / รายละเอียดงาน', nextOrder);
+  }
 }
 
 // รายชื่อ "แผนก" ที่ใช้เป็นตัวเลือกแบบ dropdown ทั่วทั้งระบบ (แทนการพิมพ์เองแบบเดิม)

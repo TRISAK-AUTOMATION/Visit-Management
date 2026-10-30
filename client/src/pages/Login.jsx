@@ -1,26 +1,108 @@
 // client/src/pages/Login.jsx
-import React, { useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import React, { useEffect, useRef, useState } from 'react';
+import { Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
 import { useToast } from '../lib/ToastContext';
+import logoWhite from '../assets/trisak-logo-white.png';
+const BadgeScene = React.lazy(() => import('../components/BadgeScene'));
+
+function greetingFor(d) {
+  const h = d.getHours();
+  if (h < 12) return 'สวัสดีตอนเช้า';
+  if (h < 17) return 'สวัสดีตอนบ่าย';
+  if (h < 20) return 'สวัสดีตอนเย็น';
+  return 'สวัสดีตอนค่ำ';
+}
+
+function webglAvailable() {
+  try {
+    const c = document.createElement('canvas');
+    return !!(c.getContext('webgl2') || c.getContext('webgl'));
+  } catch { return false; }
+}
 
 export default function Login() {
   const { me, login } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
+  const loc = useLocation();
+  // กลับไปหน้าที่ตั้งใจจะเข้า (ถ้ามี) ไม่งั้นเข้า Profile Dashboard — กัน loop ไม่วนกลับ /login
+  const from = loc.state && loc.state.from;
+  const landing = (from && from.pathname && !['/login', '/'].includes(from.pathname)) ? `${from.pathname}${from.search || ''}${from.hash || ''}` : '/profile';
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [remember, setRemember] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
+  const [now, setNow] = useState(() => new Date());
+  const [use3D, setUse3D] = useState(false);
+  const wrapRef = useRef(null);
+  const heroRef = useRef(null);
+  const pointer = useRef({ x: 0, y: 0, hover: false });
 
-  if (me) return <Navigate to="/dashboard" replace />;
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  // เลือกโหมดแสดงผล: คอมที่มีเมาส์ + WebGL + ไม่ได้ปิดแอนิเมชัน = บัตร 3D จริง, นอกนั้น = บัตรแบบเบา (ไม่โหลด three เลย)
+  useEffect(() => {
+    const wide = window.matchMedia('(min-width: 861px)');
+    const decide = () => {
+      const fine = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      setUse3D(wide.matches && fine && !reduce && webglAvailable());
+    };
+    decide();
+    wide.addEventListener('change', decide);
+    return () => wide.removeEventListener('change', decide);
+  }, []);
+
+  // แสงไล่เมาส์ + พื้นหลังเลื่อนตามเมาส์ + ส่งตำแหน่งเมาส์ให้บัตร 3D (ผ่าน ref ไม่ re-render)
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    const hero = heroRef.current;
+    if (!wrap || !hero) return;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const noHover = window.matchMedia('(hover: none)').matches;
+    if (reduce || noHover) return;
+    let raf = 0;
+    const onMove = (e) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const r = hero.getBoundingClientRect();
+        const px = (e.clientX / window.innerWidth) * 2 - 1;
+        const py = (e.clientY / window.innerHeight) * 2 - 1;
+        wrap.style.setProperty('--mx', `${e.clientX - r.left}px`);
+        wrap.style.setProperty('--my', `${e.clientY - r.top}px`);
+        wrap.style.setProperty('--px', px.toFixed(3));
+        wrap.style.setProperty('--py', py.toFixed(3));
+        pointer.current.x = px;
+        pointer.current.y = py;
+      });
+    };
+    const enter = () => { pointer.current.hover = true; };
+    const leave = () => { pointer.current.hover = false; };
+    window.addEventListener('mousemove', onMove);
+    hero.addEventListener('mouseenter', enter);
+    hero.addEventListener('mouseleave', leave);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      hero.removeEventListener('mouseenter', enter);
+      hero.removeEventListener('mouseleave', leave);
+      cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  if (me) return <Navigate to={landing} replace />;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await login(username.trim(), password);
-      navigate('/dashboard');
+      await login(username.trim(), password, remember);
+      navigate(landing, { replace: true });
     } catch (err) {
       toast(err.message, 'error');
     } finally {
@@ -28,74 +110,73 @@ export default function Login() {
     }
   };
 
+  const typed = username.trim();
+  const dateText = now.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const timeText = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
+
   return (
-    <div className="tlogin-wrap">
+    <div className={`tl-wrap ${use3D ? 'has3d' : ''}`} ref={wrapRef}>
       {/* ---------- Hero ---------- */}
-      <div className="tlogin-hero">
-        <div className="tlogin-hero-inner">
-          <div className="tlogin-mark">T</div>
-          <h1 className="tlogin-title">TRISAK</h1>
-          <p className="tlogin-tag">Visit Management System</p>
-          <p className="tlogin-desc">
-            ระบบบริหารจัดการคำขอออกนอกสถานที่ ครบวงจร ตั้งแต่สร้างคำขอ
+      <div className="tl-hero" ref={heroRef}>
+        <div className="tl-slants" aria-hidden="true"><i /><i /><i /></div>
+        <div className="tl-spot" aria-hidden="true" />
+
+        <div className="tl-hero-inner">
+          <img className="tl-logo tl-rise" style={{ '--d': '0s' }} src={logoWhite} alt="TRISAK GROUP" />
+          <div className="tl-rise" style={{ '--d': '.12s' }}>
+            <div className="tl-hello">{greetingFor(now)}</div>
+            <div className="tl-date">{dateText} · {timeText} น.</div>
+          </div>
+          <h2 className="tl-title tl-rise" style={{ '--d': '.2s' }}>Visit Management System</h2>
+          <p className="tl-desc tl-rise" style={{ '--d': '.28s' }}>
+            ระบบบริหารจัดการคำขอออกนอกสถานที่ ลา และ OT ตั้งแต่สร้างคำขอ
             อนุมัติผ่านอีเมล ไปจนถึงติดตามผลและออกรายงาน
           </p>
         </div>
 
-        {/* Signature illustration: a stylised visitor badge, echoing the product itself */}
-        <svg className="tlogin-badge-art" viewBox="0 0 300 380" fill="none" aria-hidden="true">
-          <defs>
-            <linearGradient id="badgeFace" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="#24345C" />
-              <stop offset="100%" stopColor="#182647" />
-            </linearGradient>
-          </defs>
-          <rect x="30" y="40" width="240" height="320" rx="26" fill="url(#badgeFace)" stroke="#1549cc" strokeWidth="1.5" />
-          <rect x="115" y="16" width="70" height="26" rx="13" fill="#0F1A33" stroke="#453bc9" strokeWidth="1.5" />
-          <circle cx="150" cy="29" r="4.5" fill="#3b95c9" />
-          <circle cx="150" cy="130" r="42" fill="#0F1A33" />
-          <circle cx="150" cy="118" r="16" fill="#3E5590" />
-          <path d="M118 158c6-16 20-24 32-24s26 8 32 24" stroke="#3E5590" strokeWidth="3" fill="none" strokeLinecap="round" />
-          <rect x="70" y="200" width="160" height="8" rx="4" fill="#3E5590" />
-          <rect x="70" y="222" width="120" height="8" rx="4" fill="#2C3E6B" />
-          <rect x="70" y="270" width="52" height="52" rx="6" fill="#0F1A33" />
-          <rect x="80" y="280" width="8" height="8" fill="#C99A3B" />
-          <rect x="96" y="280" width="8" height="8" fill="#C99A3B" />
-          <rect x="80" y="296" width="8" height="8" fill="#C99A3B" />
-          <rect x="96" y="296" width="8" height="8" fill="#3E5590" />
-          <rect x="134" y="278" width="96" height="6" rx="3" fill="#2C3E6B" />
-          <rect x="134" y="294" width="72" height="6" rx="3" fill="#2C3E6B" />
-          <rect x="134" y="310" width="88" height="6" rx="3" fill="#2C3E6B" />
-        </svg>
+        {/* บัตรแบบเบา: โชว์บนมือถือ และบนคอมที่ใช้ 3D ไม่ได้ */}
+        <div className={`tl-mini ${submitting ? 'scanning' : ''}`} aria-hidden="true">
+          <div className="c">{typed ? typed.charAt(0).toUpperCase() : ''}</div>
+          <i className="b1" /><i className="b2" />
+          <div className="scan" />
+        </div>
+
+        {/* บัตร 3D จริง (Three.js) — โหลดเฉพาะเมื่อ use3D */}
+        {use3D && (
+          <div className="tl-stage3d">
+            <React.Suspense fallback={null}>
+              <BadgeScene typed={typed} submitting={submitting} pointer={pointer} onUnavailable={() => setUse3D(false)} />
+            </React.Suspense>
+          </div>
+        )}
       </div>
 
       {/* ---------- Form ---------- */}
-      <div className="tlogin-form-side">
-        <div className="tlogin-card">
-          <div className="tlogin-clip" aria-hidden="true" />
-
-          <h2 className="tlogin-h2">เข้าสู่ระบบ</h2>
-          <p className="tlogin-sub">กรุณากรอกข้อมูลเพื่อเข้าสู่ระบบ</p>
+      <div className="tl-form-side">
+        <div className="tl-card tl-rise" style={{ '--d': '.2s' }}>
+          <h2 className="tl-h2">เข้าสู่ระบบ</h2>
+          <p className="tl-sub">กรุณากรอกข้อมูลเพื่อเข้าสู่ระบบ</p>
 
           <form onSubmit={handleSubmit} noValidate>
-            <div className="tlogin-field">
-              <label htmlFor="tlogin-username">Username</label>
+            <div className="tl-field">
+              <label htmlFor="tl-username">Username</label>
               <input
-                id="tlogin-username"
+                id="tl-username"
                 type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 placeholder="กรอกชื่อผู้ใช้"
                 autoComplete="username"
+                autoCapitalize="none"
                 required
               />
             </div>
 
-            <div className="tlogin-field">
-              <label htmlFor="tlogin-password">Password</label>
-              <div className="tlogin-password-box">
+            <div className="tl-field">
+              <label htmlFor="tl-password">Password</label>
+              <div className="tl-password-box">
                 <input
-                  id="tlogin-password"
+                  id="tl-password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
@@ -105,7 +186,7 @@ export default function Login() {
                 />
                 <button
                   type="button"
-                  className="tlogin-eye"
+                  className="tl-eye"
                   onClick={() => setShowPassword(s => !s)}
                   aria-label={showPassword ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
                 >
@@ -114,318 +195,169 @@ export default function Login() {
               </div>
             </div>
 
-            <div className="tlogin-row">
-              <label className="tlogin-remember">
-                <input type="checkbox" />
+            <div className="tl-row">
+              <label className="tl-remember">
+                <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
                 จำฉันไว้ในระบบ
               </label>
-              <a href="#" className="tlogin-forgot">ลืมรหัสผ่าน?</a>
+              <a href="#" className="tl-forgot" onClick={(e) => { e.preventDefault(); setShowForgot(v => !v); }}>ลืมรหัสผ่าน?</a>
             </div>
+            {remember && <p className="tl-note">อยู่ในระบบ 30 วัน — อย่าเลือกบนเครื่องที่ใช้ร่วมกับผู้อื่น</p>}
+            {showForgot && (
+              <div className="tl-notice" role="status">
+                กรุณาติดต่อผู้ดูแลระบบเพื่อรีเซ็ตรหัสผ่าน แล้วเปลี่ยนรหัสใหม่ด้วยตัวเองที่หน้า "โปรไฟล์" หลังเข้าสู่ระบบ
+              </div>
+            )}
 
-            <button type="submit" className="tlogin-submit" disabled={submitting}>
-              {submitting ? 'กำลังเข้าสู่ระบบ…' : 'เข้าสู่ระบบ'}
+            <button type="submit" className="tl-submit" disabled={submitting}>
+              {submitting ? 'กำลังตรวจสอบบัตร…' : 'เข้าสู่ระบบ'}
             </button>
           </form>
 
-          <div className="tlogin-hint">
-            <div className="tlogin-hint-head">
-              บัญชีทดสอบ <span>รหัสผ่าน: ******</span>
+          {/* โชว์เฉพาะตอนรัน npm run dev เท่านั้น — build จริงจะไม่มีกล่องนี้ */}
+          {import.meta.env.DEV && (
+            <div className="tl-hint">
+              <div className="tl-hint-head">
+                บัญชีทดสอบ (dev เท่านั้น) <span>รหัสผ่าน: ******</span>
+              </div>
+              <div className="tl-hint-rows">
+                <div><span>พนักงาน</span><b>New</b></div>
+                <div><span>ผู้อนุมัติ</span><b>jamees</b></div>
+                <div><span>ผู้ดูแลระบบ</span><b>supachai</b></div>
+                <div><span>ผู้ดูแลระบบ</span><b>Admin</b></div>
+              </div>
             </div>
-            <div className="tlogin-hint-rows">
-              <div><span>พนักงาน</span><b>New</b></div>
-              <div><span>ผู้อนุมัติ</span><b>jamees</b></div>
-              <div><span>ผู้ดูแลระบบ</span><b>supachai</b></div>
-              <div><span>ผู้ดูแลระบบ</span><b>Admin</b></div>
-            </div>
-          </div>
+          )}
 
-          <p className="tlogin-copy">© 2026 TRISAK. All rights reserved.</p>
+          <p className="tl-copy">© 2026 TRISAK GROUP. All rights reserved.</p>
         </div>
       </div>
 
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+Thai:wght@600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap');
 
-        .tlogin-wrap, .tlogin-wrap * { box-sizing: border-box; }
-
-        .tlogin-wrap {
-          min-height: 100dvh;
-          width: 100%;
-          display: flex;
-          flex-wrap: wrap;
-          overflow-x: hidden;
+        .tl-wrap, .tl-wrap * { box-sizing: border-box; }
+        .tl-wrap {
+          --b: #003D70; --bd: #002A50; --ink: #0E2A47;
+          --mx: 30%; --my: 30%; --px: 0; --py: 0;
+          min-height: 100dvh; width: 100%;
+          display: flex; flex-wrap: wrap; overflow-x: hidden;
           font-family: 'IBM Plex Sans Thai', system-ui, sans-serif;
-          background: #F6F4EF;
+          background: #F2F6FB;
         }
 
         /* ---------- Hero ---------- */
-        .tlogin-hero {
-          position: relative;
-          flex: 1 1 480px;
-          min-width: 320px;
-          background: radial-gradient(120% 140% at 0% 0%, #1C2C50 0%, #0F1A33 60%, #0B142A 100%);
-          padding: 56px 48px;
-          display: flex;
-          align-items: center;
-          overflow: hidden;
-          min-height: 320px;
+        .tl-hero {
+          position: relative; flex: 1.25 1 520px; min-width: 320px; min-height: 320px;
+          background: var(--b); color: #fff; padding: 48px 52px; overflow: hidden;
+          display: flex; align-items: center;
         }
+        .tl-slants i {
+          position: absolute; top: -10%; height: 120%; background: rgba(255,255,255,.05);
+          transform: skewX(-15deg) translateX(calc(var(--px) * -16px));
+          transition: transform .3s ease-out;
+        }
+        .tl-slants i:nth-child(1) { left: 46%; width: 70px; }
+        .tl-slants i:nth-child(2) { left: 62%; width: 140px; }
+        .tl-slants i:nth-child(3) { left: 86%; width: 50px; }
+        .tl-spot {
+          position: absolute; inset: 0; pointer-events: none;
+          background: radial-gradient(420px circle at var(--mx) var(--my), rgba(255,255,255,.12), transparent 65%);
+        }
+        .tl-hero-inner { position: relative; z-index: 2; max-width: 360px; }
+        .tl-logo { display: block; width: 210px; height: auto; margin-bottom: 52px; }
+        .tl-hello { font-weight: 600; font-size: 16px; }
+        .tl-date { font-size: 13px; opacity: .7; margin: 3px 0 26px; }
+        .tl-title { font-size: 30px; font-weight: 600; line-height: 1.25; margin: 0 0 12px; }
+        .tl-desc { font-size: 14.5px; line-height: 1.8; opacity: .82; margin: 0; }
 
-        .tlogin-hero-inner {
-          position: relative;
-          z-index: 2;
-          max-width: 400px;
-        }
+        /* ขนาดบัตร 3D: ปรับที่ clamp(ต่ำสุด, สัดส่วนของพื้นที่สีฟ้า, สูงสุด) — อยากให้ใหญ่ขึ้น/เล็กลงแก้ตรงนี้ */
+        .tl-stage3d { position: absolute; right: 2%; bottom: -5%; width: clamp(400px, 50%, 600px); aspect-ratio: 520 / 660; z-index: 1; pointer-events: none; }
 
-        .tlogin-mark {
-          width: 52px;
-          height: 52px;
-          border-radius: 14px;
-          background: linear-gradient(135deg, #C99A3B, #A87B24);
-          color: #083ebd;
-          font-family: 'Noto Serif Thai', serif;
-          font-weight: 700;
-          font-size: 22px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          margin-bottom: 22px;
+        /* บัตรแบบเบา */
+        .tl-mini {
+          display: none; position: absolute; right: 22px; top: 28px; z-index: 1;
+          width: 66px; height: 90px; border-radius: 10px; background: #fff; overflow: hidden;
+          transform: rotate(7deg);
         }
-
-        .tlogin-title {
-          font-family: 'Noto Serif Thai', serif;
-          font-weight: 700;
-          font-size: 40px;
-          color: #F7F5EF;
-          margin: 0 0 6px;
-          letter-spacing: 0.5px;
-        }
-
-        .tlogin-tag {
-          color: #C99A3B;
-          font-weight: 600;
-          font-size: 15px;
-          margin: 0 0 26px;
-        }
-
-        .tlogin-desc {
-          color: #A9B4D6;
-          font-size: 14.5px;
-          line-height: 1.8;
-          margin: 0;
-          max-width: 340px;
-        }
-
-        .tlogin-badge-art {
-          position: absolute;
-          right: -40px;
-          bottom: -50px;
-          width: 300px;
-          height: 380px;
-          transform: rotate(-7deg);
-          opacity: 0.9;
-          z-index: 1;
-        }
+        .tl-wrap:not(.has3d) .tl-mini { display: block; right: 56px; top: auto; bottom: 48px; width: 110px; height: 150px; border-radius: 14px; transform: rotate(-6deg); }
+        .tl-mini .c { position: absolute; left: 50%; top: 16%; width: 38%; aspect-ratio: 1; margin-left: -19%; border-radius: 50%; background: #0065B3; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 18px; }
+        .tl-mini i { position: absolute; left: 50%; height: 6%; border-radius: 4px; transform: translateX(-50%); }
+        .tl-mini .b1 { top: 64%; width: 62%; background: #9CC4E6; }
+        .tl-mini .b2 { top: 76%; width: 42%; background: #D5E6F5; }
+        .tl-mini .scan { position: absolute; left: 0; right: 0; height: 22%; top: -22%; background: rgba(0,101,179,.35); opacity: 0; }
+        .tl-mini.scanning .scan { opacity: 1; animation: tl-scan 1.4s linear infinite; }
 
         /* ---------- Form side ---------- */
-        .tlogin-form-side {
-          flex: 1 1 420px;
-          min-width: 320px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 48px 24px;
+        .tl-form-side { flex: 1 1 420px; min-width: 320px; display: flex; align-items: center; justify-content: center; padding: 48px 24px; }
+        .tl-card {
+          width: 100%; max-width: 390px; background: #fff;
+          border: 1px solid #DCE6F1; border-radius: 18px; padding: 38px 32px 28px;
+          box-shadow: 0 24px 60px -24px rgba(0,55,102,.28);
         }
-
-        .tlogin-card {
-          position: relative;
-          width: 100%;
-          max-width: 380px;
-          background: #FFFFFF;
-          border: 1px solid #E7E2D6;
-          border-radius: 20px;
-          padding: 38px 32px 30px;
-          box-shadow: 0 24px 60px -20px rgba(15, 26, 51, 0.25);
-        }
-
-        .tlogin-clip {
-          position: absolute;
-          top: -13px;
-          left: 50%;
-          transform: translateX(-50%);
-          width: 64px;
-          height: 22px;
-          background: #0F1A33;
-          border: 1.5px solid #C99A3B;
-          border-radius: 11px;
-        }
-
-        .tlogin-h2 {
-          font-family: 'Noto Serif Thai', serif;
-          font-weight: 700;
-          font-size: 24px;
-          color: #17223F;
-          margin: 6px 0 4px;
-          text-align: center;
-        }
-
-        .tlogin-sub {
-          text-align: center;
-          color: #7A8194;
-          font-size: 13.5px;
-          margin: 0 0 26px;
-        }
-
-        .tlogin-field { margin-bottom: 16px; }
-
-        .tlogin-field label {
-          display: block;
-          font-size: 13px;
-          font-weight: 600;
-          color: #3A4256;
-          margin-bottom: 6px;
-        }
-
-        .tlogin-field input {
-          width: 100%;
-          padding: 11px 14px;
-          border: 1.5px solid #E1DED3;
-          border-radius: 10px;
-          font-size: 14.5px;
-          font-family: inherit;
-          color: #17223F;
-          background: #FBFAF7;
+        .tl-h2 { font-weight: 600; font-size: 25px; color: var(--ink); margin: 0 0 4px; }
+        .tl-sub { color: #5B6E85; font-size: 14px; margin: 0 0 26px; }
+        .tl-field { margin-bottom: 16px; }
+        .tl-field label { display: block; font-size: 13px; font-weight: 600; color: #2B3F57; margin-bottom: 6px; }
+        .tl-field input {
+          width: 100%; padding: 11px 14px; min-height: 46px; border: 1.5px solid #D5E1EE; border-radius: 10px;
+          font-size: 15px; font-family: inherit; color: var(--ink); background: #F8FAFD;
           transition: border-color .15s ease, box-shadow .15s ease;
         }
-
-        .tlogin-field input::placeholder { color: #B7BAC4; }
-
-        .tlogin-field input:focus-visible {
-          outline: none;
-          border-color: #C99A3B;
-          box-shadow: 0 0 0 3px rgba(201, 154, 59, 0.18);
+        .tl-field input::placeholder { color: #9AABBD; }
+        .tl-field input:focus-visible { outline: none; border-color: var(--b); box-shadow: 0 0 0 3px rgba(0,80,143,.16); }
+        .tl-password-box { position: relative; }
+        .tl-password-box input { padding-right: 62px; }
+        .tl-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--b); font-size: 13px; font-weight: 600; padding: 10px; cursor: pointer; }
+        .tl-eye:focus-visible { outline: 2px solid var(--b); border-radius: 6px; }
+        .tl-row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 20px; font-size: 13.5px; flex-wrap: wrap; gap: 8px; }
+        .tl-remember { display: flex; align-items: center; gap: 8px; color: #44566B; min-height: 32px; cursor: pointer; }
+        .tl-remember input { width: 18px; height: 18px; accent-color: var(--b); }
+        .tl-forgot { color: var(--b); font-weight: 600; text-decoration: none; padding: 6px 0; }
+        .tl-forgot:hover { text-decoration: underline; }
+        .tl-note { margin: -12px 0 16px; font-size: 12.5px; color: #9A6A00; }
+        .tl-notice { margin: -8px 0 16px; padding: 10px 12px; border-radius: 10px; background: #EAF3FB; border: 1px solid #BBD6EE; color: #0E3A63; font-size: 13px; line-height: 1.6; }
+        .tl-submit {
+          width: 100%; min-height: 48px; border: none; border-radius: 10px; background: var(--b); color: #fff;
+          font-weight: 600; font-size: 15.5px; font-family: inherit; cursor: pointer;
+          transition: background .15s ease, transform .12s ease, box-shadow .15s ease;
         }
+        .tl-submit:hover { background: #00305a; box-shadow: 0 10px 24px -10px rgba(0,55,102,.6); }
+        .tl-submit:active { transform: translateY(1px); }
+        .tl-submit:disabled { opacity: .7; cursor: default; }
+        .tl-submit:focus-visible { outline: 2px solid var(--bd); outline-offset: 2px; }
 
-        .tlogin-password-box { position: relative; }
+        .tl-hint { margin-top: 22px; padding: 14px 16px; border-radius: 12px; background: #F2F6FB; border: 1px solid #DCE6F1; }
+        .tl-hint-head { font-weight: 600; font-size: 13px; color: var(--ink); margin-bottom: 8px; }
+        .tl-hint-head span { color: #7C8DA2; font-weight: 400; margin-left: 4px; }
+        .tl-hint-rows { display: grid; gap: 4px; }
+        .tl-hint-rows div { display: flex; justify-content: space-between; font-size: 12.5px; }
+        .tl-hint-rows span { color: #7C8DA2; }
+        .tl-hint-rows b { color: #2B3F57; font-weight: 600; }
+        .tl-copy { text-align: center; color: #9AABBD; font-size: 11.5px; margin: 20px 0 0; }
 
-        .tlogin-password-box input { padding-right: 58px; }
-
-        .tlogin-eye {
-          position: absolute;
-          right: 6px;
-          top: 50%;
-          transform: translateY(-50%);
-          background: none;
-          border: none;
-          color: #6B7A9E;
-          font-size: 12.5px;
-          font-weight: 600;
-          padding: 6px 8px;
-          cursor: pointer;
-        }
-        .tlogin-eye:focus-visible { outline: 2px solid #C99A3B; border-radius: 6px; }
-
-        .tlogin-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin: 4px 0 22px;
-          font-size: 13px;
-          flex-wrap: wrap;
-          gap: 8px;
-        }
-
-        .tlogin-remember {
-          display: flex;
-          align-items: center;
-          gap: 7px;
-          color: #4B5468;
-        }
-        .tlogin-remember input { accent-color: #C99A3B; }
-
-        .tlogin-forgot {
-          color: #24345C;
-          font-weight: 600;
-          text-decoration: none;
-        }
-        .tlogin-forgot:hover { text-decoration: underline; }
-
-        .tlogin-submit {
-          width: 100%;
-          padding: 13px;
-          border: none;
-          border-radius: 10px;
-          background: linear-gradient(135deg, #24345C, #0F1A33);
-          color: #F7F5EF;
-          font-weight: 600;
-          font-size: 15px;
-          font-family: inherit;
-          cursor: pointer;
-          transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
-        }
-        .tlogin-submit:hover { box-shadow: 0 10px 26px -10px rgba(15, 26, 51, 0.55); }
-        .tlogin-submit:active { transform: translateY(1px); }
-        .tlogin-submit:disabled { opacity: 0.65; cursor: default; }
-        .tlogin-submit:focus-visible { outline: 2px solid #C99A3B; outline-offset: 2px; }
-
-        .tlogin-hint {
-          margin-top: 22px;
-          padding: 14px 16px;
-          border-radius: 12px;
-          background: #F6F4EF;
-          border: 1px solid #E7E2D6;
-        }
-
-        .tlogin-hint-head {
-          font-weight: 600;
-          font-size: 13px;
-          color: #17223F;
-          margin-bottom: 8px;
-        }
-        .tlogin-hint-head span { color: #8A8266; font-weight: 400; margin-left: 4px; }
-
-        .tlogin-hint-rows {
-          display: grid;
-          gap: 4px;
-        }
-        .tlogin-hint-rows div {
-          display: flex;
-          justify-content: space-between;
-          font-size: 12.5px;
-        }
-        .tlogin-hint-rows span { color: #8B92A3; }
-        .tlogin-hint-rows b { color: #3A4256; font-weight: 600; }
-
-        .tlogin-copy {
-          text-align: center;
-          color: #B6B2A4;
-          font-size: 11px;
-          margin: 20px 0 0;
+        /* ---------- Motion ---------- */
+        .tl-rise { opacity: 0; transform: translateY(14px); animation: tl-rise .6s cubic-bezier(.2,.7,.2,1) forwards; animation-delay: var(--d, 0s); }
+        @keyframes tl-rise { to { opacity: 1; transform: none; } }
+        @keyframes tl-scan { from { top: -22%; } to { top: 100%; } }
+        @media (prefers-reduced-motion: reduce) {
+          .tl-wrap *, .tl-wrap *::before, .tl-wrap *::after { animation: none !important; transition: none !important; }
+          .tl-rise { opacity: 1; transform: none; }
         }
 
         /* ---------- Mobile ---------- */
         @media (max-width: 860px) {
-          .tlogin-hero {
-            padding: 40px 28px 88px;
-            min-height: 0;
-            flex-basis: auto;
-          }
-          .tlogin-title { font-size: 32px; }
-          .tlogin-desc { display: none; }
-          .tlogin-badge-art {
-            width: 190px;
-            height: 240px;
-            right: -30px;
-            bottom: -60px;
-            opacity: 0.55;
-          }
-          .tlogin-form-side { padding: 28px 18px 40px; }
-          .tlogin-card { border-radius: 18px; }
+          .tl-hero { flex-basis: 100%; min-height: 0; padding: calc(28px + env(safe-area-inset-top, 0px)) 24px 30px; }
+          .tl-logo { width: 150px; margin-bottom: 28px; }
+          .tl-date { margin-bottom: 0; }
+          .tl-title, .tl-desc { display: none; }
+          .tl-mini, .tl-wrap:not(.has3d) .tl-mini { display: block; right: 24px; top: 22px; bottom: auto; width: 62px; height: 84px; border-radius: 10px; transform: rotate(7deg); }
+          .tl-form-side { flex-basis: 100%; padding: 24px 16px calc(36px + env(safe-area-inset-bottom, 0px)); align-items: flex-start; }
+          .tl-card { box-shadow: none; border-color: transparent; padding: 8px 8px 0; background: transparent; }
+          .tl-hint { display: none; }
+          .tl-spot { display: none; }
         }
-
-        @media (max-width: 360px) {
-          .tlogin-card { padding: 32px 20px 24px; }
-        }
+        @media (max-width: 360px) { .tl-hero { padding-left: 18px; padding-right: 18px; } }
       `}</style>
     </div>
   );

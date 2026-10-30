@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
-import { api } from '../lib/api';
+import { api, todayLocal } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
 const LEAVE_TYPES = ['ลากิจ', 'ลาป่วย', 'ลาพักร้อน'];
@@ -15,7 +15,7 @@ const MODES = [
 
 const initial = {
   leave_type: LEAVE_TYPES[0], leave_mode: 'full_day',
-  date_from: new Date().toISOString().slice(0, 10), date_to: '',
+  date_from: todayLocal(), date_to: '',
   time_from: '09:00', time_to: '10:00',
   reason: '', attachment: ''
 };

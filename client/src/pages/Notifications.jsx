@@ -34,13 +34,37 @@ export default function Notifications() {
     toast('ทำเครื่องหมายว่าอ่านแล้วทั้งหมด', 'success');
   };
 
+  const remove = async (e, id) => {
+    e.stopPropagation(); // ไม่ให้ไปกระตุ้น "ทำเครื่องหมายว่าอ่านแล้ว" ของแถว
+    try {
+      await api.del(`/api/notifications/${id}`);
+      setItems(list => list.filter(n => n.id !== id));
+      refreshBadges();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+
+  const clear = async (scope) => {
+    const label = scope === 'all' ? 'ทั้งหมด' : 'ที่อ่านแล้ว';
+    if (!window.confirm(`ลบการแจ้งเตือน${label}? การลบนี้ย้อนกลับไม่ได้`)) return;
+    try {
+      const { deleted } = await api.del(`/api/notifications/clear?scope=${scope}`);
+      toast(`ลบการแจ้งเตือนแล้ว ${deleted} รายการ`, 'success');
+      load();
+      refreshBadges();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+
   return (
     <Layout title={pc('notifications.title', 'Notifications')}>
       <div className="flex between mb-16">
         <div className="tabs">
           <div className="tab active">ทั้งหมด</div>
         </div>
-        <button className="btn btn-outline btn-sm" onClick={markAll}>ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>
+        <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
+          <button className="btn btn-outline btn-sm" onClick={markAll}>ทำเครื่องหมายว่าอ่านแล้วทั้งหมด</button>
+          <button className="btn btn-outline btn-sm" onClick={() => clear('read')} disabled={!items.some(n => n.is_read)}>ลบที่อ่านแล้ว</button>
+          <button className="btn btn-danger btn-sm" onClick={() => clear('all')} disabled={!items.length}>ลบทั้งหมด</button>
+        </div>
       </div>
       <div className="card">
         <div className="card-body">
@@ -52,6 +76,7 @@ export default function Notifications() {
                 <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>{fmtDateTime(n.created_at)}</div>
               </div>
               {!n.is_read && <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--blue-600)', marginTop: 6 }} />}
+              <button className="btn btn-outline btn-sm" style={{ padding: '2px 8px', alignSelf: 'flex-start' }} onClick={(e) => remove(e, n.id)} aria-label="ลบการแจ้งเตือน" title="ลบ">&times;</button>
             </div>
           )) : <div className="empty">ไม่มีการแจ้งเตือน</div>}
         </div>

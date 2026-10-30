@@ -1,23 +1,63 @@
 // client/src/pages/MyOT.jsx - รายการคำขอ OT ของตัวเอง
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+import { useAuth } from '../lib/AuthContext';
 
-const STATUS_TH = { draft: 'ฉบับร่าง', pending: 'รออนุมัติ', approved: 'อนุมัติแล้ว', rejected: 'ไม่อนุมัติ', cancelled: 'ยกเลิกแล้ว' };
-const TABS = [{ f: 'all', label: 'ทั้งหมด' }, { f: 'draft', label: 'ฉบับร่าง' }, { f: 'pending', label: 'รออนุมัติ' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }];
+const STATUS_TH = { draft: 'ฉบับร่าง', pending: 'รออนุมัติ', revision: 'รอแก้ไข', approved: 'อนุมัติแล้ว', rejected: 'ไม่อนุมัติ', cancelled: 'ยกเลิกแล้ว' };
+const TABS = [{ f: 'all', label: 'ทั้งหมด' }, { f: 'draft', label: 'ฉบับร่าง' }, { f: 'pending', label: 'รออนุมัติ' }, { f: 'revision', label: 'รอแก้ไข' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }];
+
+const WF_STATE_LABEL = { waiting: 'รอคิว', pending: 'กำลังพิจารณา', approved: 'ผ่านแล้ว', rejected: 'ไม่อนุมัติ', revision: 'ส่งกลับแก้ไข' };
+
+function WorkflowTimeline({ workflow }) {
+  if (!workflow) return null;
+  return (
+    <div style={{ marginTop: 4 }}>
+      <div className="muted" style={{ fontSize: 11.5, marginBottom: 6 }}>
+        Workflow: {workflow.templateName || 'ระบบเดิม (อิงแผนก)'}
+      </div>
+      {workflow.states.map((s, i) => (
+        <div key={i} style={{
+          display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0',
+          borderLeft: `3px solid ${s.status === 'approved' ? '#1fae62' : s.status === 'rejected' ? '#d93a30' : s.status === 'revision' ? '#c9670f' : i === workflow.currentStateIndex ? '#2f5bff' : '#dfe3ea'}`,
+          paddingLeft: 10, opacity: s.status === 'waiting' ? 0.6 : 1
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: 12.5 }}>
+              {i + 1}. {s.name} <span className="muted" style={{ fontWeight: 400 }}>({s.mode === 'ALL' ? 'ทุกคนต้องอนุมัติ' : 'คนใดคนหนึ่งอนุมัติ'})</span>
+            </div>
+            <div className="muted" style={{ fontSize: 11.5 }}>{WF_STATE_LABEL[s.status] || s.status}</div>
+            {s.approvers.map(a => (
+              <div key={a.user_id} style={{ fontSize: 11.5, marginTop: 2 }}>
+                {a.full_name}{a.decision ? ` · ${a.decision === 'approve' ? 'อนุมัติ' : a.decision === 'reject' ? 'ไม่อนุมัติ' : 'ส่งกลับแก้ไข'}` : ''}
+                {a.comment && <span className="muted"> — {a.comment}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function MyOT() {
   const navigate = useNavigate();
   const toast = useToast();
   const [rows, setRows] = useState([]);
-  const [tab, setTab] = useState('all');
+  const { refreshMyVisit } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // ขั้นตอนที่เลือกอยู่ผูกกับ URL (?status=) เพื่อให้เมนูซ้ายกับแท็บตรงกันเสมอ และกด back/ลิงก์ตรงมาได้
+  const statusParam = searchParams.get('status');
+  const tab = ['draft', 'pending', 'revision', 'approved', 'rejected'].includes(statusParam) ? statusParam : 'all';
+  const setTab = (f) => setSearchParams(f === 'all' ? {} : { status: f });
   const [detail, setDetail] = useState(null);
 
   const load = async () => {
     const { requests } = await api.get('/api/ot-requests?scope=mine');
     setRows(requests);
+    refreshMyVisit(); // อัปเดตตัวเลขแต่ละขั้นตอนที่เมนูซ้าย
   };
   useEffect(() => { load(); }, []);
 
@@ -37,6 +77,15 @@ export default function MyOT() {
     if (!confirm(isDraft ? 'ยืนยันลบฉบับร่างนี้หรือไม่?' : 'ยืนยันยกเลิกคำขอนี้หรือไม่?')) return;
     try { await api.post(`/api/ot-requests/${id}/cancel`); toast(isDraft ? 'ลบฉบับร่างสำเร็จ' : 'ยกเลิกคำขอสำเร็จ', 'success'); load(); }
     catch (err) { toast(err.message, 'error'); }
+  };
+
+  const resubmit = async (id) => {
+    try {
+      await api.post(`/api/ot-requests/${id}/resubmit`);
+      toast('ส่งคำขอใหม่สำเร็จ', 'success');
+      setDetail(null);
+      load();
+    } catch (err) { toast(err.message, 'error'); }
   };
 
   return (
@@ -64,10 +113,14 @@ export default function MyOT() {
                     {r.status === 'approved' && (
                       <a className="btn btn-outline btn-sm" href={`/api/ot-requests/${r.id}/pdf`} target="_blank" rel="noreferrer">PDF</a>
                     )}{' '}
-                    {['draft', 'pending'].includes(r.status) && (
+                    {['draft', 'pending', 'revision'].includes(r.status) && (
                       <>
-                        <button className="btn btn-outline btn-sm" onClick={() => navigate(`/ot-request?id=${r.id}`)}>แก้ไข</button>{' '}
+                        {/* ห้ามแก้ไขตอน pending เพราะกำลังอยู่ระหว่างอนุมัติ (อาจผ่านบาง State ไปแล้ว) - แก้ได้เฉพาะ draft/revision */}
+                        {['draft', 'revision'].includes(r.status) && (
+                          <button className="btn btn-outline btn-sm" onClick={() => navigate(`/ot-request?id=${r.id}`)}>แก้ไข</button>
+                        )}{' '}
                         {r.status === 'draft' && <button className="btn btn-success btn-sm" onClick={() => submitDraft(r.id)}>ส่งคำขอ</button>}{' '}
+                        {r.status === 'revision' && <button className="btn btn-success btn-sm" onClick={() => resubmit(r.id)}>ส่งใหม่</button>}{' '}
                         <button className="btn btn-danger btn-sm" onClick={() => cancelReq(r.id, r.status === 'draft')}>{r.status === 'draft' ? 'ลบ' : 'ยกเลิก'}</button>
                       </>
                     )}
@@ -84,9 +137,12 @@ export default function MyOT() {
           <div className="modal">
             <div className="modal-head"><h3>รายละเอียดคำขอ OT #{detail.request.code}</h3><button className="modal-close" onClick={() => setDetail(null)}>×</button></div>
             <div className="modal-body">
-              <p><b>วันที่:</b> {fmtDate(detail.request.ot_date)}</p>
+              <p><b>วันที่:</b> {fmtDate(detail.request.ot_date)}{detail.request.day_type ? ` (${detail.request.day_type === 'holiday' ? 'วันหยุด' : 'วันทำงาน'})` : ''}</p>
               <p><b>เวลา:</b> {detail.request.time_from} - {detail.request.time_to} ({detail.request.hours} ชม.)</p>
               <p><b>สถานที่:</b> {detail.request.location || '-'}</p>
+              <p><b>OT Type:</b> {detail.request.ot_type || '-'}</p>
+              <p><b>ลูกค้า:</b> {detail.request.customer_name ? `${detail.request.customer_code || ''} - ${detail.request.customer_name}` : '-'}</p>
+              <p><b>Project No.:</b> {detail.request.project_no || '-'} &nbsp; <b>Job No.:</b> {detail.request.job_no || '-'}</p>
               <p><b>รายละเอียดงาน:</b> {detail.request.work_detail || '-'}</p>
               <p><b>เหตุผล:</b> {detail.request.reason || '-'}</p>
               {detail.request.notes && <p><b>หมายเหตุ:</b> {detail.request.notes}</p>}
@@ -95,6 +151,15 @@ export default function MyOT() {
               {detail.request.status === 'approved' && (
                 <p><a className="btn btn-outline btn-sm" href={`/api/ot-requests/${detail.request.id}/pdf`} target="_blank" rel="noreferrer">เปิด/ดาวน์โหลด PDF</a></p>
               )}
+              {detail.request.status === 'revision' && (
+                <div className="form-actions" style={{ justifyContent: 'flex-start', marginTop: 4, marginBottom: 8 }}>
+                  <button className="btn btn-outline btn-sm" onClick={() => navigate(`/ot-request?id=${detail.request.id}`)}>แก้ไขคำขอ</button>
+                  <button className="btn btn-success btn-sm" onClick={() => resubmit(detail.request.id)}>ส่งคำขอใหม่ (เริ่มอนุมัติใหม่)</button>
+                </div>
+              )}
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '14px 0' }} />
+              <b>ขั้นตอนการอนุมัติ</b>
+              <WorkflowTimeline workflow={detail.workflow} />
               <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '14px 0' }} />
               <b>ประวัติการดำเนินการ</b>
               <div style={{ marginTop: 8 }}>

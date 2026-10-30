@@ -2,20 +2,68 @@
 const express = require('express');
 const db = require('../db/database');
 const { requireAuth, requireRole } = require('./middleware');
-const { sendMail } = require('../utils/mailer');
+const { sendMail, escapeHtml } = require('../utils/mailer');
 const { toThaiDate } = require('../utils/dateFormat');
 const { logAction } = require('../utils/systemLog');
 const { approverIdsForDepartments } = require('../utils/userDepartments');
 const { canEditProfile } = require('../utils/profilePermissions');
+const approvalEngine = require('../utils/approvalEngine');
+const { canViewAll } = require('../utils/viewScope');
+const entitlement = require('../utils/leaveEntitlement');
+const checks = require('../utils/inputChecks');
 
 const router = express.Router();
 
 const LEAVE_TYPES = ['ลากิจ', 'ลาป่วย', 'ลาพักร้อน'];
 const LEAVE_MODES = ['full_day', 'half_day_morning', 'half_day_afternoon', 'hours'];
-const EDITABLE_STATUSES = ['draft', 'pending'];
+// ไม่รวม 'pending' เพราะคำขอที่กำลังอยู่ระหว่างอนุมัติ (อาจผ่านบาง State ไปแล้วในกรณี multi-stage)
+// ห้ามแก้ไขข้อมูลตรงๆ โดยไม่ reset workflow — ถ้าจะแก้ ผู้ขอต้องรอถูก "ส่งกลับแก้ไข" (revision) ก่อน
+// ซึ่งตอน resubmit จะ reset workflow กลับไป State แรกให้เองอยู่แล้ว
+const EDITABLE_STATUSES = ['draft', 'revision'];
 
 function isValidLeaveType(t) { return LEAVE_TYPES.includes(t); }
+
+// ตรวจโควต้าวันลาตอนส่งคำขอ (นับคำขอที่รออนุมัติอยู่แล้วเป็นวันที่ถูกจองไว้ด้วย กันยื่นหลายใบรวดเดียวเกินสิทธิ์)
+// ปรับ true/false ตามนโยบาย: ลาป่วยตั้งเป็น false เพราะกฎหมายให้ลาป่วยได้เกินสิทธิ์ที่ได้ค่าจ้าง (ส่วนเกินเป็นลาไม่รับค่าจ้าง)
+const QUOTA_RULES = {
+  'ลาพักร้อน': { total: 'vacation_total', used: 'vacation_used', enforce: true },
+  'ลากิจ':     { total: 'personal_total', used: 'personal_used', enforce: true },
+  'ลาป่วย':    { total: 'sick_total',     used: 'sick_used',     enforce: false }
+};
+const fmtDays = (n) => (Math.round(n * 100) / 100).toString();
+function quotaError(userId, leaveType, days, excludeRequestId) {
+  const rule = QUOTA_RULES[leaveType];
+  if (!rule || !rule.enforce || !(days > 0)) return null;
+  const bal = ensureBalance(userId);
+  const reserved = db.prepare(`SELECT COALESCE(SUM(duration_days), 0) AS d FROM leave_requests WHERE requester_id = ? AND leave_type = ? AND status = 'pending' AND id != ?`)
+    .get(userId, leaveType, excludeRequestId || 0).d;
+  const remaining = bal[rule.total] - bal[rule.used] - reserved;
+  if (days > remaining + 1e-9) {
+    return `สิทธิ์${leaveType}คงเหลือ ${fmtDays(Math.max(0, remaining))} วัน` +
+      `${reserved > 0 ? ` (รวมที่รออนุมัติอยู่ ${fmtDays(reserved)} วันแล้ว)` : ''} ไม่พอสำหรับการลา ${fmtDays(days)} วัน กรุณาติดต่อผู้ดูแลระบบหากต้องการปรับสิทธิ์`;
+  }
+  return null;
+}
 function isValidLeaveMode(m) { return LEAVE_MODES.includes(m); }
+
+// เช็คว่าผู้ใช้นี้มี Template อนุมัติของโมดูล "leave" ที่เปิดใช้งานอยู่ (is_active=1) และเลือกเขาไว้เป็น Requester จริงหรือไม่
+// เขียนแยกไว้ในไฟล์นี้เอง (ไม่เรียกผ่าน approvalEngine.js) กันปัญหาไฟล์คนละเวอร์ชันกันแล้วฟังก์ชันหาย ทำให้ server พังตอน restart
+// เงื่อนไข: ต้องมี Template ที่ active + มีเขาอยู่ใน Requester + Template นั้นต้องมีอย่างน้อย 1 State ที่มีผู้อนุมัติจริง (ไม่งั้นถือว่ายังตั้งค่าไม่ครบ ไม่นับว่ามีสิทธิ์)
+function isEligibleLeaveRequester(userId) {
+  const tpl = db.prepare(`
+    SELECT t.id FROM approval_templates t
+    JOIN template_requesters tr ON tr.template_id = t.id
+    WHERE t.module = 'leave' AND t.is_active = 1 AND tr.user_id = ?
+    LIMIT 1
+  `).get(userId);
+  if (!tpl) return false;
+  const stateCount = db.prepare(`
+    SELECT COUNT(*) AS c FROM template_states ts
+    WHERE ts.template_id = ? AND EXISTS (SELECT 1 FROM template_state_approvers a WHERE a.state_id = ts.id)
+  `).get(tpl.id).c;
+  return stateCount > 0;
+}
+const NOT_ELIGIBLE_MSG = 'คุณยังไม่มีสิทธิ์ส่งคำขอลา กรุณาติดต่อผู้ดูแลระบบเพื่อเพิ่มชื่อคุณในรายชื่อผู้มีสิทธิ์ (Requester) ของ Template อนุมัติก่อน';
 
 // นับจำนวนวันปฏิทินระหว่าง date_from - date_to (รวมทั้งสองวัน) แบบง่าย ไม่ตัดวันหยุด/เสาร์-อาทิตย์
 function countCalendarDays(dateFrom, dateTo) {
@@ -43,10 +91,16 @@ function generateCode() {
 }
 
 function ensureBalance(userId) {
-  const existing = db.prepare('SELECT * FROM leave_balances WHERE user_id = ?').get(userId);
-  if (existing) return existing;
-  db.prepare('INSERT INTO leave_balances (user_id) VALUES (?)').run(userId);
-  return db.prepare('SELECT * FROM leave_balances WHERE user_id = ?').get(userId);
+  let existing = db.prepare('SELECT * FROM leave_balances WHERE user_id = ?').get(userId);
+  if (!existing) {
+    db.prepare('INSERT INTO leave_balances (user_id) VALUES (?)').run(userId);
+    existing = db.prepare('SELECT * FROM leave_balances WHERE user_id = ?').get(userId);
+  }
+  // ขึ้นรอบสิทธิ์ใหม่ (ปีใหม่/วันครบรอบ) -> รีเซ็ตยอดใช้ไป แล้วปรับสิทธิ์ตามอายุงานสำหรับคนที่เปิดอัตโนมัติ (ทำทุกครั้งที่อ่าน ไม่ต้องมีใครกด)
+  const rolled = entitlement.rollCycle(userId);
+  const synced = existing.auto_entitlement && entitlement.syncUser(userId);
+  if (rolled || synced) existing = db.prepare('SELECT * FROM leave_balances WHERE user_id = ?').get(userId);
+  return existing;
 }
 
 // คำนวณ duration_days / duration_hours จากโหมดที่เลือก
@@ -69,35 +123,71 @@ router.get('/', requireAuth, (req, res) => {
     const rows = db.prepare(`
       SELECT lr.*, u.full_name AS requester_name, u.department AS requester_department
       FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
-      WHERE lr.requester_id = ? ORDER BY lr.created_at DESC
+      WHERE lr.requester_id = ? ORDER BY lr.created_at DESC, lr.id DESC
     `).all(req.session.userId);
     return res.json({ requests: rows });
   }
   if (scope === 'pending') {
-    if (!['Approver', 'Admin'].includes(req.session.role)) {
+    if (!['Approver', 'Admin'].includes(req.session.role) && !approvalEngine.hasEverBeenApprover(req.session.userId)) {
       return res.status(403).json({ error: 'คุณไม่มีสิทธิ์เข้าถึงส่วนนี้' });
     }
+    const wantedStatus = status || 'pending';
     let rows;
-    if (req.session.role === 'Admin') {
-      rows = db.prepare(`
-        SELECT lr.*, u.full_name AS requester_name, u.department AS requester_department
-        FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
-        WHERE lr.status = ? ORDER BY lr.created_at DESC
-      `).all(status || 'pending');
-    } else {
-      const myDepts = db.prepare('SELECT department FROM user_departments WHERE user_id = ?').all(req.session.userId).map(r => r.department);
-      if (!myDepts.length) return res.json({ requests: [] });
-      const placeholders = myDepts.map(() => '?').join(',');
-      rows = db.prepare(`
-        SELECT lr.*, u.full_name AS requester_name, u.department AS requester_department
-        FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
-        WHERE lr.status = ? AND u.department IN (${placeholders})
-        ORDER BY lr.created_at DESC
-      `).all(status || 'pending', ...myDepts);
+    // ผู้มีสิทธิ์อนุมัติ (ผ่านด่านด้านบนแล้ว) เห็นคำขอของทุกคนตามสถานะ เพื่อให้ตรงกับตัวเลขบน Dashboard
+    // ฉบับร่างของคนอื่นยังเป็นส่วนตัว (เฉพาะ Admin ที่เห็นได้เหมือนเดิม)
+    if (wantedStatus === 'draft' && req.session.role !== 'Admin') return res.json({ requests: [] });
+    rows = db.prepare(`
+      SELECT lr.*, u.full_name AS requester_name, u.department AS requester_department
+      FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
+      WHERE lr.status = ? ORDER BY lr.created_at DESC, lr.id DESC
+    `).all(wantedStatus);
+    // บอกหน้าเว็บว่าคนนี้ "กดอนุมัติใบนี้ได้จริงไหม" + ให้ Admin รีเซ็ตสายอนุมัติได้เมื่อใบที่ค้างอยู่ใช้รายชื่อเก่า
+    for (const r of rows) {
+      if (r.status !== 'pending') continue;
+      r.can_act = approvalEngine.canActOn('leave', r.id, req.session.userId);
+      r.waiting_for = approvalEngine.currentApproverNames('leave', r.id).join(', ');
+      r.can_resync = req.session.role === 'Admin' && approvalEngine.canResync('leave', r.id);
+      // "ส่งใหม่หลังแก้ไข" (Updated) แยกจากคำขอใหม่ (New): ดูรายการล่าสุดในประวัติ
+      const last = db.prepare(`SELECT action FROM leave_history WHERE leave_request_id = ? AND action LIKE 'ส่งคำขอ%' ORDER BY id DESC LIMIT 1`).get(r.id);
+      r.is_update = !!(last && last.action.startsWith('ส่งคำขอใหม่'));
     }
     return res.json({ requests: rows });
   }
   res.status(400).json({ error: 'scope ไม่ถูกต้อง' });
+});
+
+// ข้อมูลการลาสำหรับหน้าปฏิทิน: แสดงเฉพาะคำขอที่ยัง "รออนุมัติ" หรือ "อนุมัติแล้ว" (ไม่รวมฉบับร่าง/ส่งกลับแก้ไข/ไม่อนุมัติ/ยกเลิก)
+// สิทธิ์การมองเห็น: Admin เห็นทุกคน | คนอื่นเห็นของตัวเอง + คำขอที่ตัวเองอยู่ในสายอนุมัติ (ใช้ workflow engine เหมือนหน้าอนุมัติ)
+// ต้องวางก่อน '/:id' ไม่งั้น "calendar" จะถูกตีเป็น id
+router.get('/calendar/events', requireAuth, (req, res) => {
+  const { userId, role } = req.session;
+  const baseSql = `
+    SELECT lr.id, lr.code, lr.requester_id, lr.leave_type, lr.leave_mode, lr.date_from, lr.date_to,
+           lr.time_from, lr.time_to, lr.duration_days, lr.duration_hours, lr.reason, lr.status, lr.approval_note,
+           (lr.attachment IS NOT NULL AND lr.attachment != '') AS has_attachment,
+           u.full_name AS requester_name, u.department AS requester_department,
+           a.full_name AS approver_name
+    FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
+    LEFT JOIN users a ON a.id = lr.approver_id
+    WHERE lr.status IN ('pending', 'approved')`;
+  const rows = db.prepare(`${baseSql} ORDER BY lr.date_from ASC`).all();
+  const full = role === 'Admin' || canViewAll(req.session);
+  for (const r of rows) {
+    r.has_attachment = !!r.has_attachment;
+    if (!full && r.requester_id !== userId) { // ทุกคนเห็นว่าใครลา/ลาประเภทไหน แต่เหตุผลและไฟล์แนบ (เช่น ใบรับรองแพทย์) เห็นเฉพาะเจ้าของ/ผู้อนุมัติ
+      r.reason = null; r.approval_note = null; r.has_attachment = false;
+    }
+    if (r.status === 'pending') r.waiting_for = approvalEngine.currentApproverNames('leave', r.id).join(', ');
+  }
+  res.json({ requests: rows });
+});
+
+// GET /api/leave-requests/my-status-counts -> จำนวนคำขอของฉันแยกตามขั้นตอน (ตัวเลขที่เมนูข้างซ้าย) — ต้องอยู่ก่อน '/:id'
+router.get('/my-status-counts', requireAuth, (req, res) => {
+  const rows = db.prepare(`SELECT status AS st, COUNT(*) AS c FROM leave_requests WHERE requester_id = ? GROUP BY status`).all(req.session.userId);
+  const counts = { draft: 0, pending: 0, revision: 0, approved: 0, rejected: 0 };
+  rows.forEach(r => { if (r.st in counts) counts[r.st] = r.c; });
+  res.json({ counts });
 });
 
 router.get('/:id', requireAuth, (req, res) => {
@@ -109,21 +199,38 @@ router.get('/:id', requireAuth, (req, res) => {
     WHERE lr.id = ?
   `).get(req.params.id);
   if (!lr) return res.status(404).json({ error: 'ไม่พบคำขอลา' });
-  if (lr.requester_id !== req.session.userId && !['Approver', 'Admin'].includes(req.session.role)) {
+  const isRequester = lr.requester_id === req.session.userId;
+  const isAdmin = req.session.role === 'Admin';
+  const isParticipant = approvalEngine.isWorkflowParticipant('leave', lr.id, req.session.userId);
+  const isViewer = canViewAll(req.session) && lr.status !== 'draft'; // ผู้มีสิทธิ์อนุมัติดูได้ทุกคำขอ (ยกเว้นฉบับร่างของคนอื่น)
+  if (!isRequester && !isAdmin && !isParticipant && !isViewer) {
     return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ดูคำขอนี้' });
   }
   const history = db.prepare(`
     SELECT h.*, u.full_name AS actor_name FROM leave_history h
     LEFT JOIN users u ON u.id = h.action_by
-    WHERE h.leave_request_id = ? ORDER BY h.created_at ASC
+    WHERE h.leave_request_id = ? ORDER BY h.created_at ASC, h.id ASC
   `).all(req.params.id);
-  res.json({ request: lr, history });
+  const workflow = approvalEngine.getWorkflow('leave', lr.id);
+  res.json({
+    request: lr, history, workflow,
+    can_act: lr.status === 'pending' && approvalEngine.canActOn('leave', lr.id, req.session.userId),
+    can_resync: isAdmin && lr.status === 'pending' && approvalEngine.canResync('leave', lr.id)
+  });
 });
 
 // สร้างคำขอลา (save_as: 'draft' หรือส่งเลย)
+// ไฟล์แนบเป็น Data URL ที่หน้าเว็บอ่านจากไฟล์ (≤ 4MB → base64 ≈ 5.4 ล้านตัวอักษร) ต้องขึ้นต้นด้วย data: เท่านั้น
+// กันค่าอื่น (เช่น javascript:) ที่จะถูกนำไปใส่ใน href ของลิงก์ดาวน์โหลด
+function isValidAttachment(v) {
+  if (v === undefined || v === null || v === '') return true;
+  return typeof v === 'string' && v.startsWith('data:') && v.length <= 7000000;
+}
+
 router.post('/', requireAuth, (req, res) => {
   const { leave_type, leave_mode, date_from, reason, attachment, save_as } = req.body;
   const isDraft = save_as === 'draft';
+  if (!isValidAttachment(attachment)) return res.status(400).json({ error: 'ไฟล์แนบไม่ถูกต้องหรือมีขนาดใหญ่เกินไป' });
 
   if (!isDraft) {
     if (!isValidLeaveType(leave_type)) return res.status(400).json({ error: 'กรุณาเลือกประเภทการลาให้ถูกต้อง' });
@@ -133,9 +240,24 @@ router.post('/', requireAuth, (req, res) => {
     if (leave_mode === 'hours' && (!req.body.time_from || !req.body.time_to)) {
       return res.status(400).json({ error: 'กรุณาระบุเวลาเริ่มต้นและสิ้นสุด' });
     }
+    // ยังไม่มี Template อนุมัติไหนเซ็ตชื่อผู้ใช้นี้ไว้เป็น Requester เลย -> บล็อกตอนส่งคำขอ (ฟอร์มกรอก/บันทึกร่างได้ปกติ แต่ส่งจริงไม่ได้)
+    if (!isEligibleLeaveRequester(req.session.userId)) {
+      return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
+    }
+    {
+      const noApprover = approvalEngine.checkCanSubmit('leave', req.session.userId);
+      if (noApprover) return res.status(400).json({ error: noApprover });
+    }
   }
 
+  { const bad = checks.leaveInputError(req.body); if (bad) return res.status(400).json({ error: bad }); }
   const dur = (leave_mode && date_from) ? computeDuration(req.body) : { duration_days: 0, duration_hours: 0, date_to: date_from || '', time_from: req.body.time_from || '', time_to: req.body.time_to || '' };
+  if (!isDraft) {
+    const ovErr = checks.leaveOverlapError(db, req.session.userId, { leave_mode, date_from, date_to: dur.date_to, time_from: dur.time_from, time_to: dur.time_to });
+    if (ovErr) return res.status(400).json({ error: ovErr });
+    const qErr = quotaError(req.session.userId, leave_type, dur.duration_days);
+    if (qErr) return res.status(400).json({ error: qErr });
+  }
   const status = isDraft ? 'draft' : 'pending';
 
   let code, info;
@@ -165,6 +287,7 @@ router.post('/', requireAuth, (req, res) => {
 
   db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action) VALUES (?, ?, 'ส่งคำขอ')`).run(lrId, req.session.userId);
   logAction(req.session.userId, 'submit_leave_request', `ส่งคำขอลา #${code}`);
+  approvalEngine.createWorkflow('leave', lrId, req.session.userId);
   notifyLeaveSubmitted(lrId);
   res.status(201).json({ id: lrId, code, status });
 });
@@ -176,6 +299,8 @@ router.put('/:id', requireAuth, (req, res) => {
   if (!EDITABLE_STATUSES.includes(lr.status)) return res.status(400).json({ error: 'ไม่สามารถแก้ไขคำขอนี้ได้แล้ว' });
 
   const { leave_type, leave_mode, date_from, reason, attachment } = req.body;
+  if (!isValidAttachment(attachment)) return res.status(400).json({ error: 'ไฟล์แนบไม่ถูกต้องหรือมีขนาดใหญ่เกินไป' });
+  { const bad = checks.leaveInputError(req.body); if (bad) return res.status(400).json({ error: bad }); }
   const dur = computeDuration(req.body);
   db.prepare(`
     UPDATE leave_requests SET leave_type = ?, leave_mode = ?, date_from = ?, date_to = ?, time_from = ?, time_to = ?,
@@ -194,9 +319,54 @@ router.post('/:id/submit', requireAuth, (req, res) => {
   if (!isValidLeaveType(lr.leave_type) || !lr.reason) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลให้ครบก่อนส่งคำขอ' });
   }
+  if (!isEligibleLeaveRequester(req.session.userId)) {
+    return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
+  }
+  {
+    const noApprover = approvalEngine.checkCanSubmit('leave', req.session.userId);
+    if (noApprover) return res.status(400).json({ error: noApprover });
+  }
+  {
+    const bad = checks.leaveInputError(lr) || checks.leaveOverlapError(db, lr.requester_id, lr, lr.id);
+    if (bad) return res.status(400).json({ error: bad });
+  }
+  {
+    const qErr = quotaError(lr.requester_id, lr.leave_type, lr.duration_days, lr.id);
+    if (qErr) return res.status(400).json({ error: qErr });
+  }
   db.prepare(`UPDATE leave_requests SET status = 'pending' WHERE id = ?`).run(req.params.id);
   db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action) VALUES (?, ?, 'ส่งคำขอ')`).run(req.params.id, req.session.userId);
   logAction(req.session.userId, 'submit_leave_request', `ส่งคำขอลา #${lr.code}`);
+  approvalEngine.createWorkflow('leave', lr.id, req.session.userId);
+  notifyLeaveSubmitted(lr.id);
+  res.json({ ok: true });
+});
+
+// ส่งใหม่หลังถูกส่งกลับให้แก้ไข (revision) - แก้ไขข้อมูลผ่าน PUT /:id ก่อนแล้วค่อยเรียกอันนี้ เพื่อรีเซ็ต workflow กลับไปเริ่มที่ State แรก
+router.post('/:id/resubmit', requireAuth, (req, res) => {
+  const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(req.params.id);
+  if (!lr) return res.status(404).json({ error: 'ไม่พบคำขอลา' });
+  if (lr.requester_id !== req.session.userId) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ส่งคำขอนี้' });
+  if (lr.status !== 'revision') return res.status(400).json({ error: 'คำขอนี้ไม่ได้อยู่ในสถานะรอแก้ไข' });
+  if (!isEligibleLeaveRequester(req.session.userId)) {
+    return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
+  }
+  {
+    const noApprover = approvalEngine.checkCanSubmit('leave', req.session.userId);
+    if (noApprover) return res.status(400).json({ error: noApprover });
+  }
+  {
+    const bad = checks.leaveInputError(lr) || checks.leaveOverlapError(db, lr.requester_id, lr, lr.id);
+    if (bad) return res.status(400).json({ error: bad });
+  }
+  {
+    const qErr = quotaError(lr.requester_id, lr.leave_type, lr.duration_days, lr.id);
+    if (qErr) return res.status(400).json({ error: qErr });
+  }
+  db.prepare(`UPDATE leave_requests SET status = 'pending', approver_id = NULL, approved_at = NULL, approval_note = '' WHERE id = ?`).run(req.params.id);
+  db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action) VALUES (?, ?, 'ส่งคำขอใหม่หลังแก้ไข')`).run(req.params.id, req.session.userId);
+  logAction(req.session.userId, 'resubmit_leave_request', `ส่งคำขอลาใหม่หลังแก้ไข #${lr.code}`);
+  approvalEngine.createWorkflow('leave', lr.id, req.session.userId); // เริ่ม workflow ใหม่จาก State แรกเสมอ (ดึง Template ล่าสุด ณ ตอนนี้)
   notifyLeaveSubmitted(lr.id);
   res.json({ ok: true });
 });
@@ -204,61 +374,139 @@ router.post('/:id/submit', requireAuth, (req, res) => {
 router.post('/:id/cancel', requireAuth, (req, res) => {
   const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(req.params.id);
   if (!lr) return res.status(404).json({ error: 'ไม่พบคำขอลา' });
-  if (lr.requester_id !== req.session.userId) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ยกเลิกคำขอนี้' });
-  if (!['draft', 'pending'].includes(lr.status)) return res.status(400).json({ error: 'ไม่สามารถยกเลิกคำขอนี้ได้แล้ว' });
-  db.prepare(`UPDATE leave_requests SET status = 'cancelled' WHERE id = ?`).run(req.params.id);
-  db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action) VALUES (?, ?, 'ยกเลิก')`).run(req.params.id, req.session.userId);
-  logAction(req.session.userId, 'cancel_leave_request', `ยกเลิกคำขอลา #${lr.code}`);
+  const wasApproved = lr.status === 'approved';
+  // ผู้ขอยกเลิกเองได้เฉพาะก่อนอนุมัติ; ใบที่อนุมัติแล้วยกเลิกได้เฉพาะ Admin (และคืนวันลาให้)
+  if (wasApproved) {
+    if (req.session.role !== 'Admin') return res.status(403).json({ error: 'ใบลาที่อนุมัติแล้วยกเลิกเองไม่ได้ กรุณาติดต่อผู้ดูแลระบบ' });
+  } else {
+    if (lr.requester_id !== req.session.userId) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ยกเลิกคำขอนี้' });
+    if (!['draft', 'pending', 'revision'].includes(lr.status)) return res.status(400).json({ error: 'ไม่สามารถยกเลิกคำขอนี้ได้แล้ว' });
+  }
+  const note = String((req.body && req.body.note) || '').slice(0, 300);
+  db.transaction(() => {
+    db.prepare(`UPDATE leave_requests SET status = 'cancelled' WHERE id = ?`).run(lr.id);
+    approvalEngine.closeWorkflow('leave', lr.id);
+    if (wasApproved) {
+      // คืนวันลาเฉพาะกรณีที่ใบนี้ถูกหักไว้ในรอบสิทธิ์ปัจจุบัน (ถ้าอนุมัติไว้ในรอบก่อนหน้า ยอดใช้ไปถูกรีเซ็ตไปแล้ว ไม่คืนซ้ำ)
+      const col = lr.leave_type === 'ลาพักร้อน' ? 'vacation_used' : lr.leave_type === 'ลากิจ' ? 'personal_used' : lr.leave_type === 'ลาป่วย' ? 'sick_used' : null;
+      const u = db.prepare('SELECT start_date FROM users WHERE id = ?').get(lr.requester_id);
+      const cyc = entitlement.cycleFor(u && u.start_date, entitlement.getSettings());
+      const approvedDay = String(lr.approved_at || '').slice(0, 10);
+      if (col && lr.duration_days > 0 && approvedDay >= cyc.start) {
+        ensureBalance(lr.requester_id);
+        db.prepare(`UPDATE leave_balances SET ${col} = MAX(0, ${col} - ?), updated_at = datetime('now') WHERE user_id = ?`).run(lr.duration_days, lr.requester_id);
+      }
+      db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, 'leave_rejected', ?, ?)`)
+        .run(lr.requester_id, `คำขอลา #${lr.code} (${lr.leave_type}) ถูกยกเลิกโดยผู้ดูแลระบบ${note ? ' · ' + note : ''}`, lr.id);
+    }
+    db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action, note) VALUES (?, ?, ?, ?)`)
+      .run(lr.id, req.session.userId, wasApproved ? 'ยกเลิกโดยผู้ดูแลระบบ' : 'ยกเลิก', note);
+  })();
+  logAction(req.session.userId, 'cancel_leave_request', `${wasApproved ? 'ผู้ดูแลระบบยกเลิกใบลาที่อนุมัติแล้ว' : 'ยกเลิกคำขอลา'} #${lr.code}`);
   res.json({ ok: true });
 });
 
+// Admin รีเซ็ตสายอนุมัติของใบลาที่ยังรออยู่ ให้ใช้รายชื่อผู้อนุมัติ "ล่าสุด" ตาม Template (เฉพาะใบที่ยังไม่มีใครตัดสินใจ)
+router.post('/:id/resync-workflow', requireAuth, requireRole('Admin'), (req, res) => {
+  const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(req.params.id);
+  if (!lr) return res.status(404).json({ error: 'ไม่พบคำขอลา' });
+  if (lr.status !== 'pending') return res.status(400).json({ error: 'รีเซ็ตสายอนุมัติได้เฉพาะคำขอที่รออนุมัติอยู่' });
+  try {
+    db.transaction(() => {
+      approvalEngine.resyncWorkflow('leave', lr.id, lr.requester_id);
+      db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action) VALUES (?, ?, 'รีเซ็ตสายอนุมัติตามรายชื่อผู้อนุมัติล่าสุด')`).run(lr.id, req.session.userId);
+      logAction(req.session.userId, 'resync_workflow', `รีเซ็ตสายอนุมัติคำขอลา #${lr.code}`);
+    })();
+  } catch (err) {
+    if (err instanceof approvalEngine.ApprovalError) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+  notifyLeaveSubmitted(lr.id, true); // แจ้งผู้อนุมัติชุดใหม่ (ไม่แจ้ง Admin ซ้ำ)
+  res.json({ ok: true, waiting_for: approvalEngine.currentApproverNames('leave', lr.id) });
+});
+
 function requireApproverOrAdmin(req, res, next) {
-  if (!['Approver', 'Admin'].includes(req.session.role)) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์เข้าถึงส่วนนี้' });
+  // อนุญาตทั้งหัวหน้า/Admin โดยตำแหน่ง และคนที่ Admin ตั้งเป็นผู้อนุมัติผ่าน Template (ไม่ว่า role จะเป็นอะไร)
+  // การตรวจว่าเป็นผู้อนุมัติของ "คำขอนี้ใน state ปัจจุบัน" จริงหรือไม่ ทำอีกชั้นใน approvalEngine.decide() อยู่แล้ว
+  if (!['Approver', 'Admin'].includes(req.session.role) && !approvalEngine.hasEverBeenApprover(req.session.userId)) {
+    return res.status(403).json({ error: 'คุณไม่มีสิทธิ์เข้าถึงส่วนนี้' });
+  }
   next();
 }
 
 router.post('/:id/approve', requireAuth, requireApproverOrAdmin, (req, res) => {
-  decide(req, res, 'approved', 'อนุมัติ');
+  decide(req, res, 'approve', 'อนุมัติ');
 });
 router.post('/:id/reject', requireAuth, requireApproverOrAdmin, (req, res) => {
-  decide(req, res, 'rejected', 'ไม่อนุมัติ');
+  decide(req, res, 'reject', 'ไม่อนุมัติ');
+});
+// ส่งกลับให้ผู้ขอแก้ไข (revision) แทนที่จะ reject จบเลย - ผู้ขอแก้ไขแล้ว resubmit วนกลับไปเริ่มที่ State แรกใหม่
+router.post('/:id/revision', requireAuth, requireApproverOrAdmin, (req, res) => {
+  decide(req, res, 'revision', 'ส่งกลับแก้ไข');
 });
 
-function decide(req, res, newStatus, actionLabel) {
+function decide(req, res, action, actionLabel) {
   const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(req.params.id);
   if (!lr) return res.status(404).json({ error: 'ไม่พบคำขอลา' });
   if (lr.status !== 'pending') return res.status(400).json({ error: 'คำขอนี้ถูกดำเนินการไปแล้ว' });
 
   const { note } = req.body;
-  db.prepare(`UPDATE leave_requests SET status = ?, approver_id = ?, approved_at = datetime('now'), approval_note = ? WHERE id = ?`)
-    .run(newStatus, req.session.userId, note || '', req.params.id);
-  db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action, note) VALUES (?, ?, ?, ?)`)
-    .run(req.params.id, req.session.userId, actionLabel, note || '');
-  logAction(req.session.userId, `leave_${newStatus}`, `${actionLabel}คำขอลา #${lr.code}`);
+  const wfBefore = approvalEngine.getWorkflow('leave', lr.id);
+  const stateName = wfBefore && wfBefore.states[wfBefore.currentStateIndex] ? wfBefore.states[wfBefore.currentStateIndex].name : '';
+  let result;
+  try {
+    // ทุกขั้นตอนที่เขียนฐานข้อมูล (workflow + ประวัติ + สถานะใบลา + หักวันลา) อยู่ใน transaction เดียว: สำเร็จครบหรือย้อนกลับทั้งหมด
+    result = db.transaction(() => {
+      const r = approvalEngine.decide('leave', lr.id, req.session.userId, action, note, lr.requester_id);
+      db.prepare(`INSERT INTO leave_history (leave_request_id, action_by, action, note) VALUES (?, ?, ?, ?)`)
+        .run(req.params.id, req.session.userId, `${actionLabel}${stateName ? ` (${stateName})` : ''}${lr.requester_id === req.session.userId ? ' · โดยผู้ขอเอง' : ''}`, note || '');
+      logAction(req.session.userId, `leave_${action}`, `${actionLabel}คำขอลา #${lr.code}`);
 
-  // อัปเดตยอดวันลาที่ใช้ไป เมื่ออนุมัติแล้ว (นับเป็นวัน - กรณีลาเป็นชั่วโมง/นาทียังไม่หักโควตาวันเต็ม)
-  if (newStatus === 'approved' && lr.duration_days > 0) {
-    ensureBalance(lr.requester_id);
-    const col = lr.leave_type === 'ลาพักร้อน' ? 'vacation_used' : lr.leave_type === 'ลากิจ' ? 'personal_used' : lr.leave_type === 'ลาป่วย' ? 'sick_used' : null;
-    if (col) {
-      db.prepare(`UPDATE leave_balances SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE user_id = ?`)
-        .run(lr.duration_days, lr.requester_id);
-    }
+      if (r.finalStatus) {
+        // workflow จบแล้ว (approved / rejected / revision) - sync กลับไปที่ leave_requests.status
+        db.prepare(`UPDATE leave_requests SET status = ?, approver_id = ?, approved_at = datetime('now'), approval_note = ? WHERE id = ?`)
+          .run(r.finalStatus, req.session.userId, note || '', req.params.id);
+
+        if (r.finalStatus === 'approved' && lr.duration_days > 0) {
+          ensureBalance(lr.requester_id);
+          const col = lr.leave_type === 'ลาพักร้อน' ? 'vacation_used' : lr.leave_type === 'ลากิจ' ? 'personal_used' : lr.leave_type === 'ลาป่วย' ? 'sick_used' : null;
+          if (col) {
+            db.prepare(`UPDATE leave_balances SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE user_id = ?`)
+              .run(lr.duration_days, lr.requester_id);
+          }
+        }
+      }
+      return r;
+    })();
+  } catch (err) {
+    if (err instanceof approvalEngine.ApprovalError) return res.status(400).json({ error: err.message });
+    throw err;
   }
 
-  notifyLeaveDecision(lr.id, newStatus, req.session.userId, note);
+  // แจ้งเตือน/อีเมลทำหลัง commit แล้วเท่านั้น (ถ้าส่งอีเมลพลาดก็ไม่กระทบข้อมูลที่บันทึกไปแล้ว)
+  if (result.finalStatus) {
+    notifyLeaveDecision(lr.id, result.finalStatus, req.session.userId, note);
+  } else if (result.advanced) {
+    // ผ่าน state นี้แล้ว ไปรอ state ถัดไป - แจ้งเตือนผู้อนุมัติ state ถัดไปว่าถึงคิวแล้ว
+    notifyLeaveSubmitted(lr.id, true);
+  }
+  // result.finalStatus === null && !advanced -> ยังรอคนอื่นใน state เดียวกัน (โหมด ALL) ไม่ต้องแจ้งอะไรเพิ่ม
+
   res.json({ ok: true });
 }
 
-function notifyLeaveSubmitted(lrId) {
+// isAdvance = true เมื่อเรียกตอน state เลื่อนไปคนถัดไป (ไม่ใช่ตอนส่งคำขอครั้งแรก) - แจ้งเฉพาะผู้อนุมัติของ state ปัจจุบัน ไม่ต้องแจ้ง Admin ซ้ำทุกรอบ
+function notifyLeaveSubmitted(lrId, isAdvance = false) {
   const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(lrId);
   const requester = db.prepare('SELECT full_name, department, email FROM users WHERE id = ?').get(lr.requester_id);
-  const approverIds = approverIdsForDepartments([requester.department]);
-  const admins = db.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
-  const ids = Array.from(new Set([...approverIds, ...admins]));
+  const currentApproverIds = approvalEngine.getCurrentApproverIds('leave', lrId);
+  const admins = isAdvance ? [] : db.prepare(`SELECT id FROM users WHERE is_active = 1 AND role = 'Admin'`).all().map(r => r.id);
+  const ids = Array.from(new Set([...currentApproverIds, ...admins]));
   if (!ids.length) return;
   const approvers = db.prepare(`SELECT id, full_name, email, email_notify FROM users WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
-  const msg = `มีคำขอลาใหม่จาก ${requester.full_name} (${lr.leave_type}) วันที่ ${toThaiDate(lr.date_from)}${lr.date_to !== lr.date_from ? ' ถึง ' + toThaiDate(lr.date_to) : ''}`;
+  const msg = isAdvance
+    ? `คำขอลาของ ${requester.full_name} (${lr.leave_type}) วันที่ ${toThaiDate(lr.date_from)}${lr.date_to !== lr.date_from ? ' ถึง ' + toThaiDate(lr.date_to) : ''} ถึงคิวที่ต้องให้คุณอนุมัติแล้ว`
+    : `มีคำขอลาใหม่จาก ${requester.full_name} (${lr.leave_type}) วันที่ ${toThaiDate(lr.date_from)}${lr.date_to !== lr.date_from ? ' ถึง ' + toThaiDate(lr.date_to) : ''}`;
   const notifStmt = db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, 'leave_new_request', ?, ?)`);
   for (const a of approvers) {
     notifStmt.run(a.id, msg, lrId);
@@ -266,7 +514,7 @@ function notifyLeaveSubmitted(lrId) {
       sendMail({
         to: a.email,
         subject: `[TRISAK] คำขอลาใหม่ #${lr.code}`,
-        html: `<p>${msg}</p><p>เหตุผล: ${lr.reason || '-'}</p><p><a href="${process.env.APP_BASE_URL || 'http://localhost:3000'}/approve-leave?id=${lrId}">เปิดดูคำขอ</a></p>`
+        html: `<p>${escapeHtml(msg)}</p><p>เหตุผล: ${escapeHtml(lr.reason || '-')}</p><p><a href="${process.env.APP_BASE_URL || 'http://localhost:3000'}/approve-leave?id=${lrId}">เปิดดูคำขอ</a></p>`
       }).catch(err => console.error('[leave] send mail error:', err.message));
     }
   }
@@ -276,15 +524,16 @@ function notifyLeaveDecision(lrId, status, approverId, note) {
   const lr = db.prepare('SELECT * FROM leave_requests WHERE id = ?').get(lrId);
   const requester = db.prepare('SELECT full_name, email, email_notify FROM users WHERE id = ?').get(lr.requester_id);
   const approver = db.prepare('SELECT full_name FROM users WHERE id = ?').get(approverId);
-  const label = status === 'approved' ? 'อนุมัติ' : 'ไม่อนุมัติ';
+  const label = status === 'approved' ? 'อนุมัติ' : status === 'revision' ? 'ส่งกลับให้แก้ไข' : 'ไม่อนุมัติ';
   const msg = `คำขอลา #${lr.code} (${lr.leave_type}) ของคุณถูก${label}โดย ${approver ? approver.full_name : '-'}${note ? ' · ' + note : ''}`;
+  const notifType = status === 'approved' ? 'leave_approved' : status === 'revision' ? 'leave_revision' : 'leave_rejected';
   db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, ?, ?, ?)`)
-    .run(lr.requester_id, status === 'approved' ? 'leave_approved' : 'leave_rejected', msg, lrId);
+    .run(lr.requester_id, notifType, msg, lrId);
   if (requester && requester.email && requester.email_notify) {
     sendMail({
       to: requester.email,
       subject: `[TRISAK] คำขอลา #${lr.code} ถูก${label}`,
-      html: `<p>${msg}</p>`
+      html: `<p>${escapeHtml(msg)}</p>`
     }).catch(err => console.error('[leave] send mail error:', err.message));
   }
 }
@@ -333,26 +582,91 @@ router.get('/summary/:userId', requireAuth, (req, res) => {
 
 // ===== Admin: จัดการสิทธิ์วันลารายบุคคล =====
 router.get('/balances/all', requireAuth, requireRole('Admin'), (req, res) => {
-  const users = db.prepare(`SELECT id, full_name, username, department FROM users ORDER BY full_name`).all();
-  const rows = users.map(u => ({ ...u, balance: ensureBalance(u.id) }));
-  res.json({ balances: rows });
+  const users = db.prepare(`SELECT id, full_name, username, department, start_date FROM users ORDER BY full_name`).all();
+  const rules = entitlement.getRules();
+  const settings = entitlement.getSettings();
+  const rows = users.map(u => {
+    const balance = ensureBalance(u.id);
+    const months = u.start_date ? entitlement.tenureMonths(u.start_date) : null;
+    return {
+      ...u, balance,
+      auto_entitlement: !!balance.auto_entitlement,
+      tenure_months: months,
+      entitlement: months === null ? null : entitlement.computeTotals(months, rules, entitlement.prorateFactor(u.start_date, settings)),
+      cycle: entitlement.cycleFor(u.start_date, settings)
+    };
+  });
+  res.json({ balances: rows, rules, settings });
+});
+
+// กติกาสิทธิ์วันลาตามอายุงาน — ต้องอยู่ก่อน PUT /balances/:userId
+router.get('/balances/rules', requireAuth, requireRole('Admin'), (req, res) => {
+  res.json({ rules: entitlement.getRules(), settings: entitlement.getSettings() });
+});
+
+router.put('/balances/rules', requireAuth, requireRole('Admin'), (req, res) => {
+  const list = Array.isArray(req.body.rules) ? req.body.rules : null;
+  if (!list) return res.status(400).json({ error: 'ข้อมูลกติกาไม่ถูกต้อง' });
+  const seen = new Set();
+  const clean = [];
+  for (const r of list) {
+    const type = String(r.leave_type || '');
+    const months = Number(r.min_months);
+    const days = Number(r.days);
+    if (!entitlement.LEAVE_TYPES.includes(type)) return res.status(400).json({ error: 'ประเภทการลาไม่ถูกต้อง' });
+    if (!Number.isInteger(months) || months < 0 || months > 1200) return res.status(400).json({ error: 'อายุงานต้องเป็นจำนวนเดือนที่ไม่ติดลบ' });
+    if (!Number.isFinite(days) || days < 0 || days > 366) return res.status(400).json({ error: 'จำนวนวันต้องอยู่ระหว่าง 0 - 366' });
+    const key = `${type}|${months}`;
+    if (seen.has(key)) return res.status(400).json({ error: `มีกติกา "${type}" ที่อายุงานเท่ากันซ้ำกัน` });
+    seen.add(key);
+    clean.push([type, months, days]);
+  }
+  // ตัวเลือกรอบสิทธิ์ (ไม่ส่งมา = คงค่าเดิม)
+  const cur = entitlement.getSettings();
+  const cycle = req.body.cycle === undefined ? cur.cycle : String(req.body.cycle);
+  if (!entitlement.CYCLES.includes(cycle)) return res.status(400).json({ error: 'ชนิดรอบสิทธิ์ไม่ถูกต้อง' });
+  const prorate = req.body.prorate_first_year === undefined ? cur.prorate_first_year : !!req.body.prorate_first_year;
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM leave_entitlement_rules').run();
+    const ins = db.prepare('INSERT INTO leave_entitlement_rules (leave_type, min_months, days) VALUES (?, ?, ?)');
+    clean.forEach(r => ins.run(...r));
+  });
+  tx();
+  entitlement.saveSettings({ cycle, prorate_first_year: prorate });
+  // เปลี่ยนชนิดรอบ -> จัดรอบใหม่ให้ทุกคนโดยไม่รีเซ็ตยอดใช้ไป (เปลี่ยนการตั้งค่าไม่ควรล้างยอดโดยไม่ตั้งใจ)
+  if (cycle !== cur.cycle) entitlement.rekeyAll();
+  const changed = entitlement.syncAll();
+  logAction(req.session.userId, 'update_leave_entitlement_rules', `แก้กติกาสิทธิ์วันลาตามอายุงาน (${clean.length} กติกา, ปรับสิทธิ์พนักงาน ${changed} คน)`);
+  res.json({ ok: true, updated_users: changed });
 });
 
 router.put('/balances/:userId', requireAuth, requireRole('Admin'), (req, res) => {
-  const { vacation_total, vacation_used, personal_total, personal_used, sick_total, sick_used, note } = req.body;
+  const { vacation_total, vacation_used, personal_total, personal_used, sick_total, sick_used, note, start_date, auto_entitlement } = req.body;
+  if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(req.params.userId)) return res.status(404).json({ error: 'ไม่พบพนักงาน' });
+  const startDate = start_date === undefined || start_date === null ? '' : String(start_date).trim();
+  if (startDate && (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || isNaN(new Date(`${startDate}T00:00:00Z`)))) {
+    return res.status(400).json({ error: 'รูปแบบวันเริ่มทำงานไม่ถูกต้อง' });
+  }
+  const auto = auto_entitlement ? 1 : 0;
+  if (auto && !startDate) return res.status(400).json({ error: 'ต้องระบุวันเริ่มทำงานก่อน จึงจะเปิดคำนวณสิทธิ์อัตโนมัติได้' });
   ensureBalance(req.params.userId);
+  db.prepare('UPDATE users SET start_date = ? WHERE id = ?').run(startDate || null, req.params.userId);
   db.prepare(`
     UPDATE leave_balances SET vacation_total = ?, vacation_used = ?, personal_total = ?, personal_used = ?,
-      sick_total = ?, sick_used = ?, note = ?, updated_at = datetime('now')
+      sick_total = ?, sick_used = ?, note = ?, auto_entitlement = ?, updated_at = datetime('now')
     WHERE user_id = ?
   `).run(
     Number(vacation_total) || 0, Number(vacation_used) || 0,
     Number(personal_total) || 0, Number(personal_used) || 0,
     Number(sick_total) || 0, Number(sick_used) || 0,
-    note || '', req.params.userId
+    note || '', auto, req.params.userId
   );
-  logAction(req.session.userId, 'update_leave_balance', `ปรับสิทธิ์วันลาของ user #${req.params.userId}`);
+  entitlement.rekeyUser(req.params.userId); // แก้วันเริ่มงานอาจเปลี่ยนรอบ (แบบครบรอบ) — จัดรอบให้ตรงโดยไม่รีเซ็ตยอดที่ Admin เพิ่งกรอก
+  if (auto) entitlement.syncUser(req.params.userId); // ค่าสิทธิ์ที่ส่งมาถูกแทนที่ด้วยค่าที่คำนวณจากอายุงาน
+  logAction(req.session.userId, 'update_leave_balance', `ปรับสิทธิ์วันลาของ user #${req.params.userId}${auto ? ' (คำนวณอัตโนมัติตามอายุงาน)' : ''}`);
   res.json({ ok: true });
 });
 
+router.notifySubmitted = notifyLeaveSubmitted;
+router.buildLeaveSummary = buildLeaveSummary;
 module.exports = router;

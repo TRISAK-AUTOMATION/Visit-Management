@@ -1,7 +1,7 @@
 // client/src/pages/AdminProfilePermissions.jsx - Admin มอบสิทธิ์แก้ไขโปรไฟล์/คะแนนคนอื่นเป็นพิเศษ
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
-import { api } from '../lib/api';
+import { api, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
 export default function AdminProfilePermissions() {
@@ -77,7 +77,7 @@ export default function AdminProfilePermissions() {
                 <tr key={p.id}>
                   <td>{p.editor_name}</td>
                   <td>{p.target_name}</td>
-                  <td>{p.created_at}</td>
+                  <td>{fmtDateTime(p.created_at)}</td>
                   <td><button className="btn btn-danger btn-sm" onClick={() => revoke(p.id)}>ถอนสิทธิ์</button></td>
                 </tr>
               )) : <tr><td colSpan={4} className="empty">ยังไม่มีการมอบสิทธิ์พิเศษ</td></tr>}

@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+import FormOptionsEditor from '../components/FormOptionsEditor';
 
 const FIELD_TYPES = [
   { v: 'text', label: 'ข้อความสั้น (Text)' },
@@ -29,8 +30,7 @@ const ESSENTIAL_FIELDS_DEFAULT = [
   { field_key: 'visit_date', label: 'วันที่' },
   { field_key: 'customer_id', label: 'รหัสลูกค้า / บริษัท' },
   { field_key: 'time_from', label: 'เวลาเริ่ม (แผน)' },
-  { field_key: 'time_to', label: 'เวลาสิ้นสุด (แผน)' },
-  { field_key: 'purpose', label: 'วัตถุประสงค์ / รายละเอียดงาน' }
+  { field_key: 'time_to', label: 'เวลาสิ้นสุด (แผน)' }
 ];
 
 const emptyForm = {
@@ -38,7 +38,36 @@ const emptyForm = {
   optionsText: '', is_required: false, default_value: '', show_in_email: false, position_after: ''
 };
 
+// โครงของฟอร์ม "สร้างคำขอ Visit" เรียงตามที่แสดงจริง — key ใน anchors คือ field ที่ Custom Field วาง "ต่อจาก" ได้
+// builtin = Field ที่มีในฟอร์มอยู่แล้ว (แสดงให้เห็นภาพรวม), end = ตำแหน่ง "ท้ายกลุ่ม"
+const FORM_GROUPS = [
+  { end: 'GRP_company', title: 'ข้อมูลบริษัท', en: 'Company Information', anchors: [], builtin: ['Company (บริษัทในเครือที่รับผิดชอบ)'] },
+  { end: 'GRP_customer', title: 'ข้อมูลลูกค้า', en: 'Customer Information', anchors: ['customer_id', 'sales_person', 'customer_tax_id', 'tax_invoice_date'],
+    builtin: ['Customer Type', 'Customer Code', 'Customer Name', 'SSO', 'Sales Name', 'Customer Tax ID'] },
+  { end: 'GRP_contact', title: 'ข้อมูลผู้ติดต่อ', en: 'Contact Information', anchors: ['contact_person', 'contact_phone'], builtin: ['Contact (ชื่อ / ตำแหน่ง / เบอร์โทร / อีเมล) — เพิ่มได้หลายคน'] },
+  { end: 'GRP_visit', title: 'ข้อมูลการเข้าพบ', en: 'Visit Information', anchors: ['TOP', 'visit_date', 'time_from', 'time_to', 'job_type', 'transport', 'license_plate', 'purpose', 'location', 'product'],
+    builtin: ['Request Date', 'Visit Date', 'Time Out / In', 'Job Type', 'Transport', 'Car License', 'Purpose', 'Location', 'Product'] },
+  { end: 'GRP_trip', title: 'การเดินทาง / หลังปฏิบัติงาน', en: 'Trip & Post-visit', anchors: ['mileage_out', 'mileage_in', 'ot_hours'],
+    builtin: ['Mileage Out/In', 'OT Hours'] },
+  { end: 'GRP_people', title: 'ผู้ร่วมงาน', en: 'Accompanied Employees', anchors: ['participants'], builtin: ['Employees'] },
+  { end: 'notes', title: 'หมายเหตุ (Remark)', en: 'Remark', anchors: ['notes'], builtin: ['Remark'] }
+];
+
+// หาว่า Custom Field นี้ไปอยู่กลุ่มไหนของฟอร์ม (ตามตำแหน่งที่วาง รวมกรณีวางต่อจาก Custom Field อื่น)
+function groupOfField(f, all) {
+  let pos = f.position_after || '';
+  for (let i = 0; i < 10 && pos; i++) {
+    const g = FORM_GROUPS.find(x => x.end === pos || x.anchors.includes(pos));
+    if (g) return g;
+    const parent = all.find(x => x.field_key === pos);
+    if (!parent) break;
+    pos = parent.position_after || '';
+  }
+  return null;
+}
+
 export default function AdminFormBuilder() {
+  const [tab, setTab] = useState('fields');
   const toast = useToast();
   const [fields, setFields] = useState([]);
   const [editing, setEditing] = useState(undefined); // undefined=ปิด, null=เพิ่มใหม่, object=แก้ไข
@@ -51,7 +80,7 @@ export default function AdminFormBuilder() {
   const [coreForm, setCoreForm] = useState({ label: '', is_visible: true, is_required: false });
   const [savingCore, setSavingCore] = useState(false);
 
-  // Field พื้นฐานที่จำเป็นต่อระบบ (วันที่/ลูกค้า/เวลา/วัตถุประสงค์) - แสดง+บังคับกรอกเสมอ แก้ได้แค่ชื่อหัวข้อ (Label)
+  // Field พื้นฐานที่จำเป็นต่อระบบ (วันที่/ลูกค้า/เวลา) - แสดง+บังคับกรอกเสมอ แก้ได้แค่ชื่อหัวข้อ (Label)
   const [essentialLabels, setEssentialLabels] = useState(ESSENTIAL_FIELDS_DEFAULT);
   const ESSENTIAL_FIELDS = essentialLabels; // ใช้ชื่อเดิมต่อในโค้ดที่เหลือ (position_after dropdown ฯลฯ)
   const [editingEssential, setEditingEssential] = useState(null); // { field_key, label } หรือ null
@@ -101,6 +130,8 @@ export default function AdminFormBuilder() {
   const positionLabel = (posAfter) => {
     if (!posAfter) return 'ท้ายฟอร์ม';
     if (posAfter === 'TOP') return 'บนสุดของฟอร์ม';
+    const grpEnd = FORM_GROUPS.find(g => g.end === posAfter);
+    if (grpEnd) return `ท้ายกลุ่ม: ${grpEnd.title}`;
     const essential = ESSENTIAL_FIELDS.find(f => f.field_key === posAfter);
     if (essential) return `หลัง: ${essential.label}`;
     const core = coreFields.find(f => f.field_key === posAfter);
@@ -148,7 +179,7 @@ export default function AdminFormBuilder() {
 
   useEffect(() => { load(); loadCore(); loadEssential(); }, []);
 
-  const openForm = (f) => {
+  const openForm = (f, presetPos) => {
     setEditing(f || null);
     setForm(f
       ? {
@@ -158,7 +189,7 @@ export default function AdminFormBuilder() {
         default_value: f.default_value || '', show_in_email: f.show_in_email,
         position_after: f.position_after || ''
       }
-      : emptyForm);
+      : { ...emptyForm, position_after: presetPos || '' });
   };
 
   const set = (field) => (e) => {
@@ -221,17 +252,80 @@ export default function AdminFormBuilder() {
     } catch (err) { toast(err.message, 'error'); load(); }
   };
 
+  const tabBar = (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        <button type="button" className={`btn btn-sm ${tab === 'fields' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab('fields')}>Field ในฟอร์ม (หัวข้อ 1)</button>
+        <button type="button" className={`btn btn-sm ${tab === 'options' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab('options')}>ตัวเลือกในหัวข้อ 1–8</button>
+      </div>
+  );
+  if (tab === 'options') return <Layout title="Form Builder — สร้างคำขอ Visit">{tabBar}<FormOptionsEditor /></Layout>;
+
   return (
     <Layout title="Form Builder — สร้างคำขอ Visit">
+      {tabBar}
       <div className="flex between mb-16">
         <div>
           <h3 style={{ margin: 0 }}>Field เพิ่มเติมในฟอร์ม "สร้างคำขอ Visit"</h3>
           <p className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
-            Field พื้นฐานของระบบ (บริษัท, วันที่, เวลา, วัตถุประสงค์ ฯลฯ) มีอยู่แล้วในฟอร์มเสมอ<br />
+            Field พื้นฐานของระบบ (บริษัท, วันที่, เวลา ฯลฯ) มีอยู่แล้วในฟอร์มเสมอ<br />
             หน้านี้ใช้เพิ่ม Field ใหม่ต่อท้าย โดยไม่ต้องแก้ Source Code
           </p>
         </div>
         <button className="btn btn-primary" onClick={() => openForm(null)}>+ Add Field</button>
+      </div>
+
+      <div className="card mb-16">
+        <div className="card-body">
+          <h3 style={{ margin: '0 0 4px' }}>แผนผังฟอร์ม (เรียงตามที่แสดงจริงในหน้าสร้างคำขอ)</h3>
+          <p className="muted" style={{ fontSize: 12.5, margin: '0 0 14px' }}>
+            แต่ละกลุ่มแสดง Field ที่มีอยู่แล้วในระบบ และ Field ที่เพิ่มเอง — กด "+ เพิ่ม Field" ในกลุ่มไหน Field ใหม่จะไปอยู่ท้ายกลุ่มนั้นทันที
+          </p>
+          {FORM_GROUPS.map((g, gi) => {
+            const mine = fields.filter(f => groupOfField(f, fields) === g);
+            return (
+              <div key={g.end} style={{ border: '1px solid var(--border, #e3e7ef)', borderRadius: 10, padding: '12px 14px', marginBottom: 10 }}>
+                <div className="flex between" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <div><b>{gi + 1}. {g.title}</b> <span className="muted" style={{ fontSize: 12 }}>{g.en}</span></div>
+                  <button className="btn btn-outline btn-sm" onClick={() => openForm(null, g.end)}>+ เพิ่ม Field ในกลุ่มนี้</button>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                  {g.builtin.map(b => <span key={b} className="badge" style={{ background: '#eef1f7', color: '#4a5468', fontWeight: 500 }}>{b}</span>)}
+                </div>
+                {mine.length > 0 && (
+                  <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                    {mine.map(f => (
+                      <div key={f.id} className="flex between" style={{ alignItems: 'center', gap: 8, background: f.is_active ? '#eef6ff' : '#f5f5f5', borderRadius: 8, padding: '6px 10px', opacity: f.is_active ? 1 : 0.65 }}>
+                        <div style={{ fontSize: 13 }}>
+                          <b>{f.label}</b> <span className="muted" style={{ fontSize: 11 }}>{f.field_key} · {typeLabel(f.field_type)} · {positionLabel(f.position_after)}{f.is_required ? ' · จำเป็น' : ''}{f.is_active ? '' : ' · ปิดใช้งาน'}</span>
+                        </div>
+                        <div>
+                          <button className="btn btn-outline btn-sm" onClick={() => openForm(f)}>แก้ไข</button>{' '}
+                          <button className="btn btn-outline btn-sm" onClick={() => toggleActive(f)}>{f.is_active ? 'ปิด' : 'เปิด'}</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {(() => {
+            const loose = fields.filter(f => !groupOfField(f, fields));
+            return loose.length > 0 && (
+              <div style={{ border: '1px dashed #c5ccdb', borderRadius: 10, padding: '12px 14px' }}>
+                <b>ท้ายฟอร์ม — Additional Information</b>
+                <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                  {loose.map(f => (
+                    <div key={f.id} className="flex between" style={{ alignItems: 'center', background: '#eef6ff', borderRadius: 8, padding: '6px 10px' }}>
+                      <span style={{ fontSize: 13 }}><b>{f.label}</b> <span className="muted" style={{ fontSize: 11 }}>{f.field_key}{f.is_active ? '' : ' · ปิดใช้งาน'}</span></span>
+                      <button className="btn btn-outline btn-sm" onClick={() => openForm(f)}>แก้ไข / ย้ายกลุ่ม</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
       </div>
 
       <div className="card">
@@ -302,6 +396,9 @@ export default function AdminFormBuilder() {
                   <select value={form.position_after} onChange={set('position_after')}>
                     <option value="">ท้ายฟอร์ม (ค่าเริ่มต้น)</option>
                     <option value="TOP">บนสุดของฟอร์ม</option>
+                    <optgroup label="ท้ายกลุ่ม (แนะนำ — ตรงกับหัวข้อในฟอร์ม)">
+                      {FORM_GROUPS.map(g => <option key={g.end} value={g.end}>{g.title} ({g.en})</option>)}
+                    </optgroup>
                     <optgroup label="วางต่อจาก Field ที่มีอยู่">
                       {ESSENTIAL_FIELDS.map(f => <option key={f.field_key} value={f.field_key}>{f.label}</option>)}
                       {coreFields.map(f => <option key={f.field_key} value={f.field_key}>{f.label}</option>)}
@@ -389,7 +486,7 @@ export default function AdminFormBuilder() {
           <h3 style={{ margin: 0 }}>Field เดิมของระบบ</h3>
           <p className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
             Field เหล่านี้ผูกกับข้อมูลเดิมในระบบ (PDF / Report) จึง<b>ลบไม่ได้</b> แต่สามารถ <b>ซ่อนจากฟอร์ม</b> <b>เปลี่ยนชื่อ</b> หรือ <b>จัดลำดับใหม่</b> ได้อย่างปลอดภัย<br />
-            ข้อมูลเก่าที่เคยกรอกไว้จะไม่หายไปไหน ไม่ว่าจะปรับอะไรก็ตาม (Field พื้นฐานที่จำเป็น เช่น วันที่/ลูกค้า/เวลา/วัตถุประสงค์ จะอยู่บนสุดของฟอร์มเสมอ ไม่รวมอยู่ในรายการนี้)
+            ข้อมูลเก่าที่เคยกรอกไว้จะไม่หายไปไหน ไม่ว่าจะปรับอะไรก็ตาม (Field พื้นฐานที่จำเป็น เช่น วันที่/ลูกค้า/เวลา จะอยู่บนสุดของฟอร์มเสมอ ไม่รวมอยู่ในรายการนี้)
           </p>
         </div>
       </div>
@@ -410,7 +507,7 @@ export default function AdminFormBuilder() {
                   <td><b>{f.label}</b><br /><span className="muted" style={{ fontSize: 11 }}>{f.field_key}</span></td>
                   <td>{f.is_required ? <span className="badge rejected">จำเป็น</span> : <span className="muted">ไม่บังคับ</span>}</td>
                   <td><span className={`badge ${f.is_visible ? 'approved' : 'cancelled'}`}>{f.is_visible ? 'แสดงในฟอร์ม' : 'ซ่อนอยู่'}</span></td>
-                  <td><input type="checkbox" checked={!!f.show_in_email} onChange={() => toggleCoreEmail(f)} /></td>
+                  <td>{f.field_key === 'purpose' ? <span className="muted" style={{ fontSize: 11 }}>ตั้งที่หน้า Email Settings</span> : <input type="checkbox" checked={!!f.show_in_email} onChange={() => toggleCoreEmail(f)} />}</td>
                   <td><button className="btn btn-outline btn-sm" onClick={() => openCoreEdit(f)}>แก้ไข</button></td>
                 </tr>
               ))}
