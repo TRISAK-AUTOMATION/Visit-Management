@@ -31,11 +31,12 @@ router.put('/me', requireAuth, (req, res) => {
   if (avatar_url && (typeof avatar_url !== 'string' || avatar_url.length > 3_000_000 || !/^(data:image\/|\/|https?:\/\/)/.test(avatar_url))) {
     return res.status(400).json({ error: 'รูปโปรไฟล์ไม่ถูกต้องหรือมีขนาดใหญ่เกินไป' });
   }
-  if (!isValidDepartment(department)) {
-    return res.status(400).json({ error: 'แผนกไม่ถูกต้อง กรุณาเลือกจากรายการ' });
-  }
   // แผนกมีผลต่อสิทธิ์ (เช่น เมนู Visit ของแผนก Engineer และสายอนุมัติ) จึงให้เฉพาะ Admin เปลี่ยนได้ — พนักงานแก้ได้แค่ข้อมูลส่วนตัว
   const cur = db.prepare('SELECT department FROM users WHERE id = ?').get(req.session.userId);
+  // ตรวจแผนกเฉพาะเมื่อ Admin เปลี่ยนเป็นค่าใหม่ — ถ้าแผนกเดิมถูกลบ/เปลี่ยนชื่อออกจากรายการ ผู้ใช้ยังบันทึกโปรไฟล์ส่วนอื่นได้
+  if (req.session.role === 'Admin' && department !== (cur ? cur.department : '') && !isValidDepartment(department)) {
+    return res.status(400).json({ error: 'แผนกไม่ถูกต้อง กรุณาเลือกจากรายการ' });
+  }
   const newDept = req.session.role === 'Admin' ? department : (cur ? cur.department : '');
   db.prepare(`
     UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, department = ?, email_notify = ?, avatar_url = ?
@@ -139,6 +140,12 @@ router.put('/:id', requireAuth, requireRole('Admin'), (req, res) => {
   if (!exists) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
   if (!VALID_ROLES.includes(role)) {
     return res.status(400).json({ error: 'ตำแหน่ง (role) ไม่ถูกต้อง' });
+  }
+  if (typeof full_name !== 'string' || !full_name.trim()) {
+    return res.status(400).json({ error: 'กรุณากรอกชื่อ-นามสกุล' });
+  }
+  if (![email, phone, position].every((v) => v === undefined || v === null || (typeof v === 'string' && v.length <= 200))) {
+    return res.status(400).json({ error: 'ข้อมูลผู้ใช้ไม่ถูกต้องหรือยาวเกินไป' });
   }
   // กันระบบไม่มี Admin เหลือเลย: ห้ามลดสิทธิ์ Admin คนสุดท้ายที่ยังใช้งานอยู่
   if (exists.role === 'Admin' && role !== 'Admin' && exists.is_active) {

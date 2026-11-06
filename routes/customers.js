@@ -57,10 +57,13 @@ router.get('/:id', requireAuth, (req, res) => {
 
 router.post('/', requireAuth, requireRole('Admin'), (req, res) => {
   const { name, contact_person, phone, email, address, company } = req.body;
-  if (!name) return res.status(400).json({ error: 'กรุณากรอกชื่อลูกค้า/บริษัท' });
-  const last = db.prepare(`SELECT code FROM customers ORDER BY id DESC LIMIT 1`).get();
-  const nextNum = last ? parseInt(last.code.split('-')[1]) + 1 : 1;
-  const code = `CUS-${nextNum.toString().padStart(3, '0')}`;
+  if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'กรุณากรอกชื่อลูกค้า/บริษัท' });
+  for (const v of [contact_person, phone, email, address, company]) {
+    if (v !== undefined && v !== null && typeof v !== 'string' && typeof v !== 'number') return res.status(400).json({ error: 'ข้อมูลลูกค้าไม่ถูกต้อง' });
+  }
+  // เลขถัดไปจากรหัส CUS- ที่มากที่สุด (เดิมใช้รหัสของรายการล่าสุด ซึ่งอาจเป็น NEW-xxxx/รหัส SAP -> ได้ CUS ซ้ำ หรือ CUS-NaN)
+  const row = db.prepare(`SELECT MAX(CAST(SUBSTR(code, 5) AS INTEGER)) AS maxSeq FROM customers WHERE code LIKE 'CUS-%'`).get();
+  const code = `CUS-${((row.maxSeq || 0) + 1).toString().padStart(3, '0')}`;
   const info = db.prepare(`
     INSERT INTO customers (code, name, contact_person, phone, email, address, company)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -145,6 +148,10 @@ router.put('/:id', requireAuth, requireRole('Admin'), (req, res) => {
   const { name, contact_person, phone, email, address, company, code, tax_id } = req.body;
   const exists = db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id);
   if (!exists) return res.status(404).json({ error: 'ไม่พบลูกค้า' });
+  if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'กรุณากรอกชื่อลูกค้า/บริษัท' });
+  for (const v of [contact_person, phone, email, address, company, code, tax_id]) {
+    if (v !== undefined && v !== null && typeof v !== 'string' && typeof v !== 'number') return res.status(400).json({ error: 'ข้อมูลลูกค้าไม่ถูกต้อง' });
+  }
 
   // ลูกค้ารอตรวจสอบ: ถ้า Admin ใส่รหัสจริงมา = ยืนยันเป็นลูกค้าจริง (ออกจากสถานะรอตรวจสอบ) โดยรหัสต้องไม่ซ้ำในบริษัทเดียวกัน
   let newCode = exists.code;

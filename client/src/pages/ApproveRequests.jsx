@@ -1,6 +1,6 @@
 // client/src/pages/ApproveRequests.jsx - เทียบเท่า public/approve-requests.html
-import React, { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import React, { useEffect, useState, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { usePageContent } from '../lib/PageContentContext';
 import ReportDetailModal from '../components/report/ReportDetailModal';
@@ -19,25 +19,35 @@ export default function ApproveRequests() {
   const { pc } = usePageContent();
   const toast = useToast();
   const { refreshBadges } = useAuth();
-  const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const firstNav = useRef(true);
   const [rows, setRows] = useState([]);
   const [filter, setFilter] = useState(() => { const s = new URLSearchParams(window.location.search).get('status'); return ['pending','approved','rejected','revision'].includes(s) ? s : 'pending'; });
   const [modalData, setModalData] = useState(null);
 
   const load = async (f = filter) => {
-    const { requests } = await api.get(`/api/visit-requests?scope=pending&status=${f}`);
-    setRows(requests);
+    try {
+      const { requests } = await api.get(`/api/visit-requests?scope=pending&status=${f}`);
+      setRows(requests);
+    } catch (err) { toast(`โหลดรายการไม่สำเร็จ: ${err.message}`, 'error'); }
     refreshBadges(); // อัปเดตตัวเลขแจ้งเตือนข้างเมนู/กระดิ่งให้ตรงกับรายการล่าสุด
   };
 
   useEffect(() => { load(filter); }, [filter]);
 
-  // รองรับลิงก์เข้ามาจากอีเมล เช่น /approve-requests?id=12 ให้เปิด modal อัตโนมัติ
+  // ทุกครั้งที่ถูกนำทางเข้ามา (รวมกดแจ้งเตือนขณะเปิดหน้านี้อยู่): สลับแท็บตาม ?status= และเปิดคำขอตาม ?id= (ลิงก์จากอีเมล)
   useEffect(() => {
-    const id = searchParams.get('id');
+    const p = new URLSearchParams(location.search);
+    const s = p.get('status');
+    if (['pending', 'approved', 'rejected', 'revision'].includes(s)) {
+      // แท็บเดิมอยู่แล้ว = state ไม่เปลี่ยน จึงต้องสั่งโหลดใหม่เอง (ไม่ทำตอนเปิดหน้าครั้งแรกเพราะโหลดไปแล้ว)
+      if (s === filter && !firstNav.current) load(s); else setFilter(s);
+    }
+    firstNav.current = false;
+    const id = p.get('id');
     if (id) viewRequest(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [location.key]);
 
   const decide = async (id, action) => {
     const input = prompt(action === 'approve' ? 'ความคิดเห็น (ถ้ามี) ก่อนอนุมัติ:' : 'เหตุผลที่ไม่อนุมัติ:', '');
@@ -62,8 +72,10 @@ export default function ApproveRequests() {
   };
 
   const viewRequest = async (id) => {
-    const data = await api.get(`/api/visit-requests/${id}`);
-    setModalData(data);
+    try {
+      const data = await api.get(`/api/visit-requests/${id}`);
+      setModalData(data);
+    } catch (err) { toast(`เปิดคำขอไม่สำเร็จ: ${err.message}`, 'error'); }
   };
 
   // Admin: ให้คำขอที่ค้างอยู่ใช้รายชื่อผู้อนุมัติล่าสุดตาม Template (เช่น เพิ่มผู้อนุมัติใหม่หลังส่งคำขอไปแล้ว)

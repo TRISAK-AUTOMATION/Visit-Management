@@ -16,23 +16,28 @@ export default function Notifications() {
   const [items, setItems] = useState([]);
 
   const load = async () => {
-    const { notifications } = await api.get('/api/notifications');
-    setItems(notifications);
+    try {
+      const { notifications } = await api.get('/api/notifications');
+      setItems(notifications);
+    } catch (err) { toast(`โหลดการแจ้งเตือนไม่สำเร็จ: ${err.message}`, 'error'); }
   };
 
   useEffect(() => { load(); }, []);
 
   const markRead = async (id) => {
-    await api.post(`/api/notifications/${id}/read`);
+    try { await api.post(`/api/notifications/${id}/read`); }
+    catch (err) { toast(err.message, 'error'); }
     load();
     refreshBadges();
   };
 
   const markAll = async () => {
-    await api.post('/api/notifications/read-all');
+    try {
+      await api.post('/api/notifications/read-all');
+      toast('ทำเครื่องหมายว่าอ่านแล้วทั้งหมด', 'success');
+    } catch (err) { toast(err.message, 'error'); }
     load();
     refreshBadges();
-    toast('ทำเครื่องหมายว่าอ่านแล้วทั้งหมด', 'success');
   };
 
   const remove = async (e, id) => {

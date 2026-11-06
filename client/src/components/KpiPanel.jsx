@@ -1,5 +1,5 @@
 // client/src/components/KpiPanel.jsx - แผงคะแนนประเมินผลงาน (KPI) ใช้ในหน้าโปรไฟล์และหน้าทีมของฉัน
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api, initials, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import Loading from './Loading';
@@ -36,14 +36,21 @@ export default function KpiPanel({ userId, showHeader = false, showLeave = true 
   const [newChecklist, setNewChecklist] = useState({});
   const [loadError, setLoadError] = useState(null);
 
+  // คนที่กำลังดูอยู่ตอนนี้ — คำตอบที่มาช้าของคนก่อนหน้า (สลับดูลูกทีมเร็วๆ) จะถูกทิ้ง ไม่ให้ข้อมูลคนอื่นมาแสดง/ถูกบันทึกทับ
+  const currentId = useRef(userId);
+  currentId.current = userId;
+
   const load = async () => {
+    const forId = userId;
+    const still = () => currentId.current === forId;
     try {
-      const d = await api.get(`/api/kpi/${userId}`);
+      const d = await api.get(`/api/kpi/${forId}`);
+      if (!still()) return;
       setData(d);
-      if (showLeave) api.get(`/api/leave-requests/summary/${userId}`).then(setLeave).catch(() => {});
-      api.get(`/api/kpi/${userId}/activity`).then(r => setActivity(r.activity)).catch(() => {});
+      if (showLeave) api.get(`/api/leave-requests/summary/${forId}`).then((v) => { if (still()) setLeave(v); }).catch(() => {});
+      api.get(`/api/kpi/${forId}/activity`).then((r) => { if (still()) setActivity(r.activity); }).catch(() => {});
     } catch (err) {
-      setLoadError(err.message || 'ไม่สามารถโหลดข้อมูลได้');
+      if (still()) setLoadError(err.message || 'ไม่สามารถโหลดข้อมูลได้');
     }
   };
   useEffect(() => {

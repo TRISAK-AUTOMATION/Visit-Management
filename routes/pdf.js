@@ -327,7 +327,10 @@ router.get('/:id/pdf-report', requireAuth, (req, res) => {
     if (d.potential && (list(d.potential.items).length || d.potential.product_application || d.potential.current_brand || d.potential.target_brand)) {
       sub('3.5 Potential Product Opportunity (โอกาสสินค้า)');
       chips(withOther(d.potential.items, d.potential.other));
-      kv([['สินค้า/งานที่มีโอกาส', d.potential.product_application, 'full'], ['ยี่ห้อที่ใช้อยู่', d.potential.current_brand], ['ยี่ห้อเป้าหมาย', d.potential.target_brand]], 2);
+      // แสดงรายละเอียดเสริมเฉพาะเมื่อกรอกมา (kv ที่ว่างทั้งหมดจะพิมพ์ "- ไม่มีข้อมูล -" ใต้ป้ายตัวเลือก ทำให้ดูขัดกัน)
+      if (d.potential.product_application || d.potential.current_brand || d.potential.target_brand) {
+        kv([['สินค้า/งานที่มีโอกาส', d.potential.product_application, 'full'], ['ยี่ห้อที่ใช้อยู่', d.potential.current_brand], ['ยี่ห้อเป้าหมาย', d.potential.target_brand]], 2);
+      }
     }
   } else empty();
 
@@ -335,7 +338,7 @@ router.get('/:id/pdf-report', requireAuth, (req, res) => {
   section('Opportunity Summary', 'สรุปโอกาสทางธุรกิจ');
   if (opp && (list(opp.found).length || opp.level || opp.description)) {
     if (list(opp.found).length) { sub('สิ่งที่พบ (What did we find?)'); chips(opp.found); }
-    kv([['ระดับโอกาส', opp.level]], 1);
+    if (opp.level) kv([['ระดับโอกาส', opp.level]], 1);
     note('รายละเอียดโอกาส', opp.description);
   } else empty();
 

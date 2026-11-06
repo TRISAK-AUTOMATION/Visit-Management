@@ -35,13 +35,13 @@ router.get('/:userId', requireAuth, (req, res) => {
 
   // สถิติอัตโนมัติจากข้อมูลจริงในระบบ (ปีนี้)
   const leaveCount = db.prepare(`
-    SELECT COUNT(*) AS c FROM leave_requests WHERE requester_id = ? AND status = 'approved' AND strftime('%Y', date_from) = strftime('%Y', 'now')
+    SELECT COUNT(*) AS c FROM leave_requests WHERE requester_id = ? AND status = 'approved' AND strftime('%Y', date_from) = strftime('%Y', 'now', '+7 hours')
   `).get(targetId).c;
   const visitSuccess = db.prepare(`
-    SELECT COUNT(*) AS c FROM visit_requests WHERE requester_id = ? AND status = 'approved' AND strftime('%Y', created_at) = strftime('%Y', 'now')
+    SELECT COUNT(*) AS c FROM visit_requests WHERE requester_id = ? AND status = 'approved' AND strftime('%Y', created_at, '+7 hours') = strftime('%Y', 'now', '+7 hours')
   `).get(targetId).c;
   const otSuccess = db.prepare(`
-    SELECT COUNT(*) AS c FROM ot_requests WHERE requester_id = ? AND status = 'approved' AND strftime('%Y', ot_date) = strftime('%Y', 'now')
+    SELECT COUNT(*) AS c FROM ot_requests WHERE requester_id = ? AND status = 'approved' AND strftime('%Y', ot_date) = strftime('%Y', 'now', '+7 hours')
   `).get(targetId).c;
 
   const overall = Math.round((kpi.attendance_score + kpi.performance_score + kpi.responsibility_score + kpi.teamwork_score + kpi.discipline_score) / 5);
@@ -62,6 +62,10 @@ router.put('/:userId', requireAuth, (req, res) => {
   const { attendance_score, performance_score, responsibility_score, teamwork_score, discipline_score,
     late_count, absent_count, pending_tasks, work_status } = req.body;
   const clamp = (v) => Math.max(0, Math.min(100, Number(v) || 0));
+  if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(targetId)) return res.status(404).json({ error: 'ไม่พบพนักงาน' });
+  if (work_status !== undefined && work_status !== null && (typeof work_status !== 'string' || work_status.length > 100)) {
+    return res.status(400).json({ error: 'สถานะการทำงานไม่ถูกต้อง' });
+  }
 
   ensureKpi(targetId);
   db.prepare(`
@@ -81,7 +85,9 @@ router.post('/:userId/checklist', requireAuth, (req, res) => {
   if (!canEditProfile(req.session.userId, targetId)) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์แก้ไขข้อมูลนี้' });
   const { category, label } = req.body;
   if (!CATEGORIES.includes(category)) return res.status(400).json({ error: 'หมวด KPI ไม่ถูกต้อง' });
-  if (!label || !label.trim()) return res.status(400).json({ error: 'กรุณาระบุข้อความเช็คลิสต์' });
+  if (typeof label !== 'string' || !label.trim()) return res.status(400).json({ error: 'กรุณาระบุข้อความเช็คลิสต์' });
+  if (label.length > 500) return res.status(400).json({ error: 'ข้อความเช็คลิสต์ยาวเกินไป (ไม่เกิน 500 ตัวอักษร)' });
+  if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(targetId)) return res.status(404).json({ error: 'ไม่พบพนักงาน' });
   const maxOrder = db.prepare('SELECT MAX(sort_order) AS m FROM employee_kpi_checklist WHERE user_id = ? AND category = ?').get(targetId, category).m || 0;
   const info = db.prepare('INSERT INTO employee_kpi_checklist (user_id, category, label, sort_order, created_by) VALUES (?, ?, ?, ?, ?)')
     .run(targetId, category, label.trim(), maxOrder + 1, req.session.userId);
@@ -100,7 +106,8 @@ router.put('/checklist/:itemId', requireAuth, (req, res) => {
     db.prepare('UPDATE employee_kpi_checklist SET is_checked = ? WHERE id = ?').run(is_checked ? 1 : 0, req.params.itemId);
   }
   if (typeof label !== 'undefined') {
-    db.prepare('UPDATE employee_kpi_checklist SET label = ? WHERE id = ?').run(label, req.params.itemId);
+    if (typeof label !== 'string' || !label.trim() || label.length > 500) return res.status(400).json({ error: 'ข้อความเช็คลิสต์ไม่ถูกต้อง' });
+    db.prepare('UPDATE employee_kpi_checklist SET label = ? WHERE id = ?').run(label.trim(), req.params.itemId);
   }
   res.json({ ok: true });
 });

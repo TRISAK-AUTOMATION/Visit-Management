@@ -42,7 +42,12 @@ function cleanupCompletedVisitRequests(rule) {
   const run = db.transaction(() => {
     db.prepare(`DELETE FROM approval_tokens WHERE visit_request_id IN (${idPh})`).run(...ids);
     db.prepare(`DELETE FROM approval_history WHERE visit_request_id IN (${idPh})`).run(...ids);
-    db.prepare(`DELETE FROM notifications WHERE related_id IN (${idPh})`).run(...ids);
+    // ลบตารางลูกที่อ้างอิง visit_requests ให้ครบก่อน (ไม่งั้น FOREIGN KEY ล้มทั้ง transaction) — ชุดเดียวกับ deleteVisitRequestCascade
+    db.prepare(`DELETE FROM visit_custom_values WHERE visit_request_id IN (${idPh})`).run(...ids);
+    db.prepare(`DELETE FROM visit_customer_signatures WHERE visit_request_id IN (${idPh})`).run(...ids);
+    db.prepare(`DELETE FROM request_workflows WHERE module = 'visit' AND request_id IN (${idPh})`).run(...ids);
+    // แจ้งเตือนของ Visit ไม่มี prefix ส่วนของลา/OT ขึ้นต้น leave_/ot_ — ไม่ลบของใบลา/OT ที่มี id ตรงกัน
+    db.prepare(`DELETE FROM notifications WHERE related_id IN (${idPh}) AND type NOT LIKE 'leave\\_%' ESCAPE '\\' AND type NOT LIKE 'ot\\_%' ESCAPE '\\'`).run(...ids);
     db.prepare(`DELETE FROM visit_requests WHERE id IN (${idPh})`).run(...ids);
   });
   run();

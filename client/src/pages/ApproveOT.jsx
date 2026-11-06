@@ -1,5 +1,6 @@
 // client/src/pages/ApproveOT.jsx - หน้าอนุมัติคำขอ OT (Approver/Admin)
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import Layout from '../components/Layout';
 import PageHero from '../components/PageHero';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
@@ -46,17 +47,37 @@ export default function ApproveOT() {
   const [tab, setTab] = useState(() => { const s = new URLSearchParams(window.location.search).get('status'); return ['pending','approved','rejected','revision'].includes(s) ? s : 'pending'; });
   const [detail, setDetail] = useState(null);
 
+  const location = useLocation();
+  const firstNav = useRef(true);
   const load = async (status = tab) => {
-    const { requests } = await api.get(`/api/ot-requests?scope=pending&status=${status}`);
-    setRows(requests);
+    try {
+      const { requests } = await api.get(`/api/ot-requests?scope=pending&status=${status}`);
+      setRows(requests);
+    } catch (err) { toast(`โหลดรายการไม่สำเร็จ: ${err.message}`, 'error'); }
     refreshBadges(); // อัปเดตตัวเลขแจ้งเตือนข้างเมนู/กระดิ่งให้ตรงกับรายการล่าสุด
   };
   useEffect(() => { load(tab); }, [tab]);
 
   const openDetail = async (id) => {
-    const d = await api.get(`/api/ot-requests/${id}`);
-    setDetail(d);
+    try {
+      const d = await api.get(`/api/ot-requests/${id}`);
+      setDetail(d);
+    } catch (err) { toast(`เปิดคำขอไม่สำเร็จ: ${err.message}`, 'error'); }
   };
+
+  // ทุกครั้งที่ถูกนำทางเข้ามา (รวมกดแจ้งเตือนขณะเปิดหน้านี้อยู่): สลับแท็บตาม ?status= และเปิด OT ตาม ?id= (ลิงก์จากอีเมล/แจ้งเตือน)
+  useEffect(() => {
+    const p = new URLSearchParams(location.search);
+    const s = p.get('status');
+    if (['pending', 'approved', 'rejected', 'revision'].includes(s)) {
+      // แท็บเดิมอยู่แล้ว = state ไม่เปลี่ยน จึงต้องสั่งโหลดใหม่เอง (ไม่ทำตอนเปิดหน้าครั้งแรกเพราะโหลดไปแล้ว)
+      if (s === tab && !firstNav.current) load(s); else setTab(s);
+    }
+    firstNav.current = false;
+    const id = p.get('id');
+    if (id) openDetail(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
 
   // Admin: ให้ OT ที่ค้างอยู่ใช้รายชื่อผู้อนุมัติล่าสุดตาม Template (เฉพาะใบที่ยังไม่มีใครตัดสินใจ)
   const resync = async (id) => {

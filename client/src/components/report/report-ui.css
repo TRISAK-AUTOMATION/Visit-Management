@@ -76,7 +76,7 @@
 .rx-crumbs a{display:inline-flex;align-items:center;gap:5px;color:var(--blue-600);font-weight:600;text-decoration:none;}
 .rx-crumbs a:hover{text-decoration:underline;}
 .rx-crumbs span{color:var(--text-600);font-weight:600;}
-.rx-pagehead{display:flex;align-items:center;gap:16px;padding:18px 22px;flex-wrap:wrap;overflow:visible;z-index:40;}
+.rx-pagehead{display:flex;align-items:center;gap:16px;padding:18px 22px;flex-wrap:wrap;overflow:visible;z-index:30;} /* ต่ำกว่า .topbar (40) ไม่งั้นทับกล่องแจ้งเตือน แต่สูงกว่า .rx-panel-filters (20) ให้เมนู Export ลอยทับตัวกรอง */
 .rx-orbs{position:absolute;inset:0;overflow:hidden;border-radius:inherit;pointer-events:none;}
 .rx-pagehead::after{border-radius:18px;}
 .rx-pagehead.tone-orange{background:linear-gradient(120deg,#3b2205 0%,#b86a05 55%,#f5a524 100%);}

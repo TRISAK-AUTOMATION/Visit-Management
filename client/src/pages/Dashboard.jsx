@@ -23,7 +23,12 @@ export default function Dashboard() {
   const [tab, setTab] = useState('all'); // all | visit | leave | ot
   const [period, setPeriod] = useState('month'); // ช่วงเวลาของตัวเลขบนการ์ดรายงาน
 
-  useEffect(() => { api.get('/api/dashboard/stats').then(setData); }, []);
+  const [loadError, setLoadError] = useState('');
+  const loadStats = () => {
+    setLoadError('');
+    api.get('/api/dashboard/stats').then(setData).catch((err) => setLoadError(err.message || 'โหลดข้อมูลไม่สำเร็จ'));
+  };
+  useEffect(() => { loadStats(); }, []);
 
   const showVisit = canAccessVisit(me);
   const kinds = showVisit ? ['visit', 'leave', 'ot'] : ['leave', 'ot'];
@@ -100,7 +105,12 @@ export default function Dashboard() {
         </div>
       </section>
 
-      {!data ? (
+      {!data && loadError ? (
+        <div className="card" style={{ textAlign: 'center', padding: 24 }}>
+          <p style={{ margin: '0 0 12px' }}>โหลดข้อมูลภาพรวมไม่สำเร็จ: {loadError}</p>
+          <button type="button" className="btn btn-outline" onClick={loadStats}>ลองใหม่</button>
+        </div>
+      ) : !data ? (
         <div className="dx-skel-row"><span className="rx-skel" /><span className="rx-skel" /><span className="rx-skel" /><span className="rx-skel" /></div>
       ) : (
         <>

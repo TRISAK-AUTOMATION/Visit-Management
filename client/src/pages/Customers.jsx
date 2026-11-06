@@ -98,24 +98,31 @@ export default function Customers() {
   const [importFileName, setImportFileName] = useState('');
   const [importing, setImporting] = useState(false);
 
+  // เลขลำดับคำค้น: ผลของคำค้นเก่าที่ตอบกลับช้ากว่าจะถูกทิ้ง (พิมพ์เร็วๆ แล้วรายการไม่ค้างเป็นผลของคำก่อนหน้า)
+  const loadSeq = useRef(0);
   const load = async (query, comp) => {
+    const seq = ++loadSeq.current;
     const params = new URLSearchParams();
     params.set('include_archived', '1');
     if (query) params.set('q', query);
     if (comp === 'pending') params.set('pending', '1');
     else if (comp && comp !== 'all') params.set('company', comp);
     const { customers } = await api.get(`/api/customers?${params.toString()}`);
+    if (seq !== loadSeq.current) return;
     setCustomers(customers);
     if (isAdmin) {
       api.get('/api/customers?pending=1&include_archived=1').then(r => setPendingCount(r.customers.length)).catch(() => {});
     }
   };
 
-  useEffect(() => { load(q, companyFilter).catch(err => toast(err.message, 'error')); }, [companyFilter]);
+  // โหลดเมื่อเปลี่ยนคำค้น (หน่วง 250ms รอพิมพ์เสร็จ) หรือเปลี่ยนบริษัท (โหลดทันที) — effect เดียว กันโหลดซ้ำ 2 ครั้งตอนเปิดหน้า
+  const prevCompany = useRef(companyFilter);
   useEffect(() => {
-    const t = setTimeout(() => load(q, companyFilter).catch(err => toast(err.message, 'error')), 250);
+    const immediate = prevCompany.current !== companyFilter;
+    prevCompany.current = companyFilter;
+    const t = setTimeout(() => load(q, companyFilter).catch(err => toast(err.message, 'error')), immediate ? 0 : 250);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [q, companyFilter]);
 
   const openForm = (c) => {
     setEditing(c || null);

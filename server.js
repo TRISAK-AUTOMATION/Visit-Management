@@ -15,6 +15,8 @@ app.use(require('./utils/securityHeaders'));
 // รับ JSON ขนาดใหญ่ (ไฟล์แนบ/ลายเซ็น/โลโก้/รูปโปรไฟล์ เป็น base64) เฉพาะเส้นทางที่จำเป็น ที่เหลือจำกัด 1MB
 const bigJson = express.json({ limit: '8mb' });
 ['/api/visit-requests', '/api/leave-requests', '/api/pdf-settings', '/api/users', '/api/form-fields'].forEach((p) => app.use(p, bigJson));
+// นำเข้าลูกค้าจากไฟล์ Excel/CSV ส่งทั้งไฟล์เป็น JSON (ไฟล์ลูกค้าจริง ~1.7MB -> JSON ใหญ่กว่านั้น) — เฉพาะเส้นทางนี้ (Admin)
+app.use('/api/customers/import', express.json({ limit: '20mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true })); // สำหรับฟอร์มยืนยันอนุมัติ/ไม่อนุมัติที่ส่งมาจากลิงก์ในอีเมล
 // secret ของ session ควรตั้งใน .env (SESSION_SECRET=ข้อความสุ่มยาวๆ) ไม่ควรเขียนตายตัวในโค้ด

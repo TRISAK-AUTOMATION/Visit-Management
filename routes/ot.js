@@ -397,7 +397,7 @@ function decide(req, res, action, actionLabel) {
   if (!ot) return res.status(404).json({ error: 'ไม่พบคำขอ OT' });
   if (ot.status !== 'pending') return res.status(400).json({ error: 'คำขอนี้ถูกดำเนินการไปแล้ว' });
 
-  const { note } = req.body;
+  const note = typeof req.body.note === 'string' ? req.body.note.slice(0, 1000) : ''; // ค่าที่ไม่ใช่ข้อความ = ไม่มีหมายเหตุ (กัน SQLite bind error 500)
   const wfBefore = approvalEngine.getWorkflow('ot', ot.id);
   const stateName = wfBefore && wfBefore.states[wfBefore.currentStateIndex] ? wfBefore.states[wfBefore.currentStateIndex].name : '';
   let result;
@@ -476,7 +476,7 @@ function notifyOTDecision(otId, status, approverId, note) {
 router.get('/summary/me', requireAuth, (req, res) => {
   const rows = db.prepare(`
     SELECT strftime('%Y-%m', ot_date) AS ym, COUNT(*) AS cnt, SUM(hours) AS hours
-    FROM ot_requests WHERE requester_id = ? AND status = 'approved' AND strftime('%Y', ot_date) = strftime('%Y', 'now')
+    FROM ot_requests WHERE requester_id = ? AND status = 'approved' AND strftime('%Y', ot_date) = strftime('%Y', 'now', '+7 hours')
     GROUP BY ym ORDER BY ym DESC
   `).all(req.session.userId);
   const totalHours = rows.reduce((s, r) => s + (r.hours || 0), 0);

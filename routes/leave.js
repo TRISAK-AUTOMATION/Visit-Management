@@ -500,7 +500,7 @@ function decide(req, res, action, actionLabel) {
   if (!lr) return res.status(404).json({ error: 'ไม่พบคำขอลา' });
   if (lr.status !== 'pending') return res.status(400).json({ error: 'คำขอนี้ถูกดำเนินการไปแล้ว' });
 
-  const { note } = req.body;
+  const note = typeof req.body.note === 'string' ? req.body.note.slice(0, 1000) : ''; // ค่าที่ไม่ใช่ข้อความ = ไม่มีหมายเหตุ (กัน SQLite bind error 500)
   const wfBefore = approvalEngine.getWorkflow('leave', lr.id);
   const stateName = wfBefore && wfBefore.states[wfBefore.currentStateIndex] ? wfBefore.states[wfBefore.currentStateIndex].name : '';
   let result;
@@ -591,7 +591,7 @@ function buildLeaveSummary(userId) {
   const approvedThisYear = db.prepare(`
     SELECT leave_type, COUNT(*) AS cnt, SUM(duration_days) AS days, SUM(duration_hours) AS hours
     FROM leave_requests
-    WHERE requester_id = ? AND status = 'approved' AND strftime('%Y', date_from) = strftime('%Y', 'now')
+    WHERE requester_id = ? AND status = 'approved' AND strftime('%Y', date_from) = strftime('%Y', 'now', '+7 hours')
     GROUP BY leave_type
   `).all(userId);
   const byType = { 'ลากิจ': { cnt: 0, days: 0, hours: 0 }, 'ลาป่วย': { cnt: 0, days: 0, hours: 0 }, 'ลาพักร้อน': { cnt: 0, days: 0, hours: 0 } };

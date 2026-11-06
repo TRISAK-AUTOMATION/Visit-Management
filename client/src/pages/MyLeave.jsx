@@ -63,8 +63,10 @@ export default function MyLeave() {
   const [detail, setDetail] = useState(null);
 
   const load = async () => {
-    const { requests } = await api.get('/api/leave-requests?scope=mine');
-    setRows(requests);
+    try {
+      const { requests } = await api.get('/api/leave-requests?scope=mine');
+      setRows(requests);
+    } catch (err) { toast(`โหลดรายการไม่สำเร็จ: ${err.message}`, 'error'); }
     refreshMyVisit(); // อัปเดตตัวเลขแต่ละขั้นตอนที่เมนูซ้าย
   };
   useEffect(() => { load(); }, []);
@@ -72,8 +74,10 @@ export default function MyLeave() {
   const filtered = tab === 'all' ? rows : rows.filter(r => r.status === tab);
 
   const openDetail = async (id) => {
-    const d = await api.get(`/api/leave-requests/${id}`);
-    setDetail(d);
+    try {
+      const d = await api.get(`/api/leave-requests/${id}`);
+      setDetail(d);
+    } catch (err) { toast(`เปิดคำขอไม่สำเร็จ: ${err.message}`, 'error'); }
   };
 
   const submitDraft = async (id) => {

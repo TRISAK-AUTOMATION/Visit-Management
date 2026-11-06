@@ -69,8 +69,10 @@ export default function MyRequests() {
   const [completing, setCompleting] = useState(null); // { id, code, note } — กล่องแจ้ง Visit Completed
 
   const load = async () => {
-    const { requests } = await api.get('/api/visit-requests?scope=mine');
-    setAll(requests);
+    try {
+      const { requests } = await api.get('/api/visit-requests?scope=mine');
+      setAll(requests);
+    } catch (err) { toast(`โหลดรายการไม่สำเร็จ: ${err.message}`, 'error'); }
     if (refreshMyVisit) refreshMyVisit(); // อัปเดตตัวเลขที่เมนูซ้ายหลังยกเลิก/ส่งคำขอ
   };
 
@@ -113,10 +115,12 @@ export default function MyRequests() {
   };
 
   const viewRequest = async (id) => {
-    const data = await api.get(`/api/visit-requests/${id}`);
-    // ฉบับร่างยังไม่อยู่ในรายงาน -> ใช้ popup เดิม ; ใบที่ส่งแล้วใช้หน้าตาเดียวกับ Visit Report
-    if (data.request.status === 'draft') setModalData(data);
-    else setDetailId(id);
+    try {
+      const data = await api.get(`/api/visit-requests/${id}`);
+      // ฉบับร่างยังไม่อยู่ในรายงาน -> ใช้ popup เดิม ; ใบที่ส่งแล้วใช้หน้าตาเดียวกับ Visit Report
+      if (data.request.status === 'draft') setModalData(data);
+      else setDetailId(id);
+    } catch (err) { toast(`เปิดคำขอไม่สำเร็จ: ${err.message}`, 'error'); }
   };
 
   return (

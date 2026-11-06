@@ -759,7 +759,8 @@ function deleteVisitRequestCascade(id) {
   db.prepare('DELETE FROM approval_tokens WHERE visit_request_id = ?').run(id);
   db.prepare('DELETE FROM visit_custom_values WHERE visit_request_id = ?').run(id);
   db.prepare('DELETE FROM visit_customer_signatures WHERE visit_request_id = ?').run(id);
-  db.prepare('DELETE FROM notifications WHERE related_id = ?').run(id);
+  // แจ้งเตือนของ Visit ไม่มี prefix ส่วนของลา/OT ขึ้นต้น leave_/ot_ — ไม่ลบแจ้งเตือนของใบลา/OT ที่บังเอิญมี id เดียวกัน
+  db.prepare(`DELETE FROM notifications WHERE related_id = ? AND type NOT LIKE 'leave\\_%' ESCAPE '\\' AND type NOT LIKE 'ot\\_%' ESCAPE '\\'`).run(id);
   db.prepare(`DELETE FROM request_workflows WHERE module = 'visit' AND request_id = ?`).run(id); // ลบ workflow snapshot ด้วย (CASCADE ลบ states/approvers ตามไปเอง)
   db.prepare('DELETE FROM visit_requests WHERE id = ?').run(id);
 }
@@ -818,19 +819,19 @@ function requireApproverOrAdmin(req, res, next) {
 
 // ส่งกลับให้ผู้ขอแก้ไข (revision) แทนที่จะ reject จบเลย - ผู้ขอแก้ไขแล้ว resubmit (ผ่าน /:id/submit) วนกลับไปเริ่มที่ State แรกใหม่
 router.post('/:id/request-revision', requireAuth, requireApproverOrAdmin, (req, res) => {
-  const note = (req.body.note || '').trim();
+  const note = typeof req.body.note === 'string' ? req.body.note.trim().slice(0, 1000) : '';
   if (!note) return res.status(400).json({ error: 'กรุณาระบุเหตุผล/สิ่งที่ต้องแก้ไข' });
   decide(req, res, 'revision', 'ส่งกลับแก้ไข', note);
 });
 
 // APPROVE
 router.post('/:id/approve', requireAuth, requireApproverOrAdmin, (req, res) => {
-  decide(req, res, 'approve', 'อนุมัติ', req.body.note || '');
+  decide(req, res, 'approve', 'อนุมัติ', typeof req.body.note === 'string' ? req.body.note.slice(0, 1000) : '');
 });
 
 // REJECT
 router.post('/:id/reject', requireAuth, requireApproverOrAdmin, (req, res) => {
-  decide(req, res, 'reject', 'ไม่อนุมัติ', req.body.note || '');
+  decide(req, res, 'reject', 'ไม่อนุมัติ', typeof req.body.note === 'string' ? req.body.note.slice(0, 1000) : '');
 });
 
 function decide(req, res, action, actionLabel, note) {
