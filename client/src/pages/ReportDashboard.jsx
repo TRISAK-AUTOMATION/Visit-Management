@@ -9,6 +9,7 @@ import {
   ActivityOverview, SummaryCard, FilterFields, DEFAULT_FILTERS, loadFilters, saveFilters,
   filtersToQuery, periodLabel, visibleSections, fmtNum, TYPES
 } from '../components/ReportParts';
+import Loading from '../components/Loading';
 
 const SORTS = {
   full_name: (a, b) => a.full_name.localeCompare(b.full_name, 'th'),
@@ -91,7 +92,7 @@ export default function ReportDashboard() {
       </div>
 
       {error && <div className="card"><div className="card-body"><span style={{ color: 'var(--red-600)' }}>{error}</span></div></div>}
-      {!data && !error && <p className="muted">กำลังโหลดข้อมูล...</p>}
+      {!data && !error && <Loading />}
 
       {data && (
         <>

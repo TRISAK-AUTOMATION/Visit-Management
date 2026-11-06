@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
@@ -90,6 +91,7 @@ export default function MyOT() {
 
   return (
     <Layout title="OT ของฉัน (My Overtime)">
+      <PageHero icon="clock" tone="orange" title="OT ของฉัน" desc="ติดตามสถานะคำขอทำงานล่วงเวลาของคุณ" />
       <div className="flex between mb-16">
         <div className="tabs">
           {TABS.map(t => <div key={t.f} className={`tab ${tab === t.f ? 'active' : ''}`} onClick={() => setTab(t.f)}>{t.label}</div>)}

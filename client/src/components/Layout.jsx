@@ -167,6 +167,28 @@ export default function Layout({ title, children }) {
   // เปลี่ยนหน้า (เช่น สร้าง/ส่งคำขอเสร็จแล้วกลับมา) -> อัปเดตตัวเลขขั้นตอนของ Visit ที่เมนูซ้าย
   useEffect(() => { if (me && refreshMyVisit) refreshMyVisit(); /* eslint-disable-next-line */ }, [location.pathname, location.search, me && me.id]);
 
+  // มือถือ: ตารางแสดงเป็นการ์ด ต้องมี data-label ที่ทุกช่อง — เติมให้อัตโนมัติจากหัวตาราง (เฉพาะช่องที่ยังไม่มี) ไม่ต้องแก้ทีละหน้า
+  useEffect(() => {
+    const root = document.querySelector('.content');
+    if (!root) return undefined;
+    const fill = () => {
+      root.querySelectorAll('table').forEach(t => {
+        const ths = t.querySelectorAll('thead th');
+        if (!ths.length) return;
+        const heads = Array.from(ths, th => th.textContent.trim());
+        t.querySelectorAll('tbody tr').forEach(tr => {
+          if (tr.children.length !== heads.length) return; // แถวที่ใช้ colSpan (เช่น "ไม่มีข้อมูล") ข้าม
+          Array.from(tr.children).forEach((td, i) => { if (td.tagName === 'TD' && !td.hasAttribute('data-label')) td.setAttribute('data-label', /^(จัดการ|การจัดการ|actions?|action)$/i.test(heads[i]) ? '' : heads[i]); });
+        });
+      });
+    };
+    fill();
+    let timer;
+    const mo = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(fill, 60); });
+    mo.observe(root, { childList: true, subtree: true });
+    return () => { mo.disconnect(); clearTimeout(timer); };
+  }, [location.pathname, location.search]);
+
   if (!me) return null; // ProtectedRoute จัดการ redirect ให้แล้ว
 
   const closeSidebar = () => setSidebarOpen(false);
@@ -176,6 +198,20 @@ export default function Layout({ title, children }) {
     await logout();
     navigate('/login');
   };
+
+  const pageTitle = pc(`page.${location.pathname}`, title);
+  const isApprover = me.role === 'Approver' || me.role === 'Admin' || me.can_approve || me.can_approve_leave;
+  const pendingAll = (badgeCounts.pending || 0) + (badgeCounts.pendingOT || 0) + (badgeCounts.pendingLeave || 0);
+  const ic = (d) => <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">{d}</svg>;
+  const bottomItems = [
+    { to: '/dashboard', label: 'หน้าหลัก', match: ['/dashboard'], icon: ic(<><path d="M4 11 12 4l8 7" /><path d="M6 10v9.5h12V10" /></>) },
+    { to: canAccessVisit(me) ? '/my-requests' : '/my-leave', label: 'คำขอของฉัน', match: ['/my-requests', '/my-leave', '/my-ot', '/visit-request', '/leave-request', '/ot-request'], icon: ic(<><rect x="5" y="4" width="14" height="17" rx="2.5" /><path d="M9 4.5h6M9 10h6M9 14h6" /></>), badge: (badgeCounts.vRevision || 0) + (badgeCounts.lRevision || 0) + (badgeCounts.oRevision || 0) },
+    ...(isApprover ? [{ to: me.role === 'Employee' && !me.can_approve && me.can_approve_leave ? '/approve-leave' : '/approve-requests', label: 'อนุมัติ', match: ['/approve-requests', '/approve-leave', '/approve-ot'], icon: ic(<><circle cx="12" cy="12" r="8.5" /><path d="m8.5 12.3 2.4 2.4 4.6-5" /></>), badge: pendingAll }] : []),
+    me.can_evaluate
+      ? { to: '/my-team', label: 'ทีมของฉัน', match: ['/my-team', '/team'], icon: ic(<><circle cx="9" cy="8.5" r="3.2" /><path d="M3 19.5c0-3.2 2.7-5.3 6-5.3s6 2.1 6 5.3" /><path d="M16 5.5a3 3 0 0 1 0 6M18 14.6c1.7.7 3 2.2 3 4.9" /></>) }
+      : { to: '/calendar', label: 'ปฏิทิน', match: ['/calendar'], icon: ic(<><rect x="3.5" y="5" width="17" height="15" rx="2.5" /><path d="M3.5 10h17M8 3.5v3M16 3.5v3" /></>) },
+    { to: '/profile', label: 'โปรไฟล์', match: ['/profile'], icon: ic(<><circle cx="12" cy="8.5" r="3.6" /><path d="M4.5 20c0-3.6 3.4-6 7.5-6s7.5 2.4 7.5 6" /></>) }
+  ];
 
   return (
     <div className="app">
@@ -247,6 +283,7 @@ export default function Layout({ title, children }) {
             );
           })}
         </ul>
+        <button type="button" className="side-logout" onClick={handleLogout}>{'\u23FB'} ออกจากระบบ</button>
       </aside>
       <div className="main">
         <div className="topbar">
@@ -254,10 +291,17 @@ export default function Layout({ title, children }) {
             <button className="hamburger-btn" onClick={() => setSidebarOpen(o => !o)} title="เมนู">
               {'\u2630'}
             </button>
-            <h1>{pc(`page.${location.pathname}`, title)}</h1>
+            <Link to="/dashboard" className="topbar-brand" aria-label="หน้าหลัก">
+              <span className="brand-mark">T</span>
+              <span className="tb-text"><b>TRISAK</b><small>Visit Management System</small></span>
+            </Link>
+            <h1>{pageTitle}</h1>
           </div>
           <div className="topbar-right">
             <NotificationBell />
+            <Link to="/profile" className="topbar-avatar" aria-label="โปรไฟล์ของฉัน">
+              <img src={me.avatar_url || '/img/avatar1.png'} alt="" onError={(e) => { e.target.style.visibility = 'hidden'; }} />
+            </Link>
             <div className="topbar-user" style={{ cursor: 'pointer' }} onClick={() => navigate('/profile')}>
               <img src={me.avatar_url || '/img/avatar1.png'} onError={(e) => { e.target.style.display = 'none'; }} />
               <div>
@@ -265,11 +309,27 @@ export default function Layout({ title, children }) {
                 <span>{me.position || ROLE_TH[me.role]}</span>
               </div>
             </div>
-            <button className="btn btn-outline btn-sm" onClick={handleLogout}>ออกจากระบบ</button>
+            <button className="btn btn-outline btn-sm topbar-logout" onClick={handleLogout}>ออกจากระบบ</button>
           </div>
         </div>
-        <div className="content">{children}</div>
+        <div className="content">
+          <h2 className="m-pagetitle">{pageTitle}</h2>
+          {children}
+        </div>
       </div>
+
+      {/* แถบเมนูล่างสำหรับมือถือ (ซ่อนบนจอกว้าง) */}
+      <nav className="bottom-nav" aria-label="เมนูลัด">
+        {bottomItems.map(b => {
+          const on = b.match.some(m => location.pathname === m || location.pathname.startsWith(m + '/'));
+          return (
+            <Link key={b.to} to={b.to} className={on ? 'on' : ''} onClick={closeSidebar}>
+              <span className="bn-ico" aria-hidden="true">{b.icon}{b.badge > 0 && <i className="bn-badge">{b.badge > 99 ? '99+' : b.badge}</i>}</span>
+              <span className="bn-label">{b.label}</span>
+            </Link>
+          );
+        })}
+      </nav>
     </div>
   );
 }

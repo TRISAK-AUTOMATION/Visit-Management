@@ -8,7 +8,9 @@ const DATE_LABELS = new Set(['Visit Date', 'OT Date', 'Start Date', 'End Date'])
 const DT_LABELS = new Set(['Completed At', 'Approved At']);
 const TYPE_TITLE = { visit: 'Visit', ot: 'OT', leave: 'Leave' };
 
-export default function ReportDetailModal({ type, id, onClose }) {
+// mine = เจ้าของคำขอเปิดดูเอง (ซ่อนแถบ "โหมดดูอย่างเดียว") ; actions(data) = ปุ่มเพิ่มเติมที่หัว popup (เช่น แก้ไข / ลายเซ็นลูกค้า)
+// banner = แถบแจ้งเตือนใต้หัว popup ; footer = แถบปุ่มด้านล่าง (เช่น อนุมัติ/ไม่อนุมัติ) ; hideBanner = ซ่อนแถบ "โหมดดูอย่างเดียว"
+export default function ReportDetailModal({ type, id, onClose, mine = false, actions = null, zIndex, banner = null, footer = null, hideBanner = false }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
 
@@ -31,7 +33,7 @@ export default function ReportDetailModal({ type, id, onClose }) {
   const wide = (l) => ['Purpose', 'Work Detail', 'Reason', 'Notes', 'Approval Note', 'Completion Note', 'Accompanied By'].includes(l);
 
   return (
-    <div className="rx-modal-bg" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="rx-modal-bg" style={zIndex ? { zIndex } : undefined} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className={`rx-modal${data && data.visit ? ' rx-modal-visit' : ''}`} role="dialog" aria-modal="true" aria-label="รายละเอียดรายการ">
         <div className="rx-modal-head">
           <div>
@@ -39,10 +41,12 @@ export default function ReportDetailModal({ type, id, onClose }) {
             <h3>{data ? `#${data.code}` : 'กำลังโหลด...'}</h3>
           </div>
           {data && <span className={`rx-badge s-${data.status}`}>{data.status_label}</span>}
+          {data && actions && actions(data)}
           {data && data.visit && <a className="rx-pdfbtn" href={`/api/visit-requests/${id}/pdf`} target="_blank" rel="noreferrer">เปิด PDF</a>}
           <button type="button" className="rx-x" onClick={onClose} aria-label="ปิด"><RIcon name="x" size={20} /></button>
         </div>
-        {data && data.visit && <div className="vd-ro">🔒 โหมดดูอย่างเดียว — แก้ไขได้เฉพาะเจ้าของคำขอที่หน้า Visit ของตัวเอง</div>}
+        {data && data.visit && !mine && !hideBanner && <div className="vd-ro">🔒 โหมดดูอย่างเดียว — แก้ไขได้เฉพาะเจ้าของคำขอที่หน้า Visit ของตัวเอง</div>}
+        {data && banner}
         <div className={`rx-modal-body${data && data.visit ? ' vd-mode' : ''}`}>
           {error && <div className="rx-err">{error}</div>}
           {!data && !error && <div className="rx-skel-stack"><div className="rx-skel" /><div className="rx-skel" /><div className="rx-skel" style={{ width: '70%' }} /></div>}
@@ -69,6 +73,7 @@ export default function ReportDetailModal({ type, id, onClose }) {
             </>
           )}
         </div>
+        {data && footer}
       </div>
     </div>
   );

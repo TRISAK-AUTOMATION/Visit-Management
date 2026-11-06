@@ -224,6 +224,11 @@ export default function VisitRequest() {
   useEffect(() => {
     if (!editId) return;
     api.get(`/api/visit-requests/${editId}`).then(({ request, customFields }) => {
+      if (request.completed_at) {
+        toast('คำขอนี้ Visit Completed แล้ว ไม่สามารถแก้ไขข้อมูลได้อีก', 'error');
+        navigate('/my-requests');
+        return;
+      }
       if (!['draft', 'revision', 'approved'].includes(request.status)) {
         toast('ไม่สามารถแก้ไขคำขอนี้ได้แล้ว', 'error');
         navigate('/my-requests');
@@ -715,6 +720,14 @@ export default function VisitRequest() {
     }
     setSaving(true);
     try {
+      // เตือน (ไม่บล็อก) ถ้าเวลาทับกับ Visit/การลาอื่นของตัวเอง — ข้ามตอนแก้ข้อมูลหลังปฏิบัติงาน
+      if (!isPostVisitUpdate) {
+        try {
+          const q = new URLSearchParams({ date: form.visit_date, time_from: form.time_from || '', time_to: form.time_to || '', exclude_id: editingRequest ? editingRequest.id : '' });
+          const { conflicts } = await api.get(`/api/visit-requests/conflicts?${q.toString()}`);
+          if (conflicts && conflicts.length && !window.confirm(`วัน-เวลานี้ทับกับรายการอื่นของคุณ:\n${conflicts.map(c => '• ' + c.label).join('\n')}\n\nต้องการส่งคำขอต่อหรือไม่?`)) { setSaving(false); return; }
+        } catch (ce) { /* ตรวจไม่ได้ก็ไม่ขัดการส่ง */ }
+      }
       let customerId = form.customer_id;
       if (!customerId && form.customer_type === 'new') {
         const c = await registerNewCustomer();

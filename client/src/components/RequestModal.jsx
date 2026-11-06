@@ -6,7 +6,7 @@ import VisitExtraDetails, { hasVisitExtras } from './VisitExtraDetails';
 
 const WF_STATE_LABEL = { waiting: 'รอคิว', pending: 'กำลังพิจารณา', approved: 'ผ่านแล้ว', rejected: 'ไม่อนุมัติ', revision: 'ส่งกลับแก้ไข' };
 
-function WorkflowTimeline({ workflow }) {
+export function WorkflowTimeline({ workflow }) {
   if (!workflow) return null;
   return (
     <div style={{ marginTop: 4 }}>
@@ -37,7 +37,7 @@ function WorkflowTimeline({ workflow }) {
 
 // mode: 'mine' (แสดงประวัติ+ปุ่มพิมพ์) หรือ 'approve' (แสดงข้อมูลผู้ขอ+ปุ่มอนุมัติ/ไม่อนุมัติ/ส่งกลับแก้ไข)
 // หรือ 'calendar' (แสดงข้อมูลผู้ขอ+ผู้อนุมัติ แบบอ่านอย่างเดียว - ใช้จากหน้าปฏิทิน)
-export default function RequestModal({ request, history, customFields, workflow, mode, onClose, onDecide, onRequestRevision, canAct = true, canResync = false, onResync }) {
+export default function RequestModal({ request, history, customFields, workflow, customerSignature, mode, onClose, onDecide, onRequestRevision, canAct = true, canResync = false, onResync }) {
   const navigate = useNavigate();
   const canPrint = !['draft', 'revision'].includes(request.status);
 
@@ -102,6 +102,23 @@ export default function RequestModal({ request, history, customFields, workflow,
                 }
                 return <p key={f.field_key}><b>{f.label}:</b> {display}</p>;
               })}
+            </>
+          )}
+          {(customerSignature || request.status === 'approved') && (
+            <>
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '10px 0' }} />
+              <b>ลายเซ็นลูกค้า</b>
+              {customerSignature ? (
+                <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+                  <div style={{ border: '1px solid var(--border)', borderRadius: 10, background: '#fff', padding: 6 }}>
+                    <img src={customerSignature.data_url} alt="ลายเซ็นลูกค้า" style={{ display: 'block', maxWidth: 220, maxHeight: 100 }} />
+                  </div>
+                  <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+                    <div><b>{customerSignature.signer_name}</b>{customerSignature.signer_title ? ` · ${customerSignature.signer_title}` : ''}</div>
+                    <div className="muted">เซ็นเมื่อ {fmtDateTime(customerSignature.signed_at)}</div>
+                  </div>
+                </div>
+              ) : <p className="muted" style={{ margin: '6px 0 0' }}>ยังไม่มีลายเซ็นลูกค้า</p>}
             </>
           )}
           {request.approval_note && (

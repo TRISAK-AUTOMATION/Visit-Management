@@ -2,6 +2,7 @@
 // เพิ่ม/ลบ/แก้ไข/จัดลำดับ/เปิดปิด Field ได้จากหน้านี้โดยไม่ต้องแก้ Source Code
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import FormOptionsEditor from '../components/FormOptionsEditor';
@@ -258,10 +259,11 @@ export default function AdminFormBuilder() {
         <button type="button" className={`btn btn-sm ${tab === 'options' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab('options')}>ตัวเลือกในหัวข้อ 1–8</button>
       </div>
   );
-  if (tab === 'options') return <Layout title="Form Builder — สร้างคำขอ Visit">{tabBar}<FormOptionsEditor /></Layout>;
+  if (tab === 'options') return <Layout title="Form Builder — สร้างคำขอ Visit"><PageHero icon="grid" tone="blue" title="Form Builder" desc="เพิ่ม/ลบ/แก้ไข Field และตัวเลือกในฟอร์ม สร้างคำขอ Visit" />{tabBar}<FormOptionsEditor /></Layout>;
 
   return (
     <Layout title="Form Builder — สร้างคำขอ Visit">
+      <PageHero icon="grid" tone="blue" title="Form Builder" desc="เพิ่ม/ลบ/แก้ไข Field และตัวเลือกในฟอร์ม สร้างคำขอ Visit" />
       {tabBar}
       <div className="flex between mb-16">
         <div>

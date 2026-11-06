@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { api, initials, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+import Loading from './Loading';
 
 const CATS = [
   { key: 'attendance', label: 'การมาทำงาน', icon: '\uD83D\uDCC5', color: '#2f5bff' },
@@ -24,7 +25,8 @@ function Stars({ score }) {
   return <div className="kpi-stars">{'\u2605'.repeat(n)}{'\u2606'.repeat(5 - n)}</div>;
 }
 
-export default function KpiPanel({ userId, showHeader = false }) {
+// showLeave=false: ซ่อนสรุปวันลา (ใช้ใน popup ของหน้าโปรไฟล์ตัวเอง เพราะหน้าโปรไฟล์มีสรุปวันลาอยู่แล้ว)
+export default function KpiPanel({ userId, showHeader = false, showLeave = true }) {
   const toast = useToast();
   const [data, setData] = useState(null);
   const [leave, setLeave] = useState(null);
@@ -38,7 +40,7 @@ export default function KpiPanel({ userId, showHeader = false }) {
     try {
       const d = await api.get(`/api/kpi/${userId}`);
       setData(d);
-      api.get(`/api/leave-requests/summary/${userId}`).then(setLeave).catch(() => {});
+      if (showLeave) api.get(`/api/leave-requests/summary/${userId}`).then(setLeave).catch(() => {});
       api.get(`/api/kpi/${userId}/activity`).then(r => setActivity(r.activity)).catch(() => {});
     } catch (err) {
       setLoadError(err.message || 'ไม่สามารถโหลดข้อมูลได้');
@@ -51,7 +53,7 @@ export default function KpiPanel({ userId, showHeader = false }) {
   }, [userId]);
 
   if (loadError) return <div className="empty">{loadError}</div>;
-  if (!data) return <div className="muted" style={{ padding: 20 }}>กำลังโหลดข้อมูล...</div>;
+  if (!data) return <Loading />;
 
   const { kpi, checklist, auto_stats, can_edit, user } = data;
 
@@ -223,7 +225,7 @@ export default function KpiPanel({ userId, showHeader = false }) {
       </div>
 
       {/* สรุปวันลา */}
-      {leave && (
+      {showLeave && leave && (
         <div className="card mb-16">
           <div className="card-head"><h3>สรุปวันลา (ปีนี้)</h3></div>
           <div className="card-body">

@@ -2,6 +2,7 @@
 // ดีไซน์: ตารางรายเดือน + ค้นหา + ตัวกรอง (ทั้งหมด/Visit/การลา/OT) + ป๊อปอัปรายวัน 3 คอลัมน์ + การ์ดรายละเอียดแยกตามประเภท
 import React, { useEffect, useMemo, useState } from 'react';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { usePageContent } from '../lib/PageContentContext';
 import { api, fmtDate, statusLabel, todayLocal } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
@@ -98,6 +99,7 @@ export default function CalendarPage() {
 
   return (
     <Layout title={pc('calendar.title', 'ปฏิทิน')}>
+      <PageHero icon="calendar" tone="blue" title="ปฏิทิน" desc="ภาพรวมกำหนดการ Visit การลา และ OT ในแต่ละวัน" />
       <div className="card cx-card">
         <div className="cx-toolbar">
           <div className="cx-nav">

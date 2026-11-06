@@ -605,6 +605,17 @@ db.exec(`CREATE TABLE IF NOT EXISTS user_signatures (
   updated_at TEXT DEFAULT (datetime('now'))
 )`);
 
+// ลายเซ็นลูกค้าที่เซ็นบนหน้าจอเครื่องพนักงานตอนเข้า Visit (1 ใบ Visit : 1 ลายเซ็น, เซ็นใหม่ = ทับของเดิม)
+// ไม่ผูก FOREIGN KEY เพื่อไม่ให้ขวางการลบคำขอ (deleteVisitRequestCascade ลบแถวนี้เองอยู่แล้ว)
+db.exec(`CREATE TABLE IF NOT EXISTS visit_customer_signatures (
+  visit_request_id INTEGER PRIMARY KEY,
+  data_url         TEXT NOT NULL,
+  signer_name      TEXT NOT NULL,
+  signer_title     TEXT NOT NULL DEFAULT '',
+  signed_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  recorded_by      INTEGER
+)`);
+
 // users.start_date = วันเริ่มทำงาน (YYYY-MM-DD) ; leave_balances.auto_entitlement = 1 -> ระบบคำนวณ *_total จากอายุงานตามกติกาด้านล่าง
 // leave_entitlement_rules: "ครบ min_months เดือน ได้ days วัน" ต่อประเภทลา — ใช้กติกาที่ min_months สูงสุดที่อายุงานถึง
 {

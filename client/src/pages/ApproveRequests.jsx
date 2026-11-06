@@ -3,7 +3,8 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { usePageContent } from '../lib/PageContentContext';
-import RequestModal from '../components/RequestModal';
+import ReportDetailModal from '../components/report/ReportDetailModal';
+import '../components/report/report-ui.css';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
@@ -84,11 +85,12 @@ export default function ApproveRequests() {
         <div className="card-body" style={{ padding: 0 }}>
           <table>
             <thead>
-              <tr><th>วันที่</th><th>ผู้ขอ</th><th>ลูกค้า / บริษัท</th><th>เวลา</th><th>วัตถุประสงค์</th><th>จัดการ</th></tr>
+              <tr><th>เลขที่เอกสาร</th><th>วันที่</th><th>ผู้ขอ</th><th>ลูกค้า / บริษัท</th><th>เวลา</th><th>วัตถุประสงค์</th><th>จัดการ</th></tr>
             </thead>
             <tbody>
               {rows.length ? rows.map(v => (
                 <tr key={v.id} style={v.is_update ? { background: '#fff8ea', boxShadow: 'inset 4px 0 0 #f5a524' } : undefined}>
+                  <td className="nowrap"><b>{v.code}</b></td>
                   <td>
                     {v.status === 'pending' && (v.is_update
                       ? <span className="req-tag upd">Updated</span>
@@ -124,26 +126,58 @@ export default function ApproveRequests() {
                     )}
                   </td>
                 </tr>
-              )) : <tr><td colSpan={6} className="empty">ไม่มีรายการในหมวดนี้</td></tr>}
+              )) : <tr><td colSpan={7} className="empty">ไม่มีรายการในหมวดนี้</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
-      {modalData && (
-        <RequestModal
-          request={modalData.request}
-          history={modalData.history}
-          customFields={modalData.customFields}
-          workflow={modalData.workflow}
-          mode="approve"
-          onClose={() => setModalData(null)}
-          onDecide={decide}
-          onRequestRevision={requestRevision}
-          canAct={!!modalData.can_act}
-          canResync={!!modalData.can_resync}
-          onResync={resync}
-        />
-      )}
+      {modalData && (() => {
+        const request = modalData.request;
+        const closeModal = () => setModalData(null);
+        // คำขอที่ถูกแก้ไขหลังอนุมัติแล้วส่งกลับมาให้อนุมัติอีกครั้ง: โชว์สิ่งที่เปลี่ยน
+        let editedNotice = null;
+        if (request.status === 'pending') {
+          const list = modalData.history || [];
+          const idx = list.reduce((m, h, i) => (h.action && h.action.startsWith('แก้ไขหลังอนุมัติ') ? i : m), -1);
+          const reopenedAfter = idx >= 0 && list.slice(idx + 1).some(x => x.action && (x.action.startsWith('ส่งคำขอ') || x.action.startsWith('แก้ไขหลังอนุมัติ')));
+          if (idx >= 0 && !reopenedAfter) {
+            const h = list[idx];
+            editedNotice = (
+              <div style={{ margin: '0', padding: '10px 20px', background: '#eef3ff', borderBottom: '1px solid #c9d6ff', fontSize: 13 }}>
+                <b>คำขอนี้ถูกแก้ไขหลังอนุมัติ — กรุณาตรวจสอบและอนุมัติอีกครั้ง</b>
+                <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>แก้ไขโดย {h.actor_name || 'ผู้ขอ'} · {fmtDateTime(h.created_at)}</div>
+                <div style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}>{h.note || '-'}</div>
+              </div>
+            );
+          }
+        }
+        const notInChain = request.status === 'pending' && !modalData.can_act;
+        const banner = (editedNotice || notInChain) ? (
+          <>
+            {editedNotice}
+            {notInChain && (
+              <div style={{ padding: '10px 20px', background: '#fff7e6', borderBottom: '1px solid #f5d9a0', fontSize: 13, color: '#8a5a00' }}>
+                คุณไม่ได้อยู่ในลำดับผู้อนุมัติของคำขอนี้ในขั้นตอนปัจจุบัน จึงอนุมัติไม่ได้ (ดูรายละเอียดได้อย่างเดียว)
+                {modalData.can_resync && (
+                  <div style={{ marginTop: 6 }}>
+                    <button type="button" className="btn btn-outline btn-sm" onClick={() => { resync(request.id); closeModal(); }}>รีเซ็ตสายอนุมัติตามรายชื่อล่าสุด</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        ) : null;
+        const footer = (request.status === 'pending' && modalData.can_act) ? (
+          <div className="form-actions" style={{ justifyContent: 'flex-start', margin: 0, padding: '12px 20px', borderTop: '1px solid #e2e7f3', background: '#fff' }}>
+            <button type="button" className="btn btn-success" onClick={() => { decide(request.id, 'approve'); closeModal(); }}>อนุมัติ</button>
+            <button type="button" className="btn btn-danger" onClick={() => { decide(request.id, 'reject'); closeModal(); }}>ไม่อนุมัติ</button>
+            <button type="button" className="btn btn-outline" onClick={() => { requestRevision(request.id); closeModal(); }}>ส่งกลับแก้ไข</button>
+          </div>
+        ) : null;
+        return (
+          <ReportDetailModal key={request.id} type="visit" id={request.id} hideBanner onClose={closeModal} banner={banner} footer={footer} />
+        );
+      })()}
     </Layout>
   );
 }

@@ -15,6 +15,18 @@ const INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_template_state_approvers_user ON template_state_approvers(user_id)'
 ];
 
+// ตารางที่เพิ่มภายหลัง (ปลอดภัยรันซ้ำได้)
+function ensureTables(db) {
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS holidays (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      holiday_date TEXT UNIQUE NOT NULL,   -- YYYY-MM-DD
+      name         TEXT NOT NULL,
+      created_at   TEXT DEFAULT (datetime('now'))
+    )`);
+  } catch (err) { console.warn('[db] สร้างตาราง holidays ไม่สำเร็จ:', err.message); }
+}
+
 function ensureIndexes(db) {
   for (const sql of INDEXES) {
     try { db.exec(sql); }
@@ -37,4 +49,4 @@ function ensureColumns(db) {
   }
 }
 
-module.exports = { ensureIndexes, ensureColumns, INDEXES };
+module.exports = { ensureIndexes, ensureColumns, ensureTables, INDEXES };

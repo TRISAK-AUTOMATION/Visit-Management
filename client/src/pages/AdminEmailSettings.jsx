@@ -5,6 +5,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
@@ -44,9 +45,8 @@ export default function AdminEmailSettings() {
 
   return (
     <Layout title="ตั้งค่าอีเมล">
-      <p className="muted" style={{ marginBottom: 16 }}>
-        กำหนดว่าอีเมลแจ้งเตือนผู้อนุมัติ (ตอนมีคำขอออกนอกสถานที่ใหม่รออนุมัติ) จะแสดงข้อมูลอะไรบ้าง
-      </p>
+      <PageHero icon="mail" tone="blue" title="ตั้งค่าอีเมล"
+        desc="กำหนดว่าอีเมลแจ้งเตือนผู้อนุมัติ (ตอนมีคำขอออกนอกสถานที่ใหม่รออนุมัติ) จะแสดงข้อมูลอะไรบ้าง" />
 
       <div className="card" style={{ marginBottom: 20 }}>
         <div className="card-body">

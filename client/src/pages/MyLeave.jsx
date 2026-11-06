@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
@@ -104,6 +105,7 @@ export default function MyLeave() {
 
   return (
     <Layout title="การลาของฉัน (My Leave)">
+      <PageHero icon="umbrella" tone="green" title="การลาของฉัน" desc="ติดตามสถานะคำขอลาและสิทธิ์วันลาคงเหลือ" />
       <div className="flex between mb-16">
         <div className="tabs">
           {TABS.map(t => <div key={t.f} className={`tab ${tab === t.f ? 'active' : ''}`} onClick={() => setTab(t.f)}>{t.label}</div>)}

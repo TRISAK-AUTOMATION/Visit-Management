@@ -2,6 +2,7 @@
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
+import Loading from './Loading';
 
 // roles: array ของ role ที่อนุญาต ถ้าไม่ระบุ = ทุก role ที่ login แล้วเข้าได้
 // check: ฟังก์ชันตรวจสิทธิ์แบบกำหนดเอง รับ me แล้วคืน true/false (ใช้กรณีเงื่อนไขซับซ้อนกว่าแค่ role เช่น ต้องดูแผนกด้วย)
@@ -10,7 +11,7 @@ export default function ProtectedRoute({ children, roles, check, message }) {
   const location = useLocation();
 
   if (me === undefined) {
-    return <div className="muted" style={{ padding: 40 }}>กำลังโหลด...</div>;
+    return <Loading full />;
   }
   if (me === null) {
     return <Navigate to="/login" replace state={{ from: location }} />;

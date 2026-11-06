@@ -14,7 +14,7 @@ function targetOf(n) {
   const kind = t.replace(/^(leave_|ot_)/, '');
   const approve = { visit: '/approve-requests', leave: '/approve-leave', ot: '/approve-ot' }[mod];
   const mine = { visit: '/my-requests', leave: '/my-leave', ot: '/my-ot' }[mod];
-  if (kind === 'new_request') return `${approve}?status=pending`;
+  if (kind === 'new_request' || kind === 'reminder') return `${approve}?status=pending`;
   if (['approved', 'rejected', 'revision'].includes(kind)) return `${mine}?status=${kind}`;
   return '/notifications';
 }

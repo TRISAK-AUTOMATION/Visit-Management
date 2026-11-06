@@ -4,3 +4,4 @@ db/trisak.db
 db/trisak.db-shm
 db/trisak.db-wal
 .env
+db/backups/

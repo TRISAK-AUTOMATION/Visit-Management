@@ -1,6 +1,7 @@
 // client/src/pages/AdminPdfSettings.jsx - Admin: ออกแบบหน้าตาเอกสาร PDF (สี/โลโก้/หัวเอกสาร/ลำดับหมวด)
 import React, { useEffect, useRef, useState } from 'react';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
@@ -80,9 +81,8 @@ export default function AdminPdfSettings() {
 
   return (
     <Layout title="ออกแบบ PDF">
-      <p className="muted" style={{ marginBottom: 12 }}>
-        ระบบมีเอกสาร PDF 4 แบบ แยกตั้งค่าได้ทีละแบบ ส่วนโลโก้/สี/ชื่อองค์กรเป็นค่ากลางที่ใช้ร่วมกัน (ดูว่าเอกสารไหนใช้อะไรในแต่ละแท็บ)
-      </p>
+      <PageHero icon="palette" tone="purple" title="ออกแบบ PDF"
+        desc="ระบบมีเอกสาร PDF 4 แบบ แยกตั้งค่าได้ทีละแบบ ส่วนโลโก้/สี/ชื่อองค์กรเป็นค่ากลางที่ใช้ร่วมกัน (ดูว่าเอกสารไหนใช้อะไรในแต่ละแท็บ)" />
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
         <button type="button" className={`btn btn-sm ${tab === 'global' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setTab('global')}>ค่ากลาง (โลโก้/สี)</button>
         {DOC_TABS.map(t => (

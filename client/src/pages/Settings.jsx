@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import Layout, { ADMIN_TOOLS } from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { useAuth } from '../lib/AuthContext';
 import { canAccessVisit } from '../lib/api';
 import { getPinnedAdminTools, togglePinnedAdminTool, MAX_PINNED } from '../lib/pinnedTools';
@@ -32,6 +33,7 @@ export default function Settings() {
 
   return (
     <Layout title="ตั้งค่า">
+      <PageHero icon="settings" tone="blue" title="ตั้งค่า" desc="เครื่องมือและการตั้งค่าของระบบทั้งหมดอยู่ที่นี่" />
       {(
         <div className="grid-3">
           {COMMON_CARDS.filter(c => !c.adminOnly || me.role === 'Admin').map(c => (

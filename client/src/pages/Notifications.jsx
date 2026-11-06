@@ -1,6 +1,7 @@
 // client/src/pages/Notifications.jsx - เทียบเท่า public/notifications.html
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { usePageContent } from '../lib/PageContentContext';
 import { api, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
@@ -56,6 +57,7 @@ export default function Notifications() {
 
   return (
     <Layout title={pc('notifications.title', 'Notifications')}>
+      <PageHero icon="bell" tone="orange" title="การแจ้งเตือน" desc="ติดตามคำขอและความเคลื่อนไหวที่เกี่ยวข้องกับคุณ" />
       <div className="flex between mb-16">
         <div className="tabs">
           <div className="tab active">ทั้งหมด</div>

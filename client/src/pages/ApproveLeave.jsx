@@ -1,6 +1,7 @@
 // client/src/pages/ApproveLeave.jsx - หน้าอนุมัติคำขอลา (Approver/Admin)
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
@@ -101,16 +102,18 @@ export default function ApproveLeave() {
 
   return (
     <Layout title="อนุมัติการลา (Approve Leave)">
+      <PageHero icon="check" tone="green" title="อนุมัติการลา" desc="ตรวจสอบและอนุมัติคำขอลาที่รอคุณพิจารณา" />
       <div className="tabs">
         {TABS.map(t => <div key={t.f} className={`tab ${tab === t.f ? 'active' : ''}`} onClick={() => setTab(t.f)}>{t.label}</div>)}
       </div>
       <div className="card">
         <div className="card-body" style={{ padding: 0 }}>
           <table>
-            <thead><tr><th>วันที่ยื่น</th><th>ผู้ขอ</th><th>ประเภท</th><th>วันที่ลา</th><th>จำนวน</th><th>จัดการ</th></tr></thead>
+            <thead><tr><th>เลขที่เอกสาร</th><th>วันที่ยื่น</th><th>ผู้ขอ</th><th>ประเภท</th><th>วันที่ลา</th><th>จำนวน</th><th>จัดการ</th></tr></thead>
             <tbody>
               {rows.length ? rows.map(r => (
                 <tr key={r.id} style={r.status === 'pending' && r.is_update ? { background: '#fff8ea', boxShadow: 'inset 4px 0 0 #f5a524' } : undefined}>
+                  <td className="nowrap"><b>{r.code}</b></td>
                   <td>
                     {r.status === 'pending' && (r.is_update
                       ? <span className="req-tag upd">Updated</span>
@@ -141,7 +144,7 @@ export default function ApproveLeave() {
                     )}
                   </td>
                 </tr>
-              )) : <tr><td colSpan={6} className="empty">ไม่มีรายการในหมวดนี้</td></tr>}
+              )) : <tr><td colSpan={7} className="empty">ไม่มีรายการในหมวดนี้</td></tr>}
             </tbody>
           </table>
         </div>

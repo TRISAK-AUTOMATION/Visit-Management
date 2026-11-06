@@ -1,6 +1,7 @@
 // client/src/pages/AdminBrands.jsx - Brand Master: จัดการรายการยี่ห้อที่ใช้ในฟอร์ม Visit (Current Products / Brands)
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
@@ -44,6 +45,7 @@ export default function AdminBrands() {
 
   return (
     <Layout title="Brand Master">
+      <PageHero icon="tag" tone="orange" title="Brand Master" desc="จัดการรายการยี่ห้อที่ให้เลือกในฟอร์ม Visit" />
       <div className="card" style={{ maxWidth: 720 }}>
         <div className="card-head">
           <h3>Brand Master <span className="muted" style={{ fontWeight: 400, fontSize: 12.5 }}>· ยี่ห้อที่ให้เลือกในหัวข้อ Current Products / Brands</span></h3>

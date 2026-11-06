@@ -1,6 +1,7 @@
 // client/src/pages/AdminPageContent.jsx - Admin CMS: แก้ชื่อหน้า / เมนู / หัวข้อและหัวข้อย่อยของฟอร์ม Visit (ไม่ต้องแก้ Source Code)
 import React, { useEffect, useMemo, useState } from 'react';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { usePageContent } from '../lib/PageContentContext';
@@ -46,10 +47,8 @@ export default function AdminPageContent() {
   let lastGroup = null;
   return (
     <Layout title="จัดการหน้า/หัวข้อของระบบ">
-      <p className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
-        แก้ชื่อหน้า ชื่อเมนู และหัวข้อ/หัวข้อย่อยของฟอร์ม Visit ได้จากตรงนี้ มีผลทันทีที่บันทึก — กด "คืนค่าเดิม" เพื่อกลับเป็นชื่อมาตรฐาน
-        (ส่วน "ตัวเลือก" ในแต่ละหัวข้อ เช่น Objective / Problem / Action แก้ได้ที่ Form Builder)
-      </p>
+      <PageHero icon="file" tone="slate" title="จัดการหน้า/หัวข้อ"
+        desc='แก้ชื่อหน้า ชื่อเมนู และหัวข้อของฟอร์ม Visit ได้จากตรงนี้ มีผลทันทีที่บันทึก — กด "คืนค่าเดิม" เพื่อกลับเป็นชื่อมาตรฐาน (ส่วน "ตัวเลือก" ในแต่ละหัวข้อแก้ได้ที่ Form Builder)' />
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
         {TABS.map(t => <button key={t.id} type="button" className={`btn btn-sm ${tab === t.id ? 'btn-primary' : 'btn-outline'}`} onClick={() => { setTab(t.id); setEditingKey(null); }}>{t.label}</button>)}
         <input type="search" placeholder="ค้นหา..." value={q} onChange={(e) => setQ(e.target.value)} style={{ marginLeft: 'auto', padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 9, minWidth: 200 }} />

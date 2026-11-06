@@ -15,6 +15,7 @@ import SignatureCard from '../components/profile/SignatureCard';
 import Modal from '../components/profile/Modal';
 import KpiPanel from '../components/KpiPanel';
 import '../components/profile/profile.css';
+import Loading from '../components/Loading';
 
 export default function Profile() {
   const { me, setMe } = useAuth();
@@ -36,7 +37,7 @@ export default function Profile() {
       <div className="pd">
         <ProfileHeader user={user} kpi={data ? data.kpi : null} onOpenKpi={() => setModal('kpi')} onEdit={() => setModal('edit')} onPassword={() => setModal('password')} />
         {error && <div className="pd-card pd-error" role="alert">{error} <button type="button" className="btn btn-ghost btn-sm" onClick={load}>ลองใหม่</button></div>}
-        {!data && !error && <div className="pd-card pd-empty" aria-busy="true">กำลังโหลดข้อมูล…</div>}
+        {!data && !error && <div className="pd-card pd-empty"><Loading /></div>}
         {data && (
           <>
             <UsageSummary counts={data.counts} canVisit={canVisit} />
@@ -55,7 +56,7 @@ export default function Profile() {
         )}
       </div>
       {modal === 'edit' && <EditProfileModal me={me} setMe={setMe} onClose={() => setModal(null)} onSaved={load} />}
-      {modal === 'kpi' && <Modal title="รายละเอียด KPI" onClose={() => setModal(null)} width={900} labelId="pd-kpi-title"><KpiPanel userId={me.id} showHeader={false} /></Modal>}
+      {modal === 'kpi' && <Modal title="รายละเอียด KPI" onClose={() => setModal(null)} width={900} labelId="pd-kpi-title"><KpiPanel userId={me.id} showHeader={false} showLeave={false} /></Modal>}
       {modal === 'password' && <PasswordModal onClose={() => setModal(null)} />}
     </Layout>
   );

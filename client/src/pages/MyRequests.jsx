@@ -4,6 +4,9 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { usePageContent } from '../lib/PageContentContext';
 import RequestModal from '../components/RequestModal';
+import CustomerSignModal from '../components/CustomerSignModal';
+import ReportDetailModal from '../components/report/ReportDetailModal';
+import '../components/report/report-ui.css';
 import { api, fmtDate, statusLabel } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
@@ -60,6 +63,9 @@ export default function MyRequests() {
     setSearchParams(next);
   };
   const [modalData, setModalData] = useState(null); // { request, history }
+  const [detailId, setDetailId] = useState(null); // เปิดรายละเอียดแบบเดียวกับ Visit Report (ไม่ใช่ฉบับร่าง)
+  const [detailKey, setDetailKey] = useState(0); // เปลี่ยนค่า = โหลดรายละเอียดใหม่ (หลังเซ็น/ลบลายเซ็น)
+  const [signing, setSigning] = useState(null); // คำขอที่กำลังให้ลูกค้าเซ็น
   const [completing, setCompleting] = useState(null); // { id, code, note } — กล่องแจ้ง Visit Completed
 
   const load = async () => {
@@ -106,18 +112,11 @@ export default function MyRequests() {
     } catch (err) { toast(err.message, 'error'); }
   };
 
-  const reopenRequest = async (id) => {
-    if (!confirm('ย้อนกลับเป็น "Approve@Visiting" (ยังไม่เสร็จสิ้น) หรือไม่?')) return;
-    try {
-      await api.post(`/api/visit-requests/${id}/reopen`);
-      toast('ย้อนกลับเป็น Approve@Visiting', 'success');
-      load();
-    } catch (err) { toast(err.message, 'error'); }
-  };
-
   const viewRequest = async (id) => {
     const data = await api.get(`/api/visit-requests/${id}`);
-    setModalData(data);
+    // ฉบับร่างยังไม่อยู่ในรายงาน -> ใช้ popup เดิม ; ใบที่ส่งแล้วใช้หน้าตาเดียวกับ Visit Report
+    if (data.request.status === 'draft') setModalData(data);
+    else setDetailId(id);
   };
 
   return (
@@ -134,11 +133,12 @@ export default function MyRequests() {
         <div className="card-body" style={{ padding: 0 }}>
           <table>
             <thead>
-              <tr><th>วันที่</th><th>ลูกค้า / บริษัท</th><th>เวลา</th><th>วัตถุประสงค์</th><th>สถานะ</th><th>จัดการ</th></tr>
+              <tr><th>เลขที่เอกสาร</th><th>วันที่</th><th>ลูกค้า / บริษัท</th><th>เวลา</th><th>วัตถุประสงค์</th><th>สถานะ</th><th>จัดการ</th></tr>
             </thead>
             <tbody>
               {rows.length ? rows.map(v => (
                 <tr key={v.id}>
+                  <td className="nowrap"><b>{v.code}</b></td>
                   <td>{fmtDate(v.visit_date)}</td>
                   <td>{v.customer_name || '-'}</td>
                   <td>{v.time_from} - {v.time_to}</td>
@@ -160,18 +160,18 @@ export default function MyRequests() {
                     {v.status !== 'draft' && v.status !== 'revision' && (
                       <a className="btn btn-outline btn-sm" href={`/api/visit-requests/${v.id}/pdf`} target="_blank" rel="noreferrer" title="พิมพ์ PDF">&#128196;</a>
                     )}{' '}
-                    {v.status === 'approved' && (
+                    {v.status === 'approved' && !v.completed_at && (
                       <button className="btn btn-outline btn-sm" onClick={() => navigate(`/visit-request?id=${v.id}`)}>
                         อัปเดตข้อมูลหลังปฏิบัติงาน
                       </button>
+                    )}{' '}
+                    {v.status === 'approved' && (
+                      <button className="btn btn-outline btn-sm" onClick={() => setSigning(v)}>✍ ลายเซ็นลูกค้า</button>
                     )}{' '}
                     {v.status === 'approved' && !v.completed_at && (
                       <button className="btn btn-success btn-sm" onClick={() => setCompleting({ id: v.id, code: v.code, note: '' })}>
                         ✓ แจ้ง Visit Completed
                       </button>
-                    )}{' '}
-                    {v.status === 'approved' && v.completed_at && (
-                      <button className="btn btn-outline btn-sm" onClick={() => reopenRequest(v.id)}>↩ ย้อนกลับ</button>
                     )}{' '}
                     {['pending', 'draft', 'revision'].includes(v.status) && (
                       <button className="btn btn-danger btn-sm" onClick={() => cancelRequest(v.id, v.status === 'draft')}>
@@ -180,11 +180,35 @@ export default function MyRequests() {
                     )}
                   </td>
                 </tr>
-              )) : <tr><td colSpan={6} className="empty">ไม่มีคำขอในหมวดนี้</td></tr>}
+              )) : <tr><td colSpan={7} className="empty">ไม่มีคำขอในหมวดนี้</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
+      {detailId && (
+        <ReportDetailModal
+          key={detailKey}
+          type="visit"
+          id={detailId}
+          mine
+          onClose={() => setDetailId(null)}
+          actions={(d) => (
+            <>
+              {d.status === 'revision' && (
+                <button type="button" className="rx-pdfbtn" onClick={() => navigate(`/visit-request?id=${d.id}`)}>&#9998; แก้ไขคำขอ</button>
+              )}
+              {(d.status === 'approved' || d.status === 'completed') && (
+                <button type="button" className="rx-pdfbtn" onClick={() => setSigning({ id: d.id, code: d.code, customer_name: d.visit.info.customer_name, visit_date: d.visit.info.visit_date, completed_at: d.status === 'completed' ? 'x' : null })}>
+                  &#9997; ลายเซ็นลูกค้า{d.customer_signature ? ' ✓' : ''}
+                </button>
+              )}
+              {d.status === 'approved' && (
+                <button type="button" className="rx-pdfbtn" onClick={() => navigate(`/visit-request?id=${d.id}`)}>&#9998; อัปเดตข้อมูลหลังปฏิบัติงาน</button>
+              )}
+            </>
+          )}
+        />
+      )}
       {modalData && (
         <RequestModal
           request={modalData.request}
@@ -195,6 +219,7 @@ export default function MyRequests() {
           onClose={() => setModalData(null)}
         />
       )}
+      {signing && <CustomerSignModal request={signing} onClose={() => setSigning(null)} onChanged={() => setDetailKey(k => k + 1)} />}
     {completing && (
         <div className="modal-bg" onClick={(e) => { if (e.target === e.currentTarget) setCompleting(null); }}>
           <div className="modal">
@@ -203,7 +228,8 @@ export default function MyRequests() {
               <button className="modal-close" onClick={() => setCompleting(null)}>&times;</button>
             </div>
             <div className="modal-body">
-              <p className="muted" style={{ marginTop: 0 }}>ไปพบลูกค้าเรียบร้อยแล้ว? คำขอนี้จะย้ายไปขั้น "Visit Completed" (ย้อนกลับได้ภายหลัง)</p>
+              <p className="muted" style={{ marginTop: 0 }}>ไปพบลูกค้าเรียบร้อยแล้ว? คำขอนี้จะย้ายไปขั้น "Visit Completed"</p>
+              <p style={{ background: '#fff7e6', color: '#8a5a00', border: '1px solid #f5d9a0', borderRadius: 9, padding: '8px 12px', fontSize: 13 }}>⚠ เมื่อยืนยันแล้ว <b>จะย้อนกลับหรือแก้ไขข้อมูลไม่ได้อีก</b> รวมถึงลายเซ็นลูกค้า กรุณาตรวจสอบข้อมูลและให้ลูกค้าเซ็นให้เรียบร้อยก่อน</p>
               <label className="muted" style={{ fontSize: 12 }}>สรุปผลการเข้าพบ (ไม่บังคับ)</label>
               <textarea style={{ width: '100%', minHeight: 90, marginTop: 4 }} maxLength={1000} value={completing.note}
                 onChange={(e) => setCompleting(c => ({ ...c, note: e.target.value }))} placeholder="เช่น ลูกค้าสนใจสินค้า ขอใบเสนอราคา..." />

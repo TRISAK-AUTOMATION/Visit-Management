@@ -4,6 +4,7 @@ const db = require('../db/database');
 const { requireAuth, requireRole } = require('./middleware');
 const { logAction } = require('../utils/systemLog');
 const { runRetentionCleanup, DATA_TYPES, LABELS } = require('../utils/retention');
+const testData = require('../utils/testDataCleanup');
 
 const router = express.Router();
 const UNITS = ['day', 'month', 'year'];
@@ -11,6 +12,32 @@ const UNITS = ['day', 'month', 'year'];
 router.get('/', requireAuth, requireRole('Admin'), (req, res) => {
   const rows = db.prepare('SELECT * FROM retention_settings').all();
   res.json({ settings: rows.map(r => ({ ...r, label: LABELS[r.data_type] || r.data_type })) });
+});
+
+
+// ===== ล้างข้อมูลทดสอบ (ใบลา / OT) =====
+const guardEnabled = (req, res, next) => testData.isEnabled() ? next() : res.status(403).json({ error: 'ฟังก์ชันล้างข้อมูลทดสอบถูกปิดอยู่ (เปิดได้ที่สวิตช์ด้านบนของส่วนนี้)' });
+const fmtD = (n) => Math.round(n * 100) / 100;
+
+router.get('/test-data', requireAuth, requireRole('Admin'), (req, res) => res.json(testData.summary()));
+
+router.put('/test-data/enabled', requireAuth, requireRole('Admin'), (req, res) => {
+  const on = !!(req.body && req.body.enabled);
+  testData.setEnabled(on);
+  logAction(req.session.userId, 'toggle_test_data_cleanup', `${on ? 'เปิด' : 'ปิด'}ฟังก์ชันล้างข้อมูลทดสอบ`);
+  res.json({ ok: true, enabled: on });
+});
+
+router.post('/test-data/leave', requireAuth, requireRole('Admin'), guardEnabled, (req, res) => {
+  const r = testData.purgeLeave();
+  logAction(req.session.userId, 'delete_all_leave', `ลบใบลาทั้งหมดทิ้งถาวร (${r.deleted} ใบ) คืนวันลา: พักร้อน ${fmtD(r.refunded.vacation)} / กิจ ${fmtD(r.refunded.personal)} / ป่วย ${fmtD(r.refunded.sick)} วัน (${r.users} คน) - ล้างข้อมูลทดสอบ`);
+  res.json({ ok: true, ...r });
+});
+
+router.post('/test-data/ot', requireAuth, requireRole('Admin'), guardEnabled, (req, res) => {
+  const r = testData.purgeOt();
+  logAction(req.session.userId, 'delete_all_ot', `ลบคำขอ OT ทั้งหมดทิ้งถาวร (${r.deleted} ใบ) - ล้างข้อมูลทดสอบ`);
+  res.json({ ok: true, ...r });
 });
 
 router.put('/:data_type', requireAuth, requireRole('Admin'), (req, res) => {

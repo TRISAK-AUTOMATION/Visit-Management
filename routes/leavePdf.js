@@ -18,6 +18,13 @@ const FONT_BOLD = path.join(__dirname, '..', 'fonts', 'Sarabun-Bold.ttf');
 const COMPANY = 'บริษัท ตรีศักดิ์ ออโตเมชั่น จำกัด';
 const INK = '#111111';
 const FS = 12;
+// เวลาทำงานที่พิมพ์ลงช่อง "ลา(ชั่วโมง)" ของใบลาเต็มวัน/ครึ่งวัน — แก้ตรงนี้ถ้าเวลาทำงานบริษัทไม่ตรง
+// (เต็มวัน 08.30-17.30 ตามแบบที่ระบุ / ครึ่งวันเช้า-บ่าย แบ่งตามพักเที่ยง 12.00-13.00)
+const WORK_TIME = {
+  full_day: ['08.30', '17.30'],
+  half_day_morning: ['08.30', '12.00'],
+  half_day_afternoon: ['13.00', '17.30']
+};
 
 // SQLite เก็บเวลาเป็น UTC -> แปลงเป็นวันที่ไทย (Asia/Bangkok)
 function bangkokDate(utcStr) {
@@ -130,7 +137,12 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
   const modeTh = { half_day_morning: ' (ครึ่งวันเช้า)', half_day_afternoon: ' (ครึ่งวันบ่าย)' }[lr.leave_mode] || '';
   const range = lr.date_from === lr.date_to ? toThaiDate(lr.date_from) : `${toThaiDate(lr.date_from)} - ${toThaiDate(lr.date_to)}`;
   const dayTxt = isHours ? '' : range + modeTh;
-  const hourTxt = isHours ? `${toThaiDate(lr.date_from)}  ${lr.time_from || ''} - ${lr.time_to || ''} น.` : '';
+  // ลาเป็นชั่วโมง: แสดงวันที่ + เวลาที่ผู้ขอกรอก / ลาเต็มวัน-ครึ่งวัน: แสดงช่วงเวลาทำงานของการลานั้น (ระบบไม่ได้เก็บเวลาไว้ จึงใช้ค่า WORK_TIME ด้านบน)
+  const t = (v) => String(v || '').replace(':', '.');
+  const slot = WORK_TIME[lr.leave_mode];
+  const hourTxt = isHours
+    ? `${toThaiDate(lr.date_from)}  ${t(lr.time_from)} - ${t(lr.time_to)} น.`
+    : (slot ? `${slot[0]} - ${slot[1]} น.` : '');
   const split = L + 345;
   field('ลา(วัน)', dayTxt, L, y, split - 6);
   field('รวม', isHours ? '' : num(lr.duration_days), split, y, R - 24);
@@ -155,8 +167,6 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
     doc.font('regular').fontSize(FS).fillColor(INK).text(role, cx, y + 6, { width: colW, align: 'center', lineBreak: false });
     if (name) doc.fontSize(10).text(`(${name})`, cx, y + 22, { width: colW, align: 'center', lineBreak: false, ellipsis: true });
   });
-  y += 46;
-  doc.font('regular').fontSize(8).fillColor('#777777').text(`เลขที่เอกสาร ${lr.code}`, L, y, { width: W, align: 'right' });
 
   // เส้นประตัดครึ่งหน้า A4
   doc.save().dash(3, { space: 3 }).lineWidth(0.5).strokeColor('#bbbbbb')

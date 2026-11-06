@@ -127,7 +127,9 @@ export default function OTRequest() {
       if (existing) {
         await api.put(`/api/ot-requests/${existing.id}`, payload);
         if (!isDraft && existing.status === 'draft') await api.post(`/api/ot-requests/${existing.id}/submit`);
-        toast('บันทึกสำเร็จ', 'success');
+        // ใบที่ถูกตีกลับ: บันทึกแล้วส่งใหม่เข้า workflow ทันที (เริ่มจาก State แรก)
+        if (!isDraft && existing.status === 'revision') await api.post(`/api/ot-requests/${existing.id}/resubmit`);
+        toast(!isDraft && existing.status === 'revision' ? 'แก้ไขและส่งคำขอ OT ใหม่สำเร็จ' : 'บันทึกสำเร็จ', 'success');
       } else {
         const r = await api.post('/api/ot-requests', payload);
         toast(isDraft ? `บันทึกฉบับร่างสำเร็จ (${r.code})` : `ส่งคำขอ OT สำเร็จ (${r.code})`, 'success');
@@ -250,7 +252,7 @@ export default function OTRequest() {
               {(!existing || existing.status === 'draft') && (
                 <button type="button" className="btn btn-outline" disabled={saving} onClick={() => save(true)}>บันทึกฉบับร่าง</button>
               )}
-              <button type="submit" className="btn btn-primary" disabled={saving}>ส่งคำขอ</button>
+              <button type="submit" className="btn btn-primary" disabled={saving}>{existing && existing.status === 'revision' ? 'บันทึกและส่งใหม่' : 'ส่งคำขอ'}</button>
             </div>
           </form>
         </div>

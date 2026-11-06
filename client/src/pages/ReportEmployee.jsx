@@ -11,6 +11,7 @@ import {
   ActivityOverview, MiniBarChart, SummaryCard, FilterFields, DEFAULT_FILTERS, loadFilters, saveFilters,
   filtersToQuery, periodLabel, visibleSections, fmtNum, TH_MONTHS, TH_MONTHS_SHORT
 } from '../components/ReportParts';
+import Loading from '../components/Loading';
 
 const LEAVE_MODE_TH = { full_day: 'เต็มวัน', half_day_morning: 'ครึ่งวัน (เช้า)', half_day_afternoon: 'ครึ่งวัน (บ่าย)', hours: 'รายชั่วโมง' };
 const DOW = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
@@ -114,7 +115,7 @@ export default function ReportEmployee() {
       </div>
 
       {error && <div className="card"><div className="card-body"><span style={{ color: 'var(--red-600)' }}>{error}</span></div></div>}
-      {!data && !error && <p className="muted">กำลังโหลดข้อมูล...</p>}
+      {!data && !error && <Loading />}
 
       {data && (
         <>
@@ -279,7 +280,7 @@ export default function ReportEmployee() {
       )}
 
       {modal && (
-        <RequestModal request={modal.request} history={modal.history} customFields={modal.customFields} workflow={modal.workflow} mode="calendar" onClose={() => setModal(null)} />
+        <RequestModal request={modal.request} history={modal.history} customFields={modal.customFields} workflow={modal.workflow} customerSignature={modal.customer_signature} mode="calendar" onClose={() => setModal(null)} />
       )}
     </Layout>
   );

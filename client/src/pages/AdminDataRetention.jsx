@@ -1,6 +1,10 @@
 // client/src/pages/AdminDataRetention.jsx
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
+import PopupModal from '../components/PopupModal';
+import RIcon from '../components/report/ReportIcons';
+import '../components/ui-kit.css';
 import { api, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
@@ -11,14 +15,18 @@ export default function AdminDataRetention() {
   const [settings, setSettings] = useState([]);
   const [saving, setSaving] = useState({});
   const [runningNow, setRunningNow] = useState(false);
-  const [deletingAll, setDeletingAll] = useState(false);
+  const [td, setTd] = useState(null);        // สรุปข้อมูลทดสอบ { enabled, visit, leave, ot }
+  const [target, setTarget] = useState(null); // 'visit' | 'leave' | 'ot' ที่กำลังขอยืนยันลบ
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const load = async () => {
     const { settings } = await api.get('/api/retention-settings');
     setSettings(settings);
   };
 
-  useEffect(() => { load().catch(err => toast(err.message, 'error')); }, []);
+  const loadTd = async () => setTd(await api.get('/api/retention-settings/test-data'));
+  useEffect(() => { load().catch(err => toast(err.message, 'error')); loadTd().catch(() => {}); }, []);
 
   const updateLocal = (data_type, field, value) => {
     setSettings(list => list.map(s => s.data_type === data_type ? { ...s, [field]: value } : s));
@@ -50,27 +58,44 @@ export default function AdminDataRetention() {
     finally { setRunningNow(false); }
   };
 
-  const deleteAllRequests = async () => {
-    const ok = confirm(
-      'ยืนยันลบ "คำขอ Visit ทั้งหมด" ในระบบทิ้งถาวร?\n\n' +
-      'คำเตือน: การกระทำนี้ไม่สามารถย้อนกลับได้ จะลบคำขอทุกสถานะ (ฉบับร่าง/รออนุมัติ/อนุมัติแล้ว/ไม่อนุมัติ/ยกเลิก) ' +
-      'พร้อมประวัติการอนุมัติและข้อมูลที่กรอกไว้ทั้งหมด เหมาะสำหรับล้างข้อมูลที่ทดสอบระบบไว้ก่อนเริ่มใช้งานจริงเท่านั้น'
-    );
-    if (!ok) return;
-    setDeletingAll(true);
+  const toggleTd = async () => {
     try {
-      const result = await api.del('/api/visit-requests/bulk/all');
-      toast(`ลบคำขอ Visit ทั้งหมดสำเร็จ (${result.deleted} รายการ)`, 'success');
+      await api.put('/api/retention-settings/test-data/enabled', { enabled: !td.enabled });
+      toast(td.enabled ? 'ปิดฟังก์ชันล้างข้อมูลทดสอบแล้ว' : 'เปิดฟังก์ชันล้างข้อมูลทดสอบแล้ว', 'success');
+      loadTd();
     } catch (err) { toast(err.message, 'error'); }
-    finally { setDeletingAll(false); }
+  };
+
+  const fd = (n) => String(Math.round(n * 100) / 100);
+  const refund = td ? td.leave.refund : { vacation: 0, personal: 0, sick: 0 };
+  const TARGETS = td ? {
+    visit: { label: 'คำขอ Visit', icon: 'car', tone: 'blue', count: td.visit.total, unit: 'รายการ', url: '/api/visit-requests/bulk/all', method: 'del',
+      desc: 'ทุกสถานะ พร้อมประวัติการอนุมัติและข้อมูลที่กรอกไว้' },
+    leave: { label: 'ใบลา', icon: 'umbrella', tone: 'green', count: td.leave.total, unit: 'ใบ', url: '/api/retention-settings/test-data/leave', method: 'post',
+      desc: td.leave.approved
+        ? `ใบที่อนุมัติแล้ว ${td.leave.approved} ใบ จะคืนวันลาให้ — พักร้อน ${fd(refund.vacation)} · ลากิจ ${fd(refund.personal)} · ลาป่วย ${fd(refund.sick)} วัน`
+        : 'ยังไม่มีใบลาที่อนุมัติ (ไม่ต้องคืนวันลา)' },
+    ot: { label: 'คำขอ OT', icon: 'clock', tone: 'orange', count: td.ot.total, unit: 'ใบ', url: '/api/retention-settings/test-data/ot', method: 'post',
+      desc: 'ทุกสถานะ พร้อมประวัติการอนุมัติ' }
+  } : {};
+
+  const closeConfirm = () => { setTarget(null); setTyped(''); };
+  const doDelete = async () => {
+    const t = TARGETS[target];
+    setBusy(true);
+    try {
+      const r = await api[t.method](t.url);
+      toast(`ลบ${t.label}ทั้งหมดสำเร็จ (${r.deleted} ${t.unit})${target === 'leave' && td.leave.approved ? ' และคืนวันลาให้แล้ว' : ''}`, 'success');
+      closeConfirm();
+      loadTd();
+    } catch (err) { toast(err.message, 'error'); }
+    finally { setBusy(false); }
   };
 
   return (
     <Layout title="ตั้งค่าการลบข้อมูลอัตโนมัติ (Data Retention)">
-      <p className="muted" style={{ marginBottom: 16 }}>
-        กำหนดได้ว่าข้อมูลแต่ละประเภทจะถูก "เก็บไว้" นานเท่าไหร่ก่อนลบทิ้งอัตโนมัติ ระบบจะตรวจสอบและลบให้ทุกวัน
-        (ข้อมูลที่ยังถูกอ้างอิงอยู่ เช่น ลูกค้าที่ยังมีคำขอ Visit ผูกอยู่ จะไม่ถูกลบแม้เกินกำหนดก็ตาม)
-      </p>
+      <PageHero icon="database" tone="red" title="ลบข้อมูลอัตโนมัติ"
+        desc='กำหนดว่าข้อมูลแต่ละประเภทจะถูก "เก็บไว้" นานเท่าไหร่ก่อนลบทิ้งอัตโนมัติ ระบบตรวจสอบและลบให้ทุกวัน (ข้อมูลที่ยังถูกอ้างอิงอยู่ เช่น ลูกค้าที่ยังมีคำขอ Visit ผูกอยู่ จะไม่ถูกลบแม้เกินกำหนด)' />
 
       <div className="card">
         <div className="card-body" style={{ padding: 0 }}>
@@ -119,18 +144,59 @@ export default function AdminDataRetention() {
         </button>
       </div>
 
-      <div className="card" style={{ marginTop: 24, borderColor: '#f0483e' }}>
-        <div className="card-head"><h3 style={{ color: '#c0392b' }}>ล้างข้อมูลทดสอบ</h3></div>
-        <div className="card-body">
-          <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
-            ลบ "คำขอ Visit" ทั้งหมดในระบบทิ้งถาวรทันที (ทุกสถานะ) — ใช้สำหรับเคลียร์ข้อมูลที่ลองส่งทดสอบกันไว้ ก่อนเริ่มใช้งานจริง
-            การลบนี้ไม่เกี่ยวกับกฎลบอัตโนมัติด้านบน และย้อนกลับไม่ได้
-          </p>
-          <button className="btn" style={{ background: '#f0483e', color: '#fff' }} disabled={deletingAll} onClick={deleteAllRequests}>
-            {deletingAll ? 'กำลังลบ...' : 'ลบคำขอ Visit ทั้งหมด'}
-          </button>
-        </div>
-      </div>
+      {td && (
+        <section className={`ux-danger ux-rise ${td.enabled ? '' : 'locked'}`}>
+          <div className="ux-danger-head">
+            <span className="ux-danger-ico"><RIcon name="trash" size={20} /></span>
+            <div className="grow">
+              <h3>ล้างข้อมูลทดสอบ</h3>
+              <p>ลบข้อมูลที่ลองส่งทดสอบระบบทิ้งถาวรทันที (ทุกสถานะ) ก่อนเริ่มใช้งานจริง — ไม่เกี่ยวกับกฎลบอัตโนมัติด้านบน และย้อนกลับไม่ได้</p>
+            </div>
+            <label className="ux-switch" title="เมื่อเริ่มใช้งานจริง แนะนำให้ปิดไว้ กันกดลบข้อมูลจริงโดยพลาด">
+              <input type="checkbox" checked={td.enabled} onChange={toggleTd} />
+              <span className="trk" />
+              {td.enabled ? 'เปิดใช้งาน' : 'ปิดอยู่'}
+            </label>
+          </div>
+          {!td.enabled && <div className="ux-callout" style={{ margin: '0 20px 14px' }}>🔒 ปิดฟังก์ชันนี้ไว้ — ปุ่มลบทั้งหมดถูกล็อก (เหมาะเมื่อเริ่มใช้งานจริงแล้ว) เปิดสวิตช์ด้านบนเมื่ออยากล้างข้อมูลทดสอบอีกครั้ง</div>}
+          <div className="ux-danger-list">
+            {Object.entries(TARGETS).map(([k, t], i) => (
+              <div key={k} className={`ux-danger-row tone-${t.tone}`} style={{ '--i': i }}>
+                <span className="ux-tico" style={{ width: 40, height: 40, borderRadius: 12 }}><RIcon name={t.icon} size={20} /></span>
+                <div className="grow">
+                  <b>{t.label}</b>
+                  <small>{t.desc}</small>
+                </div>
+                <span className="ux-pill gray">{t.count} {t.unit}</span>
+                <button type="button" className="ux-btn danger sm" disabled={!td.enabled || t.count === 0} onClick={() => { setTyped(''); setTarget(k); }}>
+                  <RIcon name="trash" size={14} /> ลบทั้งหมด
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {target && TARGETS[target] && (
+        <PopupModal title={`ลบ${TARGETS[target].label}ทั้งหมด`} subtitle={`${TARGETS[target].count} ${TARGETS[target].unit} · ย้อนกลับไม่ได้`} icon="warn" tone="red" width={560}
+          onClose={closeConfirm}
+          footer={<>
+            <button type="button" className="ux-btn ghost" onClick={closeConfirm}>ยกเลิก</button>
+            <button type="button" className="ux-btn danger" style={{ background: typed.trim() === 'ลบ' ? '#d93a30' : undefined, color: typed.trim() === 'ลบ' ? '#fff' : undefined }}
+              disabled={typed.trim() !== 'ลบ' || busy} onClick={doDelete}><RIcon name="trash" size={15} /> {busy ? 'กำลังลบ...' : 'ยืนยันลบถาวร'}</button>
+          </>}>
+          <div className="ux-sec" style={{ '--i': 0 }}>
+            <p style={{ margin: '0 0 10px', fontSize: 13.5, lineHeight: 1.7 }}>
+              จะลบ <b>{TARGETS[target].label}</b> ทุกสถานะในระบบ พร้อมประวัติการอนุมัติและการแจ้งเตือนที่เกี่ยวข้อง
+              {target === 'leave' && <> และ <b>คืนวันลา</b>ที่ถูกหักไปจากใบที่อนุมัติแล้วให้พนักงานเท่าเดิม</>}
+            </p>
+            {target === 'leave' && <div className="ux-callout" style={{ marginBottom: 12 }}>{TARGETS.leave.desc}</div>}
+            <label className="ux-label" htmlFor="confirm-del">พิมพ์คำว่า <b style={{ color: '#d93a30' }}>ลบ</b> เพื่อยืนยัน</label>
+            <input id="confirm-del" className="ux-input" autoFocus value={typed} onChange={e => setTyped(e.target.value)} placeholder="ลบ"
+              onKeyDown={e => { if (e.key === 'Enter' && typed.trim() === 'ลบ' && !busy) doDelete(); }} />
+          </div>
+        </PopupModal>
+      )}
     </Layout>
   );
 }

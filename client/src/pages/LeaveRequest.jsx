@@ -32,7 +32,8 @@ export default function LeaveRequest() {
   useEffect(() => {
     if (!id) { setExisting(null); setForm(initial); return; }
     api.get(`/api/leave-requests/${id}`).then(({ request: r }) => {
-      if (!['draft', 'pending'].includes(r.status)) {
+      // แก้ไขได้เฉพาะ draft / revision (ถูกส่งกลับให้แก้) - pending อยู่ระหว่างอนุมัติจึงห้ามแก้ (ตรงกับ EDITABLE_STATUSES ฝั่ง server)
+      if (!['draft', 'revision'].includes(r.status)) {
         toast('ไม่สามารถแก้ไขคำขอนี้ได้แล้ว', 'error');
         navigate('/my-leave');
         return;
@@ -74,7 +75,9 @@ export default function LeaveRequest() {
       if (existing) {
         await api.put(`/api/leave-requests/${existing.id}`, payload);
         if (!isDraft && existing.status === 'draft') await api.post(`/api/leave-requests/${existing.id}/submit`);
-        toast('บันทึกสำเร็จ', 'success');
+        // ใบที่ถูกตีกลับ: บันทึกแล้วส่งใหม่เข้า workflow ทันที (เริ่มจาก State แรก)
+        if (!isDraft && existing.status === 'revision') await api.post(`/api/leave-requests/${existing.id}/resubmit`);
+        toast(!isDraft && existing.status === 'revision' ? 'แก้ไขและส่งคำขอใหม่สำเร็จ' : 'บันทึกสำเร็จ', 'success');
       } else {
         const r = await api.post('/api/leave-requests', payload);
         toast(isDraft ? `บันทึกฉบับร่างสำเร็จ (${r.code})` : `ส่งคำขอลาสำเร็จ (${r.code})`, 'success');
@@ -140,7 +143,7 @@ export default function LeaveRequest() {
               {(!existing || existing.status === 'draft') && (
                 <button type="button" className="btn btn-outline" disabled={saving} onClick={() => save(true)}>บันทึกฉบับร่าง</button>
               )}
-              <button type="submit" className="btn btn-primary" disabled={saving}>ส่งคำขอ</button>
+              <button type="submit" className="btn btn-primary" disabled={saving}>{existing && existing.status === 'revision' ? 'บันทึกและส่งใหม่' : 'ส่งคำขอ'}</button>
             </div>
           </form>
         </div>

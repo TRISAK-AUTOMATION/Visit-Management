@@ -1,5 +1,13 @@
 // client/src/lib/api.js - ตัวช่วยเรียก API กลาง (เทียบเท่า public/js/api.js เดิม)
+import { loadingBus } from './loadingBus';
+
+// ทุกคำขอผ่านตรงนี้ เพื่อให้แถบ/ป้าย "กำลังโหลด" ทำงานอัตโนมัติทุกหน้า
 async function _fetch(url, options = {}) {
+  loadingBus.start();
+  try { return await _doFetch(url, options); } finally { loadingBus.end(); }
+}
+
+async function _doFetch(url, options = {}) {
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',

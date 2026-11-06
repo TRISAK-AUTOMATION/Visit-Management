@@ -1,6 +1,7 @@
 // client/src/pages/AdminLeaveBalances.jsx - Admin จัดการสิทธิ์วันลารายบุคคล
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
@@ -119,6 +120,7 @@ export default function AdminLeaveBalances() {
 
   return (
     <Layout title="จัดการสิทธิ์วันลา (Leave Balances)">
+      <PageHero icon="umbrella" tone="green" title="จัดการสิทธิ์วันลา" desc="ปรับโควตาวันลาแต่ละประเภทรายบุคคล และตั้งเงื่อนไขสิทธิ์ตามอายุงาน" />
       <div className="flex between mb-16" style={{ flexWrap: 'wrap', gap: 10 }}>
         <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหาพนักงาน..."
           style={{ width: 240, padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 9 }} />
@@ -284,6 +286,57 @@ export default function AdminLeaveBalances() {
           </div>
         </div>
       )}
+      <HolidaysPanel />
     </Layout>
+  );
+}
+
+// วันหยุดนักขัตฤกษ์/วันหยุดบริษัท: วันที่อยู่ในรายการนี้จะไม่ถูกนับเป็นวันลา (ลาเต็มวันหลายวัน)
+function HolidaysPanel() {
+  const toast = useToast();
+  const [year, setYear] = useState(todayBkk().slice(0, 4));
+  const [rows, setRows] = useState([]);
+  const [date, setDate] = useState('');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = () => api.get(`/api/holidays?year=${year}`).then(d => setRows(d.holidays || [])).catch(e => toast(e.message, 'error'));
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [year]);
+  const add = async () => {
+    if (!date || !name.trim()) { toast('กรุณาเลือกวันที่และกรอกชื่อวันหยุด', 'error'); return; }
+    setBusy(true);
+    try { await api.post('/api/holidays', { holiday_date: date, name: name.trim() }); setName(''); toast('เพิ่มวันหยุดแล้ว', 'success'); if (date.slice(0, 4) !== year) setYear(date.slice(0, 4)); else load(); setDate(''); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const del = async (h) => {
+    if (!window.confirm(`ลบวันหยุด "${h.name}" (${fmtThai(h.holiday_date)}) หรือไม่?\n(ไม่กระทบใบลาที่ยื่นไปแล้ว)`)) return;
+    try { await api.del(`/api/holidays/${h.id}`); load(); } catch (e) { toast(e.message, 'error'); }
+  };
+  return (
+    <div className="card" style={{ marginTop: 20 }}>
+      <div className="card-body">
+        <div className="flex between" style={{ flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+          <h3 style={{ margin: 0 }}>วันหยุดนักขัตฤกษ์ / วันหยุดบริษัท</h3>
+          <label style={{ fontSize: 14 }}>ปี (ค.ศ.){' '}
+            <input type="number" value={year} min="2000" max="2100" onChange={e => setYear(e.target.value)} style={{ width: 90, padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 8 }} />
+          </label>
+        </div>
+        <p className="muted" style={{ fontSize: 13 }}>วันที่อยู่ในรายการนี้จะไม่ถูกนับเป็นวันลา เมื่อพนักงานลาเต็มวันหลายวันคร่อมวันหยุด (เสาร์-อาทิตย์ยังนับตามเดิม)</p>
+        <div className="flex" style={{ gap: 8, flexWrap: 'wrap', margin: '10px 0' }}>
+          <input type="date" value={date} onChange={e => setDate(e.target.value)} aria-label="วันที่หยุด" style={{ padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 8 }} />
+          <input type="text" value={name} maxLength={100} placeholder="ชื่อวันหยุด เช่น วันสงกรานต์" onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); }}
+            style={{ flex: '1 1 220px', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 8 }} />
+          <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={add}>เพิ่มวันหยุด</button>
+        </div>
+        {rows.length === 0 ? <div className="muted" style={{ fontSize: 14 }}>ยังไม่มีวันหยุดในปี {year}</div> : (
+          <table>
+            <thead><tr><th style={{ width: 130 }}>วันที่</th><th>ชื่อวันหยุด</th><th style={{ width: 80 }} /></tr></thead>
+            <tbody>{rows.map(h => (
+              <tr key={h.id}><td>{fmtThai(h.holiday_date)}</td><td>{h.name}</td>
+                <td><button type="button" className="btn btn-danger btn-sm" onClick={() => del(h)}>ลบ</button></td></tr>
+            ))}</tbody>
+          </table>
+        )}
+      </div>
+    </div>
   );
 }

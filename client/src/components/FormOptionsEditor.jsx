@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { clearFormOptionsCache } from '../lib/useFormOptions';
+import Loading from './Loading';
 
 export default function FormOptionsEditor() {
   const toast = useToast();
@@ -36,7 +37,7 @@ export default function FormOptionsEditor() {
     run(() => api.patch('/api/form-options/reorder', { group_key: g.key, order: ids }));
   };
 
-  if (!groups) return <div className="muted" style={{ padding: 20 }}>กำลังโหลด...</div>;
+  if (!groups) return <Loading />;
   const mini = { padding: '2px 8px', fontSize: 12 };
   return (
     <div>

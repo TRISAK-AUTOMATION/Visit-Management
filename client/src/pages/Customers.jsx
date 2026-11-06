@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
@@ -257,6 +258,7 @@ export default function Customers() {
 
   return (
     <Layout title="Customer">
+      <PageHero icon="building" tone="blue" title="Customer" desc="รายชื่อลูกค้าและบริษัทในระบบ ค้นหา เพิ่ม และแก้ไขข้อมูลลูกค้า" />
       <div className="flex between mb-16" style={{ flexWrap: 'wrap', gap: 10 }}>
         <div className="tabs">
           <div className={`tab ${companyFilter === 'all' ? 'active' : ''}`} onClick={() => setCompanyFilter('all')}>ทั้งหมด</div>
@@ -269,7 +271,7 @@ export default function Customers() {
             </div>
           )}
         </div>
-        <div className="flex" style={{ gap: 10 }}>
+        <div className="flex cus-tools" style={{ gap: 10 }}>
           <input type="text" value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหาลูกค้า / Sales..."
             style={{ width: 220, padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 9 }} />
           {isAdmin && <button className="btn btn-outline" onClick={openImport}>นำเข้าจากไฟล์</button>}

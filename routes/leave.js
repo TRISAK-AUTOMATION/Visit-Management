@@ -11,6 +11,7 @@ const approvalEngine = require('../utils/approvalEngine');
 const { canViewAll } = require('../utils/viewScope');
 const entitlement = require('../utils/leaveEntitlement');
 const checks = require('../utils/inputChecks');
+const { countDaysExcluding, holidaySetBetween } = require('../utils/holidays');
 
 const router = express.Router();
 
@@ -65,11 +66,14 @@ function isEligibleLeaveRequester(userId) {
 }
 const NOT_ELIGIBLE_MSG = 'คุณยังไม่มีสิทธิ์ส่งคำขอลา กรุณาติดต่อผู้ดูแลระบบเพื่อเพิ่มชื่อคุณในรายชื่อผู้มีสิทธิ์ (Requester) ของ Template อนุมัติก่อน';
 
-// นับจำนวนวันปฏิทินระหว่าง date_from - date_to (รวมทั้งสองวัน) แบบง่าย ไม่ตัดวันหยุด/เสาร์-อาทิตย์
+// นับจำนวนวันปฏิทินระหว่าง date_from - date_to (รวมทั้งสองวัน) โดยตัด "วันหยุดที่ Admin กรอกไว้" (ตาราง holidays) ออก
+// หมายเหตุ: เสาร์-อาทิตย์ยังนับเหมือนเดิม (ถ้าต้องการไม่นับ ให้เพิ่มเป็นวันหยุดหรือแจ้งปรับกติกา)
 function countCalendarDays(dateFrom, dateTo) {
   const a = new Date(dateFrom), b = new Date(dateTo);
   const diff = Math.round((b - a) / (1000 * 60 * 60 * 24)) + 1;
-  return diff > 0 ? diff : 1;
+  if (!(diff > 0)) return 1;
+  const net = countDaysExcluding(dateFrom, dateTo, holidaySetBetween(db, dateFrom, dateTo));
+  return net;   // 0 = ช่วงที่เลือกเป็นวันหยุดทั้งหมด (ผู้เรียกจะแจ้งผู้ใช้)
 }
 
 function hoursBetween(timeFrom, timeTo) {
@@ -252,6 +256,7 @@ router.post('/', requireAuth, (req, res) => {
 
   { const bad = checks.leaveInputError(req.body); if (bad) return res.status(400).json({ error: bad }); }
   const dur = (leave_mode && date_from) ? computeDuration(req.body) : { duration_days: 0, duration_hours: 0, date_to: date_from || '', time_from: req.body.time_from || '', time_to: req.body.time_to || '' };
+  if (!isDraft && leave_mode === 'full_day' && dur.duration_days === 0) return res.status(400).json({ error: 'ช่วงวันที่เลือกเป็นวันหยุดทั้งหมด ไม่ต้องยื่นลา' });
   if (!isDraft) {
     const ovErr = checks.leaveOverlapError(db, req.session.userId, { leave_mode, date_from, date_to: dur.date_to, time_from: dur.time_from, time_to: dur.time_to });
     if (ovErr) return res.status(400).json({ error: ovErr });
@@ -331,6 +336,7 @@ router.post('/:id/submit', requireAuth, (req, res) => {
     if (bad) return res.status(400).json({ error: bad });
   }
   {
+    if (lr.leave_mode === 'full_day' && lr.duration_days === 0) return res.status(400).json({ error: 'ช่วงวันที่เลือกเป็นวันหยุดทั้งหมด ไม่ต้องยื่นลา' });
     const qErr = quotaError(lr.requester_id, lr.leave_type, lr.duration_days, lr.id);
     if (qErr) return res.status(400).json({ error: qErr });
   }
@@ -360,6 +366,7 @@ router.post('/:id/resubmit', requireAuth, (req, res) => {
     if (bad) return res.status(400).json({ error: bad });
   }
   {
+    if (lr.leave_mode === 'full_day' && lr.duration_days === 0) return res.status(400).json({ error: 'ช่วงวันที่เลือกเป็นวันหยุดทั้งหมด ไม่ต้องยื่นลา' });
     const qErr = quotaError(lr.requester_id, lr.leave_type, lr.duration_days, lr.id);
     if (qErr) return res.status(400).json({ error: qErr });
   }

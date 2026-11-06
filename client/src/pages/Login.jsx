@@ -4,6 +4,7 @@ import { Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
 import { useToast } from '../lib/ToastContext';
 import logoWhite from '../assets/trisak-logo-white.png';
+import AutomationScene from '../components/AutomationScene';
 const BadgeScene = React.lazy(() => import('../components/BadgeScene'));
 
 function greetingFor(d) {
@@ -120,6 +121,7 @@ export default function Login() {
       <div className="tl-hero" ref={heroRef}>
         <div className="tl-slants" aria-hidden="true"><i /><i /><i /></div>
         <div className="tl-spot" aria-hidden="true" />
+        <AutomationScene />
 
         <div className="tl-hero-inner">
           <img className="tl-logo tl-rise" style={{ '--d': '0s' }} src={logoWhite} alt="TRISAK GROUP" />
@@ -210,7 +212,7 @@ export default function Login() {
             )}
 
             <button type="submit" className="tl-submit" disabled={submitting}>
-              {submitting ? 'กำลังตรวจสอบบัตร…' : 'เข้าสู่ระบบ'}
+              {submitting ? <><span className="tl-spin" />กำลังตรวจสอบบัตร…</> : 'เข้าสู่ระบบ'}
             </button>
           </form>
 
@@ -271,8 +273,9 @@ export default function Login() {
         .tl-title { font-size: 30px; font-weight: 600; line-height: 1.25; margin: 0 0 12px; }
         .tl-desc { font-size: 14.5px; line-height: 1.8; opacity: .82; margin: 0; }
 
-        /* ขนาดบัตร 3D: ปรับที่ clamp(ต่ำสุด, สัดส่วนของพื้นที่สีฟ้า, สูงสุด) — อยากให้ใหญ่ขึ้น/เล็กลงแก้ตรงนี้ */
-        .tl-stage3d { position: absolute; right: 2%; bottom: -5%; width: clamp(400px, 50%, 600px); aspect-ratio: 520 / 660; z-index: 1; pointer-events: none; }
+        /* ขนาดบัตร 3D: ปรับที่ clamp(ต่ำสุด, สัดส่วนของพื้นที่สีฟ้า, สูงสุด) — อยากให้ใหญ่ขึ้น/เล็กลงแก้ตรงนี้
+           ตำแหน่งสูง-ต่ำ: ตัวเลข 6vw ใน bottom = ยกบัตรขึ้นพ้นสายพาน (เพิ่มเลข = สูงขึ้น, ลดเลข = ต่ำลง) */
+        .tl-stage3d { position: absolute; right: 2%; bottom: calc(-5% + clamp(40px, 6vw, 130px)); width: clamp(400px, 50%, 600px); aspect-ratio: 520 / 660; z-index: 1; pointer-events: none; }
 
         /* บัตรแบบเบา */
         .tl-mini {
@@ -340,6 +343,8 @@ export default function Login() {
         .tl-rise { opacity: 0; transform: translateY(14px); animation: tl-rise .6s cubic-bezier(.2,.7,.2,1) forwards; animation-delay: var(--d, 0s); }
         @keyframes tl-rise { to { opacity: 1; transform: none; } }
         @keyframes tl-scan { from { top: -22%; } to { top: 100%; } }
+        .tl-spin { display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: tl-spin .8s linear infinite; }
+        @keyframes tl-spin { to { transform: rotate(360deg); } }
         @media (prefers-reduced-motion: reduce) {
           .tl-wrap *, .tl-wrap *::before, .tl-wrap *::after { animation: none !important; transition: none !important; }
           .tl-rise { opacity: 1; transform: none; }

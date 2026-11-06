@@ -1,6 +1,7 @@
 // VisitDetailView.jsx - แสดงฟอร์ม Visit Request แบบอ่านอย่างเดียว (ใช้ใน popup ของ Visit Report)
 import React, { useRef, useState } from 'react';
 import { fmtDate, fmtDateTime } from '../../lib/api';
+import { WorkflowTimeline } from '../RequestModal';
 
 const SECS = [
   { id: 's1', no: 1, title: 'Request Detail', th: 'รายละเอียดการเข้าพบลูกค้า', nav: 'Request Detail' },
@@ -11,17 +12,31 @@ const SECS = [
   { id: 's6', no: 6, title: 'Customer Level', th: 'ระดับลูกค้า', nav: 'Customer Level' },
   { id: 's7', no: 7, title: 'Next Visit', th: 'การเข้าพบครั้งถัดไป', nav: 'Next Visit' },
   { id: 's8', no: 8, title: 'Remark', th: 'หมายเหตุ', nav: 'Remark' },
+  { id: 's9', no: 9, title: 'Customer Signature', th: 'ลายเซ็นลูกค้า', nav: 'ลายเซ็นลูกค้า' },
+  { id: 'sw', no: '✓', title: 'Approval', th: 'ขั้นตอนการอนุมัติ', nav: 'การอนุมัติ' },
   { id: 'sh', no: '★', title: 'ประวัติการดำเนินการ', th: '', nav: 'ประวัติ' }
 ];
 const arr = (v) => (Array.isArray(v) ? v : []);
 const txt = (v) => (v === null || v === undefined ? '' : String(v));
 const D = (v) => (v ? fmtDate(v) : '');
+// ค่าของช่อง custom (Form Builder) ตามชนิดช่อง
+const cfValue = (f) => {
+  const v = f.value;
+  if (v === null || v === undefined || v === '') return '';
+  if (f.field_type === 'multiselect') { try { return JSON.parse(v).join(', '); } catch (e) { return v; } }
+  if (f.field_type === 'checkbox') return v === 'true' ? 'ใช่' : 'ไม่ใช่';
+  if (f.field_type === 'date') return fmtDate(v);
+  if (f.field_type === 'datetime') return fmtDateTime(v);
+  if (f.field_type === 'file') return <a href={v} download>ดาวน์โหลดไฟล์แนบ</a>;
+  return v;
+};
 
 const F = ({ label, value, wide }) => (
-  <div className={`vd-f${wide ? ' wide' : ''}`}><label>{label}</label><div>{txt(value)}</div></div>
+  <div className={`vd-f${wide ? ' wide' : ''}`}><label>{label}</label><div>{React.isValidElement(value) ? value : txt(value)}</div></div>
 );
 const Chips = ({ items, other }) => {
-  const list = [...arr(items), ...(other ? [`Other: ${other}`] : [])];
+  const base = arr(items).map((x) => (x === 'Other' && other ? `Other: ${other}` : x));
+  const list = other && !arr(items).includes('Other') ? [...base, `Other: ${other}`] : base;
   return <div className="vd-chips">{list.map((x, i) => <span className="vd-chip" key={i}>{x}</span>)}</div>;
 };
 const Sub = ({ title, children }) => <div className="vd-sub"><h5>{title}</h5>{children}</div>;
@@ -49,10 +64,16 @@ export default function VisitDetailView({ data }) {
   };
   const d = v.during || {}; const pr = d.problems || {}; const pj = d.projects || {}; const po = d.potential || {}; const rc = d.recurring || {};
   const rows = arr((v.plan || {}).rows);
+  // การ์ดการอนุมัติ: ความคิดเห็นผู้อนุมัติ/สิ่งที่ต้องแก้ไข + หมายเหตุตอนแจ้งเสร็จสิ้น + ขั้นตอนใน workflow (แสดงเมื่อมีข้อมูล)
+  const fieldVal = (label) => { const f = (data.fields || []).find(x => x.label === label); return f ? f.value : ''; };
+  const approvalNote = fieldVal('Approval Note'), completionNote = fieldVal('Completion Note');
+  const approverName = fieldVal('Approver'), approvedAt = fieldVal('Approved At');
+  const showSw = !!(approvalNote || completionNote || approverName || (data.workflow && data.workflow.states && data.workflow.states.length));
+  const navSecs = SECS.filter(s => s.id !== 'sw' || showSw);
   return (
     <div className="vd-wrap">
       <nav className="vd-nav">
-        {SECS.map(s => (
+        {navSecs.map(s => (
           <button type="button" key={s.id} className={active === s.id ? 'on' : ''} onClick={() => go(s.id)}><b>{s.no}</b>{s.nav}</button>
         ))}
       </nav>
@@ -61,6 +82,9 @@ export default function VisitDetailView({ data }) {
           <div className="vd-grid">
             <F label="Employee" value={i.employee} /><F label="Department" value={i.dept} /><F label="Sales Person" value={i.sales_person} />
             <F label="Company / Customer" value={i.customer_name || i.company} wide />
+            <F label="Customer Code" value={i.customer_code} /><F label="Company" value={i.company} />
+            <F label="Customer Type" value={({ new: 'New Customer', current: 'Current Customer' })[i.customer_type] || i.customer_type} />
+            <F label="Customer Address" value={i.customer_address} wide />
             <F label="Request Date" value={D(i.request_date)} /><F label="Visit Date" value={D(i.visit_date)} />
             <F label="Time Out" value={i.time_from} /><F label="Time In" value={i.time_to} />
             <F label="Job Type" value={i.job_type} /><F label="Location" value={i.location} /><F label="Product" value={i.product} />
@@ -70,6 +94,8 @@ export default function VisitDetailView({ data }) {
             <F label="Mileage Out" value={i.mileage_out} /><F label="Mileage In" value={i.mileage_in} />
             <F label="Actual Time Out" value={i.actual_time_out} /><F label="Actual Time Back" value={i.actual_time_back} /><F label="OT Hours" value={i.ot_hours} />
             <F label="Accompanied By" value={i.participants} wide />
+            <F label="Customer Tax ID" value={i.customer_tax_id} /><F label="Tax Invoice Date" value={D(i.tax_invoice_date)} />
+            {arr(data.custom_fields).map((f) => <F key={f.field_key} label={f.label} value={cfValue(f)} wide={f.field_type === 'textarea'} />)}
           </div>
           <Sub title="Contact Information">
             <table className="vd-tbl"><thead><tr><th>Name</th><th>Position</th><th>Telephone</th><th>Mobile</th><th>Email</th></tr></thead>
@@ -81,7 +107,7 @@ export default function VisitDetailView({ data }) {
         <Card s={SECS[1]} id="s2"><Chips items={(v.objective || {}).items} other={(v.objective || {}).other} /></Card>
         <Card s={SECS[2]} id="s3">
           <Sub title="3.1 Current Products / Brands"><Chips items={d.brands} />{d.brand_notes && <p className="vd-p">{d.brand_notes}</p>}</Sub>
-          <Sub title="3.2 Recurring Part Demand"><div className="vd-grid"><F label="Demand" value={rc.value} /><F label="Detail" value={rc.detail} wide /></div></Sub>
+          <Sub title="3.2 Recurring Part Demand"><div className="vd-grid"><F label="Demand" value={({ yes: 'Yes', no: 'No', need_info: 'Need More Information' })[rc.value] || rc.value} /><F label="Detail" value={rc.detail} wide /></div></Sub>
           <Sub title="3.3 Customer Problem / Improvement"><Chips items={pr.items} other={pr.other} />{pr.detail && <p className="vd-p">{pr.detail}</p>}</Sub>
           <Sub title="3.4 Upcoming Project / Future Plan"><Chips items={pj.items} other={pj.other} />
             <div className="vd-grid"><F label="Timing" value={pj.timing} /><F label="Detail" value={pj.detail} wide /></div></Sub>
@@ -105,7 +131,33 @@ export default function VisitDetailView({ data }) {
             <F label="Purpose" value={(v.next || {}).purpose} wide /><F label="Expected Outcome" value={(v.next || {}).expected_outcome} wide /></div>
         </Card>
         <Card s={SECS[7]} id="s8"><p className="vd-p">{i.notes}</p></Card>
-        <Card s={SECS[8]} id="sh">
+        <Card s={SECS[8]} id="s9">
+          {data.customer_signature ? (
+            <div style={{ display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ border: '1px solid #e2e7f3', borderRadius: 12, background: '#fff', padding: 8, minWidth: 200 }}>
+                <img src={data.customer_signature.data_url} alt="ลายเซ็นลูกค้า" style={{ display: 'block', maxWidth: 260, maxHeight: 120 }} />
+              </div>
+              <div className="vd-grid" style={{ flex: 1, minWidth: 220 }}>
+                <F label="ผู้เซ็น" value={data.customer_signature.signer_name} />
+                <F label="ตำแหน่ง" value={data.customer_signature.signer_title} />
+                <F label="เซ็นเมื่อ" value={fmtDateTime(data.customer_signature.signed_at)} />
+              </div>
+            </div>
+          ) : <p className="muted" style={{ margin: 0 }}>ยังไม่มีลายเซ็นลูกค้า</p>}
+        </Card>
+        {showSw && (
+          <Card s={SECS[9]} id="sw">
+            {approvalNote && (
+              <div style={{ background: data.status === 'revision' ? '#fff3e6' : '#f3f6ff', border: '1px solid #e2e7f3', borderRadius: 10, padding: '8px 12px', marginBottom: 10, fontSize: 13 }}>
+                <b>{data.status === 'revision' ? 'สิ่งที่ต้องแก้ไข' : 'ความคิดเห็นผู้อนุมัติ'}:</b> {approvalNote}
+              </div>
+            )}
+            {approverName && <p className="vd-p"><b>ผู้อนุมัติ:</b> {approverName}{approvedAt ? ` · อนุมัติเมื่อ ${fmtDateTime(approvedAt)}` : ''}</p>}
+            {completionNote && <p className="vd-p"><b>สรุปผลการเข้าพบ:</b> {completionNote}</p>}
+            <WorkflowTimeline workflow={data.workflow} />
+          </Card>
+        )}
+        <Card s={SECS[10]} id="sh">
           {data.history.length ? (
             <ol className="rx-timeline">
               {data.history.map((h, k) => (

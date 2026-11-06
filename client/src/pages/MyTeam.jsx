@@ -2,7 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api, initials } from '../lib/api';
+import Loading from '../components/Loading';
 
 export default function MyTeam() {
   const [team, setTeam] = useState(null);
@@ -13,10 +15,11 @@ export default function MyTeam() {
 
   return (
     <Layout title="ทีมของฉัน (My Team)">
+      <PageHero icon="users" tone="purple" title="ทีมของฉัน" desc="ดูโปรไฟล์และประเมินสมาชิกในทีมที่คุณดูแล" />
       <div className="card">
         <div className="card-body" style={{ padding: 0 }}>
           {team === null ? (
-            <div className="muted" style={{ padding: 20 }}>กำลังโหลด...</div>
+            <Loading />
           ) : team.length ? (
             <table>
               <thead><tr><th></th><th>ชื่อ-นามสกุล</th><th>ตำแหน่ง</th><th>แผนก</th><th>สถานะ</th><th>จัดการ</th></tr></thead>

@@ -1,6 +1,7 @@
 // client/src/pages/AdminUsers.jsx - เทียบเท่า public/admin-users.html
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api, ROLE_TH } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
@@ -106,6 +107,7 @@ export default function AdminUsers() {
 
   return (
     <Layout title="จัดการผู้ใช้งาน (User Management)">
+      <PageHero icon="users" tone="blue" title="จัดการผู้ใช้งาน" desc="เพิ่ม แก้ไข ลบผู้ใช้ และกำหนดบทบาท/สิทธิ์การใช้งานของแต่ละคน" />
       <div className="flex between mb-16">
         <h3 style={{ margin: 0 }}>รายชื่อผู้ใช้งานทั้งหมด</h3>
         <button className="btn btn-primary" onClick={() => openForm(null)}>+ เพิ่มผู้ใช้</button>

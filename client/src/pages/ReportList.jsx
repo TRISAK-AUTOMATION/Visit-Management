@@ -13,6 +13,42 @@ import { useToast } from '../lib/ToastContext';
 import { periodRange } from '../components/ReportParts';
 import '../components/report/report-ui.css';
 
+// ---- คำแนะนำช่องค้นหา: ตรงคำ > ตรงบางส่วน > คำใกล้เคียง (พิมพ์ผิด/ตกหล่น) ----
+const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+const bigrams = (s) => { const t = s.replace(/\s/g, ''); const o = new Set(); for (let i = 0; i < t.length - 1; i++) o.add(t.slice(i, i + 2)); return o; };
+function scoreSuggest(q, text) {
+  const t = norm(text);
+  if (!q || !t) return 0;
+  if (q.length < 2) return t.startsWith(q) ? 40 : 0;   // พิมพ์ตัวเดียว: เอาเฉพาะที่ขึ้นต้นด้วยตัวนั้น
+  if (t === q) return 100;
+  if (t.startsWith(q)) return 90;
+  const idx = t.indexOf(q);
+  if (idx >= 0) return 80 - Math.min(idx, 30) * 0.5;
+  const words = t.split(/[\s,/()\-]+/);
+  if (words.some((w) => w && w.startsWith(q))) return 75;
+  // ตัวอักษรเรียงตามลำดับ แม้ไม่ติดกัน (เช่น "mmi asmbly")
+  let j = 0; for (let i = 0; i < t.length && j < q.length; i++) if (t[i] === q[j]) j++;
+  const subseq = j === q.length && q.length >= 3 ? 50 + (q.length / t.length) * 10 : 0;
+  // ความคล้ายแบบ bigram (พิมพ์ผิด 1-2 ตัว)
+  const a = bigrams(q), b = bigrams(t);
+  let hit = 0; a.forEach((g) => { if (b.has(g)) hit++; });
+  const sim = a.size ? hit / a.size : 0;
+  return Math.max(subseq, sim >= 0.55 ? 30 + sim * 25 : 0);
+}
+function buildSuggestions(q0, pool, max = 5) {
+  const q = norm(q0);
+  if (!q) return [];
+  const seen = new Set(), out = [];
+  pool.forEach(({ text, tag }) => {
+    const k = norm(text);
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    const sc = scoreSuggest(q, text);
+    if (sc > 0) out.push({ text, tag, sc });
+  });
+  return out.sort((x, y) => y.sc - x.sc || x.text.length - y.text.length).slice(0, max);
+}
+
 const dash = (v) => (v === null || v === undefined || v === '' ? '-' : v);
 const hrs = (v) => (v === null || v === undefined ? '-' : (Number.isInteger(Number(v)) ? String(Number(v)) : Number(v).toFixed(1)));
 
@@ -27,6 +63,7 @@ const CFG = {
       { label: 'Pending Approval', hint: 'รอการอนุมัติ', value: s.pending, unit: 'รายการ', icon: 'clock', tone: 'orange' }
     ],
     cols: [
+      { k: 'code', label: 'Document No.', sort: 'code', r: (r) => <b>{r.code}</b>, cls: 'nowrap' },
       { k: 'visit_date', label: 'Visit Date', sort: 'visit_date', r: (r) => fmtDate(r.visit_date), cls: 'nowrap' },
       { k: 'employee', label: 'Employee', sort: 'employee', r: (r) => <b>{r.employee}</b> },
       { k: 'department', label: 'Department', sort: 'department', r: (r) => dash(r.department) },
@@ -48,6 +85,7 @@ const CFG = {
       { label: 'Employees with OT', hint: 'พนักงานที่มีรายการ OT', value: s.employees, unit: 'คน', icon: 'users', tone: 'purple' }
     ],
     cols: [
+      { k: 'code', label: 'Document No.', sort: 'code', r: (r) => <b>{r.code}</b>, cls: 'nowrap' },
       { k: 'ot_date', label: 'OT Date', sort: 'ot_date', r: (r) => fmtDate(r.ot_date), cls: 'nowrap' },
       { k: 'request_date', label: 'Request Date', sort: 'request_date', r: (r) => fmtDate(r.request_date), cls: 'nowrap' },
       { k: 'employee', label: 'Employee', sort: 'employee', r: (r) => <b>{r.employee}</b> },
@@ -69,6 +107,7 @@ const CFG = {
       { label: 'Employees on Leave', hint: 'พนักงานที่มีรายการลา', value: s.employees, unit: 'คน', icon: 'users', tone: 'purple' }
     ],
     cols: [
+      { k: 'code', label: 'Document No.', sort: 'code', r: (r) => <b>{r.code}</b>, cls: 'nowrap' },
       { k: 'request_date', label: 'Request Date', sort: 'request_date', r: (r) => fmtDate(r.request_date), cls: 'nowrap' },
       { k: 'employee', label: 'Employee', sort: 'employee', r: (r) => <b>{r.employee}</b> },
       { k: 'department', label: 'Department', sort: 'department', r: (r) => dash(r.department) },
@@ -131,6 +170,8 @@ export default function ReportList({ type }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const reqId = useRef(0);
+  const [sugOpen, setSugOpen] = useState(false);
+  const [sugIdx, setSugIdx] = useState(-1);
 
   // เปลี่ยนประเภทรายงาน (เช่นกดเมนูอื่น) -> รีเซ็ตสถานะหน้า
   useEffect(() => { const f = loadF(type); setDraft(f); setApplied(f); setSort(CFG[type].sort); setPage(1); setData(null); }, [type]);
@@ -162,9 +203,36 @@ export default function ReportList({ type }) {
     return n;
   });
 
-  const apply = () => {
-    if (draft.from && draft.to && draft.from > draft.to) { toast('วันที่เริ่มต้นต้องไม่มากกว่าวันที่สิ้นสุด', 'error'); return; }
-    saveF(type, draft); setApplied(draft); setPage(1); setFiltersOpen(false);
+  const apply = (next) => {
+    const f = next && next.from !== undefined ? next : draft;
+    if (f.from && f.to && f.from > f.to) { toast('วันที่เริ่มต้นต้องไม่มากกว่าวันที่สิ้นสุด', 'error'); return; }
+    saveF(type, f); setApplied(f); setPage(1); setFiltersOpen(false);
+  };
+
+  // รายการคำที่ใช้แนะนำ: ลูกค้า / พนักงาน / ผู้ร่วมเดินทาง / ประเภทลา / แผนก + เลขเอกสารและข้อความในตารางที่โหลดอยู่
+  const suggestPool = useMemo(() => {
+    const p = [];
+    if (opts) {
+      if (type === 'visit') (opts.customers || []).forEach(c => p.push({ text: c.name, tag: 'ลูกค้า' }));
+      (opts.employees || []).forEach(e => p.push({ text: e.full_name, tag: 'พนักงาน' }));
+      if (type === 'visit') (opts.people || []).forEach(e => p.push({ text: e.full_name, tag: 'ผู้ร่วมเดินทาง' }));
+      if (type === 'leave') (opts.leave_types || []).forEach(t => p.push({ text: t, tag: 'ประเภทการลา' }));
+      (opts.departments || []).forEach(d => p.push({ text: d, tag: 'แผนก' }));
+    }
+    ((data && data.rows) || []).forEach(r => {
+      if (r.code) p.push({ text: r.code, tag: 'เลขที่เอกสาร' });
+      ['customer_name', 'purpose', 'reason', 'job_no'].forEach(k => { if (r[k] && typeof r[k] === 'string' && r[k].length <= 80) p.push({ text: r[k], tag: 'ในตาราง' }); });
+    });
+    return p;
+  }, [opts, data, type]);
+  const suggestions = useMemo(() => buildSuggestions(draft.q, suggestPool), [draft.q, suggestPool]);
+  const pickSuggest = (text) => { const n = { ...draft, q: text }; setDraft(n); setSugOpen(false); setSugIdx(-1); apply(n); };
+  const onSearchKey = (e) => {
+    const n = suggestions.length;
+    if (e.key === 'ArrowDown' && n) { e.preventDefault(); setSugOpen(true); setSugIdx(i => (i + 1) % n); }
+    else if (e.key === 'ArrowUp' && n) { e.preventDefault(); setSugOpen(true); setSugIdx(i => (i <= 0 ? n - 1 : i - 1)); }
+    else if (e.key === 'Escape') { setSugOpen(false); setSugIdx(-1); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (sugOpen && sugIdx >= 0 && suggestions[sugIdx]) pickSuggest(suggestions[sugIdx].text); else { setSugOpen(false); apply(); } }
   };
   const reset = () => { const f = blank(); saveF(type, f); setDraft(f); setApplied(f); setPage(1); };
   const preset = (p) => {
@@ -204,7 +272,7 @@ export default function ReportList({ type }) {
       </div>
 
       {/* ตัวกรอง */}
-      <div className="rx-panel rx-rise" style={{ '--i': 2 }}>
+      <div className="rx-panel rx-rise rx-panel-filters" style={{ '--i': 2 }}>
         <button type="button" className="rx-filter-toggle" onClick={() => setFiltersOpen(o => !o)} aria-expanded={filtersOpen}>
           <span><RIcon name="filter" size={16} /> ตัวกรอง{chips.length ? ` (${chips.length})` : ''}</span><RIcon name="chevronDown" size={16} className={filtersOpen ? 'flip' : ''} />
         </button>
@@ -262,11 +330,24 @@ export default function ReportList({ type }) {
           )}
           <div className="rx-f rx-f-search"><label>ค้นหา</label>
             <div className="rx-searchbox"><RIcon name="search" size={16} />
-              <input type="search" value={draft.q} placeholder={cfg.searchPh} onChange={e => set('q', e.target.value)} onKeyDown={e => { if (e.key === 'Enter') apply(); }} maxLength={100} /></div>
+              <input type="search" value={draft.q} placeholder={cfg.searchPh} autoComplete="off" role="combobox" aria-expanded={sugOpen && suggestions.length > 0} aria-autocomplete="list"
+                onChange={e => { set('q', e.target.value); setSugOpen(true); setSugIdx(-1); }}
+                onFocus={() => setSugOpen(true)} onBlur={() => setTimeout(() => setSugOpen(false), 150)}
+                onKeyDown={onSearchKey} maxLength={100} /></div>
+            {sugOpen && suggestions.length > 0 && (
+              <ul className="rx-suggest" role="listbox">
+                {suggestions.map((s, i) => (
+                  <li key={s.tag + s.text} role="option" aria-selected={i === sugIdx} className={i === sugIdx ? 'on' : ''}
+                    onMouseDown={(e) => { e.preventDefault(); pickSuggest(s.text); }} onMouseEnter={() => setSugIdx(i)}>
+                    <span>{s.text}</span><small>{s.tag}</small>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <div className="rx-f-actions">
             <button type="button" className="rx-btn ghost" onClick={reset}><RIcon name="refresh" size={15} /> ล้างค่า</button>
-            <button type="button" className="rx-btn primary" onClick={apply}><RIcon name="search" size={15} /> ค้นหา</button>
+            <button type="button" className="rx-btn primary" onClick={() => apply()}><RIcon name="search" size={15} /> ค้นหา</button>
           </div>
         </div>
         {chips.length > 0 && <div className="rx-chips">{chips.map((c, i) => <span key={i} className="rx-chip">{c}</span>)}</div>}

@@ -1,6 +1,7 @@
 // client/src/pages/AdminProfilePermissions.jsx - Admin มอบสิทธิ์แก้ไขโปรไฟล์/คะแนนคนอื่นเป็นพิเศษ
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 
@@ -38,6 +39,7 @@ export default function AdminProfilePermissions() {
 
   return (
     <Layout title="มอบสิทธิ์ผู้ประเมิน (Profile Edit Permissions)">
+      <PageHero icon="badge" tone="purple" title="มอบสิทธิ์ผู้ประเมิน" desc="กำหนดว่าใครประเมิน/แก้โปรไฟล์ของคนอื่นได้เป็นพิเศษ" />
       <div className="card mb-16">
         <div className="card-head"><h3>มอบสิทธิ์เพิ่มเติม</h3></div>
         <div className="card-body">

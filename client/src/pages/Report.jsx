@@ -6,6 +6,7 @@ import Layout from '../components/Layout';
 import { usePageContent } from '../lib/PageContentContext';
 import { useAuth } from '../lib/AuthContext';
 import { api, fmtDate, statusLabel } from '../lib/api';
+import Loading from '../components/Loading';
 
 function pct(v, total) { return total ? Math.round((v / total) * 100) : 0; }
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -116,7 +117,7 @@ export default function Report() {
     });
   }, [requests, from, to]);
 
-  if (!requests) return <Layout title={pc('report.title', 'Report')}><p className="muted">กำลังโหลดข้อมูล...</p></Layout>;
+  if (!requests) return <Layout title={pc('report.title', 'Report')}><Loading /></Layout>;
 
   const total = filtered.length;
   const approved = filtered.filter(r => r.status === 'approved').length;

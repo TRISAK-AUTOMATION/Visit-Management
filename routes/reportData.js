@@ -10,6 +10,8 @@ const { requireAuth } = require('./middleware');
 const { getDepartments } = require('../utils/departments');
 const { logAction } = require('../utils/systemLog');
 const Q = require('../utils/reportQueries');
+const approvalEngine = require('../utils/approvalEngine');
+const { canViewAll } = require('../utils/viewScope');
 const X = require('../utils/reportExport');
 const baseReport = require('./report');
 
@@ -163,7 +165,8 @@ function visitFull(r) {
   const pick = (keys) => Object.fromEntries(keys.map((k) => [k, r[k] === null || r[k] === undefined ? '' : r[k]]));
   return {
     info: pick(['request_date', 'visit_date', 'time_from', 'time_to', 'company', 'customer_name', 'job_type', 'sales_person', 'purpose', 'location', 'product',
-      'transport', 'license_plate', 'mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back', 'ot_hours', 'meeting_start', 'meeting_end', 'participants', 'notes', 'employee', 'dept']),
+      'transport', 'license_plate', 'mileage_out', 'mileage_in', 'actual_time_out', 'actual_time_back', 'ot_hours', 'meeting_start', 'meeting_end', 'participants', 'notes', 'employee', 'dept',
+      'customer_type', 'customer_tax_id', 'tax_invoice_date', 'customer_code', 'customer_address']),
     contacts,
     objective: jparse(r.objective_json, {}) || {},
     during: jparse(r.during_visit_json, {}) || {},
@@ -183,7 +186,7 @@ router.get('/detail/:type/:id', (req, res) => {
     const id = Number(req.params.id);
     let row, fields;
     if (type === 'visit') {
-      row = db.prepare(`SELECT vr.*, c.name AS customer_name, u.full_name AS employee, u.department AS dept, u.position AS pos, a.full_name AS approver_name
+      row = db.prepare(`SELECT vr.*, c.name AS customer_name, c.code AS customer_code, c.address AS customer_address, u.full_name AS employee, u.department AS dept, u.position AS pos, a.full_name AS approver_name
                         FROM visit_requests vr JOIN users u ON u.id = vr.requester_id LEFT JOIN customers c ON c.id = vr.customer_id
                         LEFT JOIN users a ON a.id = vr.approver_id WHERE vr.id = ?`).get(id);
     } else if (type === 'ot') {
@@ -195,7 +198,10 @@ router.get('/detail/:type/:id', (req, res) => {
                         FROM leave_requests lr JOIN users u ON u.id = lr.requester_id LEFT JOIN users a ON a.id = lr.approver_id WHERE lr.id = ?`).get(id);
     }
     if (!row || row.status === 'draft') return bad(res, 'ไม่พบรายการ', 404);
-    if (!sc.mgr && row.requester_id !== sc.userId) return bad(res, 'คุณไม่มีสิทธิ์ดูรายการนี้', 403);
+    // Visit: ผู้อยู่ในสายอนุมัติ/ผู้มีสิทธิ์อนุมัติ ดูได้เหมือนหน้า Approve Requests (ตรงกับสิทธิ์ของ GET /api/visit-requests/:id)
+    const canSee = sc.mgr || row.requester_id === sc.userId
+      || (type === 'visit' && (canViewAll(req.session) || approvalEngine.isWorkflowParticipant('visit', row.id, sc.userId)));
+    if (!canSee) return bad(res, 'คุณไม่มีสิทธิ์ดูรายการนี้', 403);
 
     const stage = type === 'visit' && row.status === 'approved' && row.completed_at ? 'completed' : row.status;
     const sl = Q.STATUS_LABEL[type][stage] || stage;
@@ -237,7 +243,16 @@ router.get('/detail/:type/:id', (req, res) => {
       type, id: row.id, code: row.code, status: stage, status_label: sl, employee_id: row.requester_id,
       fields: fields.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([label, value]) => ({ label, value: String(value) })),
       history,
-      visit: type === 'visit' ? visitFull(row) : undefined
+      visit: type === 'visit' ? visitFull(row) : undefined,
+      workflow: type === 'visit' ? approvalEngine.getWorkflow('visit', id) : undefined,
+      // ช่องที่ Admin สร้างเองใน Form Builder (เช่น เวลาเข้าพบลูกค้า) — ต้องแสดงตามที่ผู้ใช้กรอก
+      custom_fields: type === 'visit'
+        ? db.prepare(`SELECT cf.field_key, cf.label, cf.field_type, v.value FROM visit_custom_values v
+                      JOIN custom_form_fields cf ON cf.id = v.field_id WHERE v.visit_request_id = ? ORDER BY cf.sort_order ASC, cf.id ASC`).all(id)
+        : undefined,
+      customer_signature: type === 'visit'
+        ? (db.prepare('SELECT data_url, signer_name, signer_title, signed_at FROM visit_customer_signatures WHERE visit_request_id = ?').get(id) || null)
+        : undefined
     });
   } catch (err) { fail(res, err, 'ไม่สามารถโหลดรายละเอียดได้'); }
 });

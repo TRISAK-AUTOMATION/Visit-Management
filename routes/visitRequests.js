@@ -8,6 +8,8 @@ const { logAction } = require('../utils/systemLog');
 const approvalEngine = require('../utils/approvalEngine');
 const { canViewAll } = require('../utils/viewScope');
 const { applyVisitLevelToCustomer } = require('../utils/customerLevels');
+const signatureUtil = require('../utils/signature');
+const { timesOverlap, leaveWindow } = require('../utils/overlap');
 
 const router = express.Router();
 
@@ -20,6 +22,7 @@ const CANCELLABLE_STATUSES = ['draft', 'pending', 'revision'];
 // สถานะที่ผู้ขอสามารถกลับมา "อัปเดตข้อมูลหลังปฏิบัติงาน" ได้ (เช่น เวลาออกจริง/เข้าจริง, ไมล์, OT ฯลฯ)
 // อนุญาตเฉพาะคำขอที่อนุมัติแล้ว และการอัปเดตนี้จะไม่เปลี่ยนสถานะ/ไม่ต้องส่งขออนุมัติใหม่ (อนุมัติแค่ครั้งเดียว)
 const POST_VISIT_EDITABLE_STATUSES = ['approved'];
+const COMPLETED_LOCK_MSG = 'คำขอนี้แจ้ง Visit Completed แล้ว ไม่สามารถย้อนกลับหรือแก้ไขข้อมูลได้อีก';
 
 // แปลงวันที่รูปแบบ YYYY-MM-DD (จาก <input type="date">) ให้เป็น วัน/เดือน/ปี ตามรูปแบบไทย
 // ใช้ตอนสร้างข้อความแจ้งเตือน (notifications.message) เพื่อไม่ให้ปนกับรูปแบบสากลที่อ่านสลับกันได้
@@ -238,7 +241,22 @@ router.get('/', requireAuth, (req, res) => {
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY vr.created_at DESC, vr.id DESC
   `;
-  const rows = db.prepare(sql).all(...params);
+  let rows = db.prepare(sql).all(...params);
+  // แบ่งหน้า (ไม่บังคับ): ถ้าส่ง page_size มา จะคืนเฉพาะหน้านั้นพร้อม total; ถ้าไม่ส่ง คืนทั้งหมดเหมือนเดิม
+  const pageSize = Math.min(200, parseInt(req.query.page_size, 10) || 0);
+  const total = rows.length;
+  if (pageSize > 0) {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    rows = rows.slice((page - 1) * pageSize, page * pageSize);
+  }
+  // ประวัติล่าสุดของใบที่รออนุมัติ: ดึงรอบเดียว (เดิมยิง query ทีละใบ)
+  const lastHist = new Map();
+  const pendingIds = scope === 'pending' ? rows.filter((r) => r.status === 'pending').map((r) => r.id) : [];
+  if (pendingIds.length) {
+    db.prepare(`SELECT visit_request_id AS rid, action, note FROM approval_history
+                WHERE visit_request_id IN (${pendingIds.map(() => '?').join(',')}) AND (action LIKE 'ส่งคำขอ%' OR action LIKE 'แก้ไขหลังอนุมัติ%')
+                ORDER BY id ASC`).all(...pendingIds).forEach((h) => lastHist.set(h.rid, h));   // แถวหลังสุดทับแถวก่อนหน้า = ล่าสุด
+  }
   if (scope === 'pending') {
     // บอกหน้าเว็บว่าคนนี้ "กดอนุมัติใบนี้ได้จริงไหม" (อยู่ในรายชื่อผู้อนุมัติ State ปัจจุบันของใบนั้น) จะได้ไม่โชว์ปุ่มที่กดแล้วถูกปฏิเสธ
     // และให้ Admin เห็นปุ่มรีเซ็ตสายอนุมัติ เมื่อใบที่ค้างอยู่ใช้รายชื่อเก่า (เช่น เพิ่มผู้อนุมัติใน Template หลังส่งคำขอ)
@@ -249,12 +267,12 @@ router.get('/', requireAuth, (req, res) => {
       r.waiting_for = approvalEngine.currentApproverNames('visit', r.id).join(', ');
       r.can_resync = isAdminUser && approvalEngine.canResync('visit', r.id);
       // แยก "คำขอใหม่" กับ "คำขอที่ถูกแก้ไขหลังอนุมัติแล้วส่งกลับมา": ดูรายการล่าสุดที่ทำให้ใบนี้กลับมารออนุมัติ
-      const last = db.prepare(`SELECT action, note FROM approval_history WHERE visit_request_id = ? AND (action LIKE 'ส่งคำขอ%' OR action LIKE 'แก้ไขหลังอนุมัติ%') ORDER BY id DESC LIMIT 1`).get(r.id);
+      const last = lastHist.get(r.id);
       r.is_update = !!(last && last.action.startsWith('แก้ไขหลังอนุมัติ'));
       r.update_summary = r.is_update ? (last.note || '') : '';
     }
   }
-  res.json({ requests: rows });
+  res.json(pageSize > 0 ? { requests: rows, total, page_size: pageSize } : { requests: rows });
 });
 
 // ข้อมูลสำหรับหน้าปฏิทิน: เฉพาะคำขอที่ "รออนุมัติ" หรือ "อนุมัติแล้ว" (ไม่รวมฉบับร่าง/ส่งกลับแก้ไข/ไม่อนุมัติ/ยกเลิก) และเลือกเฉพาะคอลัมน์ที่ใช้ (ไม่ส่ง JSON ก้อนใหญ่ของฟอร์มมาด้วย)
@@ -278,6 +296,23 @@ router.get('/calendar/events', requireAuth, (req, res) => {
     if (r.status === 'pending') r.waiting_for = approvalEngine.currentApproverNames('visit', r.id).join(', ');
   }
   res.json({ requests: rows });
+});
+
+// ตรวจ Visit/ลา ของตัวเองที่เวลาทับกัน (ใช้เตือนก่อนส่งคำขอ ไม่บล็อกการส่ง)
+// GET /api/visit-requests/conflicts?date=YYYY-MM-DD&time_from=HH:MM&time_to=HH:MM&exclude_id=
+router.get('/conflicts', requireAuth, (req, res) => {
+  const { date, time_from, time_to } = req.query;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return res.status(400).json({ error: 'วันที่ไม่ถูกต้อง' });
+  const me = req.session.userId, exclude = parseInt(req.query.exclude_id, 10) || 0;
+  const conflicts = [];
+  db.prepare(`SELECT id, code, time_from, time_to, status FROM visit_requests
+              WHERE requester_id = ? AND visit_date = ? AND status IN ('pending','approved') AND id != ?`).all(me, date, exclude)
+    .forEach((v) => { if (timesOverlap(time_from, time_to, v.time_from, v.time_to)) conflicts.push({ type: 'visit', code: v.code, label: `Visit ${v.code} (${v.time_from || '-'}-${v.time_to || '-'})` }); });
+  db.prepare(`SELECT code, leave_type, leave_mode, time_from, time_to FROM leave_requests
+              WHERE requester_id = ? AND status IN ('pending','approved') AND date_from <= ? AND date_to >= ?`).all(me, date, date)
+    .forEach((l) => { const [f, t] = leaveWindow(l.leave_mode, l.time_from, l.time_to);
+      if (timesOverlap(time_from, time_to, f, t)) conflicts.push({ type: 'leave', code: l.code, label: `${l.leave_type} ${l.code}` }); });
+  res.json({ conflicts });
 });
 
 // GET single with history
@@ -315,6 +350,7 @@ router.get('/:id', requireAuth, (req, res) => {
 
   res.json({
     request: vr, history, customFields, workflow,
+    customer_signature: db.prepare('SELECT data_url, signer_name, signer_title, signed_at FROM visit_customer_signatures WHERE visit_request_id = ?').get(vr.id) || null,
     can_act: vr.status === 'pending' && approvalEngine.canActOn('visit', vr.id, req.session.userId),
     can_resync: isAdmin && vr.status === 'pending' && approvalEngine.canResync('visit', vr.id)
   });
@@ -536,6 +572,7 @@ router.put('/:id', requireAuth, (req, res) => {
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
   if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
   if (vr.requester_id !== req.session.userId) return res.status(403).json({ error: 'ไม่มีสิทธิ์แก้ไขคำขอนี้' });
+  if (vr.completed_at) return res.status(400).json({ error: COMPLETED_LOCK_MSG });
   const isPostVisitUpdate = POST_VISIT_EDITABLE_STATUSES.includes(vr.status);
   if (!EDITABLE_STATUSES.includes(vr.status) && !isPostVisitUpdate) {
     return res.status(400).json({ error: 'ไม่สามารถแก้ไขคำขอที่ดำเนินการแล้วได้' });
@@ -580,6 +617,7 @@ router.put('/:id', requireAuth, (req, res) => {
           // มีการเปลี่ยนแปลงจริง -> กลับไปรออนุมัติใหม่ตั้งแต่ State แรก (ใช้ Template ล่าสุด) และจดสิ่งที่เปลี่ยนไว้ให้ผู้อนุมัติเห็น
           db.prepare(`UPDATE visit_requests SET status = 'pending', approver_id = NULL, approved_at = NULL, approval_note = '' WHERE id = ?`).run(req.params.id);
           approvalEngine.createWorkflow('visit', vr.id, req.session.userId);
+          db.prepare('DELETE FROM visit_customer_signatures WHERE visit_request_id = ?').run(req.params.id); // ข้อมูลเปลี่ยนหลังลูกค้าเซ็น -> ลายเซ็นเดิมใช้ไม่ได้ ต้องเซ็นใหม่
         }
       }
     })();
@@ -625,15 +663,54 @@ router.post('/:id/complete', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// REOPEN: ผู้ขอย้อนกลับจาก "Visit Completed" มาเป็น "อนุมัติแล้ว (กำลังดำเนินการ)" เผื่อกดผิด
+// REOPEN: ปิดถาวร — Visit Completed แล้วเป็นสถานะสุดท้าย ย้อนกลับ/แก้ไขข้อมูลไม่ได้อีก
+// (คง route ไว้เพื่อให้หน้าเว็บเก่าที่ยังแคชอยู่ได้ข้อความที่ชัดเจน แทนที่จะเจอ 404)
 router.post('/:id/reopen', requireAuth, (req, res) => {
+  res.status(400).json({ error: COMPLETED_LOCK_MSG });
+});
+
+// ===== ลายเซ็นลูกค้า (ลูกค้าเซ็นบนหน้าจอเครื่องพนักงานตอนเข้า Visit) =====
+// เงื่อนไข: เจ้าของคำขอเท่านั้น, คำขอต้อง "อนุมัติแล้ว" และยังไม่กด Visit Completed (หลังแจ้งเสร็จสิ้น ลายเซ็นถูกล็อก — ต้องกดย้อนกลับก่อนถึงจะเปลี่ยนได้)
+function loadSignableVisit(req, res) {
   const vr = db.prepare('SELECT * FROM visit_requests WHERE id = ?').get(req.params.id);
-  if (!vr) return res.status(404).json({ error: 'ไม่พบคำขอ' });
-  if (vr.requester_id !== req.session.userId) return res.status(403).json({ error: 'ไม่มีสิทธิ์ปรับสถานะคำขอนี้' });
-  if (vr.status !== 'approved' || !vr.completed_at) return res.status(400).json({ error: 'คำขอนี้ยังไม่ได้แจ้งเสร็จสิ้น' });
-  db.prepare(`UPDATE visit_requests SET completed_at = NULL, completion_note = NULL WHERE id = ?`).run(vr.id);
-  db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'ย้อนกลับเป็นกำลังดำเนินการ', 'web')`).run(vr.id, req.session.userId);
-  logAction(req.session.userId, 'reopen_visit', `ย้อนสถานะ Visit เป็นกำลังดำเนินการ #${vr.code}`);
+  if (!vr) { res.status(404).json({ error: 'ไม่พบคำขอ' }); return null; }
+  if (vr.requester_id !== req.session.userId) { res.status(403).json({ error: 'ไม่มีสิทธิ์จัดการลายเซ็นของคำขอนี้' }); return null; }
+  if (vr.status !== 'approved') { res.status(400).json({ error: 'ให้ลูกค้าเซ็นได้เฉพาะคำขอที่อนุมัติแล้ว' }); return null; }
+  if (vr.completed_at) { res.status(400).json({ error: 'คำขอนี้แจ้ง Visit Completed แล้ว ลายเซ็นถูกล็อก ไม่สามารถเปลี่ยนได้อีก' }); return null; }
+  return vr;
+}
+
+router.post('/:id/customer-signature', requireAuth, (req, res) => {
+  const vr = loadSignableVisit(req, res);
+  if (!vr) return;
+  const { data_url } = req.body || {};
+  const name = String((req.body || {}).signer_name || '').replace(/\s+/g, ' ').trim();
+  const title = String((req.body || {}).signer_title || '').replace(/\s+/g, ' ').trim();
+  if (!name) return res.status(400).json({ error: 'กรุณาระบุชื่อ-นามสกุลผู้เซ็น' });
+  if (name.length > 100 || title.length > 100) return res.status(400).json({ error: 'ชื่อหรือตำแหน่งยาวเกินไป (สูงสุด 100 ตัวอักษร)' });
+  const parsed = signatureUtil.parseDataUrl(data_url);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  db.transaction(() => {
+    db.prepare(`
+      INSERT INTO visit_customer_signatures (visit_request_id, data_url, signer_name, signer_title, signed_at, recorded_by)
+      VALUES (?, ?, ?, ?, datetime('now'), ?)
+      ON CONFLICT(visit_request_id) DO UPDATE SET data_url = excluded.data_url, signer_name = excluded.signer_name,
+        signer_title = excluded.signer_title, signed_at = excluded.signed_at, recorded_by = excluded.recorded_by
+    `).run(vr.id, data_url, name, title, req.session.userId);
+    db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, note, channel) VALUES (?, ?, 'ลูกค้าเซ็นรับทราบ', ?, 'web')`)
+      .run(vr.id, req.session.userId, title ? `${name} (${title})` : name);
+  })();
+  logAction(req.session.userId, 'customer_signature', `ลูกค้าเซ็นรับทราบ #${vr.code} (${name})`);
+  res.json({ ok: true });
+});
+
+router.delete('/:id/customer-signature', requireAuth, (req, res) => {
+  const vr = loadSignableVisit(req, res);
+  if (!vr) return;
+  const info = db.prepare('DELETE FROM visit_customer_signatures WHERE visit_request_id = ?').run(vr.id);
+  if (!info.changes) return res.status(404).json({ error: 'ยังไม่มีลายเซ็นลูกค้า' });
+  db.prepare(`INSERT INTO approval_history (visit_request_id, action_by, action, channel) VALUES (?, ?, 'ลบลายเซ็นลูกค้า', 'web')`).run(vr.id, req.session.userId);
+  logAction(req.session.userId, 'delete_customer_signature', `ลบลายเซ็นลูกค้า #${vr.code}`);
   res.json({ ok: true });
 });
 
@@ -657,6 +734,7 @@ function deleteVisitRequestCascade(id) {
   db.prepare('DELETE FROM approval_history WHERE visit_request_id = ?').run(id);
   db.prepare('DELETE FROM approval_tokens WHERE visit_request_id = ?').run(id);
   db.prepare('DELETE FROM visit_custom_values WHERE visit_request_id = ?').run(id);
+  db.prepare('DELETE FROM visit_customer_signatures WHERE visit_request_id = ?').run(id);
   db.prepare('DELETE FROM notifications WHERE related_id = ?').run(id);
   db.prepare(`DELETE FROM request_workflows WHERE module = 'visit' AND request_id = ?`).run(id); // ลบ workflow snapshot ด้วย (CASCADE ลบ states/approvers ตามไปเอง)
   db.prepare('DELETE FROM visit_requests WHERE id = ?').run(id);
@@ -666,6 +744,7 @@ function deleteVisitRequestCascade(id) {
 // หมายเหตุ: ต้อง define ไว้ "ก่อน" router.delete('/:id') ด้านล่าง เพราะ Express จับเส้นทางตามลำดับที่ประกาศ
 // ถ้า '/:id' อยู่ก่อน จะจับ '/bulk/all' เป็น id='bulk' แทนที่จะไปเส้นทางนี้
 router.delete('/bulk/all', requireAuth, requireRole('Admin'), (req, res) => {
+  if (!require('../utils/testDataCleanup').isEnabled()) return res.status(403).json({ error: 'ฟังก์ชันล้างข้อมูลทดสอบถูกปิดอยู่ (เปิดได้ที่หน้าตั้งค่าการลบข้อมูลอัตโนมัติ)' });
   const rows = db.prepare('SELECT id FROM visit_requests').all();
   const tx = db.transaction(() => {
     rows.forEach(r => deleteVisitRequestCascade(r.id));

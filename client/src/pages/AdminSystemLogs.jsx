@@ -1,6 +1,7 @@
 // client/src/pages/AdminSystemLogs.jsx - หน้าดู audit trail (System Logs) สำหรับ Admin
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
+import PageHero from '../components/PageHero';
 import { api, fmtDateTime } from '../lib/api';
 
 const ACTION_TH = {
@@ -42,6 +43,7 @@ export default function AdminSystemLogs() {
 
   return (
     <Layout title="System Logs">
+      <PageHero icon="list" tone="slate" title="System Logs" desc="Audit Trail — บันทึกการกระทำสำคัญทั้งหมดของระบบ" />
       <div className="flex between mb-16">
         <h3 style={{ margin: 0 }}>บันทึกการใช้งานระบบ (Audit Trail)</h3>
         <select value={filter} onChange={onFilterChange} style={{ padding: '8px 12px', borderRadius: 9, border: '1px solid var(--border)' }}>

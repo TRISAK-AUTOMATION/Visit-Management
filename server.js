@@ -11,7 +11,11 @@ const PORT = process.env.PORT || 3000;
 // เพื่อให้รู้ว่าผู้ใช้เข้าผ่าน https (cookie แบบ secure) และได้ IP จริงของผู้ใช้ (ใช้จำกัดการล็อกอินผิด)
 app.set('trust proxy', 1);
 
-app.use(express.json({ limit: '8mb' })); // เผื่อรองรับ custom field ประเภทแนบไฟล์ (Form Builder) ที่ส่งเป็น base64
+app.use(require('./utils/securityHeaders'));
+// รับ JSON ขนาดใหญ่ (ไฟล์แนบ/ลายเซ็น/โลโก้/รูปโปรไฟล์ เป็น base64) เฉพาะเส้นทางที่จำเป็น ที่เหลือจำกัด 1MB
+const bigJson = express.json({ limit: '8mb' });
+['/api/visit-requests', '/api/leave-requests', '/api/pdf-settings', '/api/users', '/api/form-fields'].forEach((p) => app.use(p, bigJson));
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true })); // สำหรับฟอร์มยืนยันอนุมัติ/ไม่อนุมัติที่ส่งมาจากลิงก์ในอีเมล
 // secret ของ session ควรตั้งใน .env (SESSION_SECRET=ข้อความสุ่มยาวๆ) ไม่ควรเขียนตายตัวในโค้ด
 if (!process.env.SESSION_SECRET) {
@@ -35,6 +39,7 @@ app.use(session({
 }));
 
 // ---------- เตรียมฐานข้อมูล: เพิ่ม index ที่ยังไม่มี (ไม่แตะข้อมูล) ----------
+require('./utils/dbMaintenance').ensureTables(require('./db/database'));
 require('./utils/dbMaintenance').ensureColumns(require('./db/database'));
 require('./utils/dbMaintenance').ensureIndexes(require('./db/database'));
 
@@ -56,6 +61,7 @@ app.use('/api/approval-templates', require('./routes/approvalTemplates'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/departments', require('./routes/departments'));
+app.use('/api/holidays', require('./routes/holidays'));
 app.use('/api/visit-requests', require('./routes/visitFormPdf')); // ใบขออนุมัติออกนอกสถานที่ (ครึ่ง A4) = /:id/pdf
 app.use('/api/visit-requests', require('./routes/pdf')); // ใบรายงานแบบเต็ม = /:id/pdf-report
 app.use('/api/system-logs', require('./routes/systemLogs'));
@@ -93,6 +99,8 @@ app.listen(PORT, () => {
   // ---------- ตัวจับเวลาลบข้อมูลอัตโนมัติ (Data Retention) ----------
   // เช็คทุก 24 ชม. ว่ามีกฎไหนเปิดใช้งานอยู่บ้าง แล้วลบข้อมูลที่เก่าเกินกำหนดตามกฎนั้น
   // รันครั้งแรกหลังสตาร์ท 2 นาที (ไม่รอเต็มวันแรก) จากนั้นรันซ้ำทุก 24 ชม.
+  require('./utils/backup').startBackupSchedule(require('./db/database'));
+  require('./utils/approvalReminders').startReminderSchedule(require('./db/database')); // เตือนผู้อนุมัติเมื่อใบค้างเกิน 1 วัน (ทุกชั่วโมงตรวจ) // สำรองฐานข้อมูลทุก 24 ชม. (db/backups)
   const { runRetentionCleanup } = require('./utils/retention');
   const DAY_MS = 24 * 60 * 60 * 1000;
   setTimeout(() => {

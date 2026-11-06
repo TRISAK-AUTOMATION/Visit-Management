@@ -51,9 +51,29 @@ function vehicleKind(tr) {
   return 'other';
 }
 
+// SQLite เก็บเวลาเป็น UTC -> "dd/mm/yyyy HH:MM น." (Asia/Bangkok)
+function bangkokDateTime(utcStr) {
+  if (!utcStr) return '';
+  const d = new Date(String(utcStr).replace(' ', 'T') + 'Z');
+  if (isNaN(d)) return String(utcStr);
+  const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Bangkok', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d);
+  const g = (t) => p.find(x => x.type === t).value;
+  return `${g('day')}/${g('month')}/${g('year')} ${g('hour')}:${g('minute')} น.`;
+}
+
 function render(req, res, r, settings) {
   const DOC = (settings && settings.docs && settings.docs.visit_form) || { title: 'ใบขออนุมัติออกนอกสถานที่', subtitle: '(Visit Request Form)', show_signature: true, footer: '' };
-  const requester = db.prepare('SELECT phone FROM users WHERE id = ?').get(r.requester_id) || {};
+  // ค่า "เวลาเข้าพบลูกค้า" จาก custom field ชนิดเวลา (หาจากชื่อ label หรือ key) — ถ้าไม่มีใช้ meeting_start ที่เคยบันทึกไว้
+  const mt = db.prepare(`
+    SELECT v.value FROM visit_custom_values v JOIN custom_form_fields cf ON cf.id = v.field_id
+    WHERE v.visit_request_id = ? AND cf.field_type IN ('time', 'datetime') AND v.value IS NOT NULL AND TRIM(v.value) <> ''
+      AND (cf.label LIKE '%เวลาเข้าพบ%' OR cf.label LIKE '%เวลาพบลูกค้า%' OR cf.field_key LIKE '%meeting%' OR cf.field_key LIKE '%visit_time%')
+    ORDER BY cf.sort_order ASC, cf.id ASC LIMIT 1`).get(r.id);
+  const meetingTime = String((mt && mt.value) || r.meeting_start || '').slice(-5);
+  // ลายเซ็นลูกค้า (ถ้าลูกค้าเซ็นบนหน้าจอแล้ว) -> เพิ่มช่อง "ลูกค้ารับทราบ" เป็นคอลัมน์ที่ 3 ในแถวลายเซ็น
+  const custRow = db.prepare('SELECT data_url, signer_name, signer_title, signed_at FROM visit_customer_signatures WHERE visit_request_id = ?').get(r.id);
+  const custParsed = custRow ? signature.parseDataUrl(custRow.data_url) : null;
+  const custSig = custParsed && !custParsed.error ? custParsed.buffer : null;
   const contactsRaw = safeParse(r.contacts_json, []);
   const c0 = (Array.isArray(contactsRaw) && contactsRaw[0]) || {};
   const objective = safeParse(r.objective_json, {}) || {};
@@ -201,6 +221,16 @@ function wordBreak(t, limit) {
   // ---------- โครงตารางเดียวกันทั้งใบ: เส้นแบ่งคอลัมน์ขวาและตำแหน่ง ":" ตรงกันทุกหัวข้อ ----------
   const LX = L + 6, LLW = 110, LEND = COL2 - 12;   // คอลัมน์ซ้าย: label กว้าง LLW
   const RX = COL2 + 8, RLW = 84;                   // คอลัมน์ขวา: label กว้าง RLW
+  // แถวช่วงเวลา "xx:xx - xx:xx น." ใช้ซ้ำทั้งหัวข้อ 1 (เวลาเดินทาง) และหัวข้อ 3 (เวลาเข้าพบลูกค้า)
+  const timeRow = (text, from, to, yy) => {
+    label(text, LX, yy);
+    label(':', LX + LLW - 8, yy);
+    const tx = LX + LLW, tw = 44;
+    dots(tx, tx + tw, yy + DOT); fit(from, tx, yy, tw, 'center');
+    label('-', tx + tw + 4, yy);
+    dots(tx + tw + 14, tx + tw * 2 + 14, yy + DOT); fit(to, tx + tw + 14, yy, tw, 'center');
+    label('น.', tx + tw * 2 + 18, yy);
+  };
   const sep = (yy) => doc.save().lineWidth(0.5).strokeColor('#9a9a9a').moveTo(L, yy).lineTo(R, yy).stroke().restore();
 
   // ---------- 1. ข้อมูลผู้ขออนุมัติ ----------
@@ -213,6 +243,7 @@ function wordBreak(t, limit) {
   label('วันที่เดินทาง', LX, y + GAP * 3);
   label(':', LX + LLW - 8, y + GAP * 3);
   dateParts(LX + LLW, y + GAP * 3, r.visit_date, [34, 34, 44]);
+  timeRow('เวลา', r.time_from, r.time_to, y + GAP * 4);
   const tk = travelKind(r.job_type);
   label('ประเภทการเดินทาง :', RX, y);
   let cx = RX;
@@ -223,8 +254,7 @@ function wordBreak(t, limit) {
   if (tk === 'other') fit(r.job_type, cx + 2, y + GAP - 1, R - cx - 4);
   const py = y + GAP * 2 + 1;
   const pn = rowMulti('ผู้เดินทางร่วม', participants, RX, py, RLW, R, 2);
-  row('เบอร์โทร (ติดต่อได้)', requester.phone, RX, py + GAP * pn, RLW, R);
-  const s1End = Math.max(y + GAP * 4, py + GAP * (pn + 1));
+  const s1End = Math.max(y + GAP * 5, py + GAP * pn);
   vbar(COL2, s1 - 1, s1End + 1);
   y = s1End + 3; sep(y); y += 6;
 
@@ -250,13 +280,12 @@ function wordBreak(t, limit) {
   label(':', LX + LLW - 8, dy);
   dateParts(LX + LLW, dy, r.visit_date, [34, 34, 44]);
   const ty = dy + GAP;
-  label('เวลา', LX, ty);
+  // เวลาเข้าพบลูกค้า: ช่องเวลา (time) ที่ Admin สร้างใน Form Builder ชื่อ "เวลาเข้าพบลูกค้า" — เป็นเวลาเดียว (คนละส่วนกับ Time Out/Time In)
+  label('เวลาเข้าพบลูกค้า', LX, ty);
   label(':', LX + LLW - 8, ty);
-  const tx = LX + LLW, tw = 44;
-  dots(tx, tx + tw, ty + DOT); fit(r.time_from, tx, ty, tw, 'center');
-  label('-', tx + tw + 4, ty);
-  dots(tx + tw + 14, tx + tw * 2 + 14, ty + DOT); fit(r.time_to, tx + tw + 14, ty, tw, 'center');
-  label('น.', tx + tw * 2 + 18, ty);
+  const mtx = LX + LLW, mtw = 44;
+  dots(mtx, mtx + mtw, ty + DOT); fit(meetingTime, mtx, ty, mtw, 'center');
+  label('น.', mtx + mtw + 4, ty);
   const vk = vehicleKind(r.transport);
   label('ยานพาหนะ :', RX, y);
   let vx = RX + 54;
@@ -271,11 +300,16 @@ function wordBreak(t, limit) {
   vbar(COL2, s3 - 1, s3End + 1);
   y = s3End + 4;
 
-  // ---------- ลายเซ็น 2 ช่อง (ไม่มีวันที่ใต้ลายเซ็น) ----------
-  const colW = 190;
-  const sx1 = L + (W / 2 - colW) / 2 + 8, sx2 = L + W / 2 + (W / 2 - colW) / 2 - 8;
+  // ---------- ลายเซ็น 2 ช่อง (ผู้ปฏิบัติงาน / ผู้อนุมัติ) + ช่อง 3 "ลูกค้ารับทราบ" เมื่อลูกค้าเซ็นแล้ว ----------
+  const hasCust = !!(custRow && custSig);   // ลูกค้าเซ็นบนหน้าจอแล้วหรือยัง (ถ้ายัง ช่องนี้ว่างไว้ให้ลูกค้าเซ็นมือบนกระดาษได้)
+  const sigCols = [['ผู้ปฏิบัติงาน', r.requester_name, requesterSig], ['ผู้อนุมัติ', approverName, approverSig],
+                   ['ลูกค้ารับทราบ', hasCust ? custRow.signer_name : '', hasCust ? custSig : null]];
+  const colW = 160;
+  const slotW = W / sigCols.length;
   const sigLineY = y + 24;
-  if (DOC.show_signature) [[sx1, 'ผู้ปฏิบัติงาน', r.requester_name, requesterSig], [sx2, 'ผู้อนุมัติ', approverName, approverSig]].forEach(([x, role, name, sig]) => {
+  const custNote = hasCust ? (custRow.signer_title || '') : '';   // ตำแหน่งผู้เซ็น (ไม่แสดงวันเวลาที่เซ็น)
+  if (DOC.show_signature) sigCols.forEach(([role, name, sig], i) => {
+    const x = L + i * slotW + (slotW - colW) / 2;
     signature.draw(doc, sig, x, colW, sigLineY, 24);
     dots(x, x + colW, sigLineY);
     doc.font('regular').fontSize(FS).fillColor(INK).text(role, x, sigLineY + 2, { width: colW, align: 'center', lineBreak: false });
@@ -283,8 +317,11 @@ function wordBreak(t, limit) {
     dots(x + 12, x + colW - 12, sigLineY + 15 + DOT);
     fit(name, x + 14, sigLineY + 15, colW - 30, 'center');
     label(')', x + colW - 8, sigLineY + 15);
+    if (hasCust && i === 2 && custNote) {
+      doc.font('regular').fontSize(7).fillColor('#444444').text(custNote, x - 10, sigLineY + 15 + DOT + 3, { width: colW + 20, align: 'center', lineBreak: false, ellipsis: true });
+    }
   });
-  let bottom = DOC.show_signature ? sigLineY + 15 + DOT + 2 : y + 2;
+  let bottom = DOC.show_signature ? sigLineY + 15 + DOT + 2 + (hasCust ? 8 : 0) : y + 2;
   if (DOC.footer) { doc.font('regular').fontSize(7.5).fillColor('#666666').text(DOC.footer, L, bottom + 3, { width: W, align: 'center', lineBreak: false, ellipsis: true }); bottom += 11; }
   if (bottom > HALF - 8) console.warn(`[visit-form-pdf] เนื้อหาล้นครึ่ง A4 (${Math.round(bottom)} > ${Math.round(HALF - 8)}) ใบ ${r.code}`);
 

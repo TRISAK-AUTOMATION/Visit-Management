@@ -1,5 +1,6 @@
 // client/src/App.jsx
 import React from 'react';
+import GlobalLoading from './components/GlobalLoading';
 import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useAuth } from './lib/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -55,6 +56,8 @@ function ReportEmployeeGuard() {
 
 export default function App() {
   return (
+    <>
+    <GlobalLoading />
     <Routes>
       <Route path="/login" element={<Login />} />
 
@@ -96,5 +99,6 @@ export default function App() {
       <Route path="/" element={<Navigate to="/profile" replace />} />
       <Route path="*" element={<Navigate to="/profile" replace />} />
     </Routes>
+    </>
   );
 }
