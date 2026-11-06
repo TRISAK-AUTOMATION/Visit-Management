@@ -20,9 +20,9 @@ function setEnabled(on) {
 function refundPlan() {
   const settings = entitlement.getSettings();
   const rows = db.prepare(`
-    SELECT lr.id, lr.requester_id, lr.leave_type, lr.duration_days, lr.approved_at, u.start_date
+    SELECT lr.id, lr.requester_id, lr.leave_type, lr.duration_days + lr.duration_hours / 8.0 AS duration_days, lr.date_from, u.start_date
     FROM leave_requests lr JOIN users u ON u.id = lr.requester_id
-    WHERE lr.status = 'approved' AND lr.duration_days > 0
+    WHERE lr.status = 'approved' AND (lr.duration_days > 0 OR lr.duration_hours > 0)
   `).all();
   const perUser = new Map(); // userId -> { vacation_used, personal_used, sick_used }
   const total = { vacation_used: 0, personal_used: 0, sick_used: 0 };
@@ -30,8 +30,10 @@ function refundPlan() {
   for (const r of rows) {
     const col = TYPE_COL[r.leave_type];
     if (!col) continue;
-    if (!cycles.has(r.requester_id)) cycles.set(r.requester_id, entitlement.cycleFor(r.start_date, settings).start);
-    if (String(r.approved_at || '').slice(0, 10) < cycles.get(r.requester_id)) continue;
+    // หักสิทธิ์ตามรอบของวันที่ลา (routes/leave.js balanceTarget) — คืนเฉพาะใบที่วันที่ลาอยู่ในรอบปัจจุบัน
+    if (!cycles.has(r.requester_id)) cycles.set(r.requester_id, entitlement.cycleFor(r.start_date, settings));
+    const cur = cycles.get(r.requester_id);
+    if (!(r.date_from >= cur.start && r.date_from <= cur.end)) continue;
     const u = perUser.get(r.requester_id) || { vacation_used: 0, personal_used: 0, sick_used: 0 };
     u[col] += r.duration_days;
     total[col] += r.duration_days;
@@ -48,7 +50,7 @@ function summary() {
     visit: { total: count('SELECT COUNT(*) c FROM visit_requests') },
     leave: {
       total: count('SELECT COUNT(*) c FROM leave_requests'),
-      approved: count(`SELECT COUNT(*) c FROM leave_requests WHERE status = 'approved' AND duration_days > 0`),
+      approved: count(`SELECT COUNT(*) c FROM leave_requests WHERE status = 'approved' AND (duration_days > 0 OR duration_hours > 0)`),
       refund: { vacation: total.vacation_used, personal: total.personal_used, sick: total.sick_used }
     },
     ot: { total: count('SELECT COUNT(*) c FROM ot_requests') }

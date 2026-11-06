@@ -62,7 +62,7 @@ router.get('/', requireAuth, (req, res) => {
 
   // ===== วันลา: ใช้ logic เดียวกับหน้า Leave (buildLeaveSummary) + จำนวนวันที่รออนุมัติแยกต่างหาก =====
   const sum = leaveRouter.buildLeaveSummary(uid);
-  const pend = db.prepare(`SELECT leave_type, COALESCE(SUM(duration_days),0) d, COUNT(*) n FROM leave_requests WHERE requester_id = ? AND status = 'pending' GROUP BY leave_type`).all(uid);
+  const pend = db.prepare(`SELECT leave_type, COALESCE(SUM(duration_days + duration_hours / 8.0),0) d, COUNT(*) n FROM leave_requests WHERE requester_id = ? AND status = 'pending' GROUP BY leave_type`).all(uid);
   const pendMap = {}; pend.forEach(r => { pendMap[r.leave_type] = r; });
   const leave = [
     ['ลาพักร้อน', 'vacation', true], ['ลากิจ', 'personal', true], ['ลาป่วย', 'sick', false]

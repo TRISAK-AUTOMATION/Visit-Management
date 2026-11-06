@@ -701,10 +701,10 @@ export default function VisitRequest() {
         toast(`บันทึกฉบับร่างสำเร็จ (${r.code})`, 'success');
       }
       clearLocalDraft(); baseline.current = snapshot;
+      // สำเร็จแล้วคงปุ่มไว้ในสถานะ saving จนเปลี่ยนหน้า (กันกดซ้ำแล้วได้คำขอซ้ำ)
       setTimeout(() => navigate('/my-requests'), 600);
     } catch (e) {
       toast(e.message, 'error');
-    } finally {
       setSaving(false);
     }
   };
@@ -749,10 +749,10 @@ export default function VisitRequest() {
         toast(`ส่งคำขอสำเร็จ (${r.code})`, 'success');
       }
       clearLocalDraft(); baseline.current = snapshot;
+      // สำเร็จแล้วคงปุ่มไว้ในสถานะ saving จนเปลี่ยนหน้า (กันกดซ้ำแล้วได้คำขอซ้ำ)
       setTimeout(() => navigate('/my-requests'), 800);
     } catch (er) {
       toast(er.message, 'error');
-    } finally {
       setSaving(false);
     }
   };

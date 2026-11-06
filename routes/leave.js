@@ -32,15 +32,65 @@ const QUOTA_RULES = {
   'ลาป่วย':    { total: 'sick_total',     used: 'sick_used',     enforce: false }
 };
 const fmtDays = (n) => (Math.round(n * 100) / 100).toString();
-function quotaError(userId, leaveType, days, excludeRequestId) {
+// ลารายชั่วโมงหักสิทธิ์เป็นวัน: 8 ชม. = 1 วัน (ตรงกับรายงาน routes/report.js, utils/reportQueries.js)
+const HOURS_PER_DAY = 8;
+function chargeDays(r) {
+  return (Number(r.duration_days) || 0) + (Number(r.duration_hours) || 0) / HOURS_PER_DAY;
+}
+
+// ใบลาต้องมีข้อมูลครบก่อนเข้าสู่การอนุมัติ (ฉบับร่างบันทึกโดยไม่มีวันที่/รูปแบบได้ จึงต้องตรวจซ้ำตอน submit/resubmit)
+function leaveCompleteError(lr) {
+  if (!isValidLeaveType(lr.leave_type)) return 'กรุณาเลือกประเภทการลาให้ถูกต้อง';
+  if (!isValidLeaveMode(lr.leave_mode)) return 'กรุณาเลือกรูปแบบการลาให้ถูกต้อง';
+  if (!lr.date_from) return 'กรุณาระบุวันที่ลา';
+  if (!lr.reason || !String(lr.reason).trim()) return 'กรุณาระบุเหตุผลการลา';
+  if (lr.leave_mode === 'hours' && (!lr.time_from || !lr.time_to || !(lr.duration_hours > 0))) return 'กรุณาระบุเวลาเริ่มต้นและสิ้นสุด';
+  return null;
+}
+
+// ใบลาหักสิทธิ์ตาม "รอบของวันที่ลา" ไม่ใช่วันที่อนุมัติ — คืน { start, end, row (มี *_total/*_used), apply(col, delta) }
+//   รอบปัจจุบัน -> หักที่ leave_balances
+//   รอบหน้า     -> ยังไม่หักตอนนี้ (apply ไม่ทำอะไร) เพราะ entitlement.rollCycle จะหักให้ตอนขึ้นรอบใหม่
+//                  โควตาเทียบกับสิทธิ์ที่คาดว่าจะได้ในรอบนั้น ลบใบที่อนุมัติไว้ล่วงหน้าแล้ว
+//   รอบก่อน     -> (ลาย้อนหลังข้ามรอบ) หักที่ leave_balance_history ของรอบนั้น ถ้าไม่มีประวัติรอบนั้นให้หักรอบปัจจุบันแทน
+function balanceTarget(userId, dateFrom) {
+  const bal = ensureBalance(userId);
+  const settings = entitlement.getSettings();
+  const u = db.prepare('SELECT start_date FROM users WHERE id = ?').get(userId) || {};
+  const cur = entitlement.cycleFor(u.start_date, settings);
+  const cyc = checks.dateNum(dateFrom) === null ? cur : entitlement.cycleFor(u.start_date, settings, dateFrom);
+  const current = {
+    start: cur.start, end: cur.end, row: bal,
+    apply: (col, delta) => db.prepare(`UPDATE leave_balances SET ${col} = MAX(0, ${col} + ?), updated_at = datetime('now') WHERE user_id = ?`).run(delta, userId)
+  };
+  if (cyc.key === cur.key) return current;
+  if (cyc.start > cur.start) {
+    const row = { ...bal };
+    if (bal.auto_entitlement && u.start_date) {
+      Object.assign(row, entitlement.computeTotals(entitlement.tenureMonths(u.start_date, cyc.start), undefined, entitlement.prorateFactor(u.start_date, settings, cyc.start)));
+    }
+    Object.assign(row, entitlement.approvedUsedInRange(userId, cyc.start, cyc.end));
+    return { start: cyc.start, end: cyc.end, row, label: ` (รอบ ${cyc.start} ถึง ${cyc.end}) `, apply: () => {} };
+  }
+  const hist = db.prepare('SELECT * FROM leave_balance_history WHERE user_id = ? AND cycle_key = ? ORDER BY id DESC LIMIT 1').get(userId, cyc.key);
+  if (!hist) return { ...current, start: cyc.start };
+  return {
+    start: cyc.start, end: cyc.end, row: hist, label: ` (รอบ ${cyc.start} ถึง ${cyc.end}) `,
+    apply: (col, delta) => db.prepare(`UPDATE leave_balance_history SET ${col} = MAX(0, ${col} + ?) WHERE id = ?`).run(delta, hist.id)
+  };
+}
+const USED_COL = entitlement.USED_COL;
+
+function quotaError(userId, leaveType, days, excludeRequestId, dateFrom) {
   const rule = QUOTA_RULES[leaveType];
   if (!rule || !rule.enforce || !(days > 0)) return null;
-  const bal = ensureBalance(userId);
-  const reserved = db.prepare(`SELECT COALESCE(SUM(duration_days), 0) AS d FROM leave_requests WHERE requester_id = ? AND leave_type = ? AND status = 'pending' AND id != ?`)
-    .get(userId, leaveType, excludeRequestId || 0).d;
-  const remaining = bal[rule.total] - bal[rule.used] - reserved;
+  const t = balanceTarget(userId, dateFrom);
+  const reserved = db.prepare(`SELECT COALESCE(SUM(duration_days + duration_hours / ${HOURS_PER_DAY}.0), 0) AS d FROM leave_requests
+    WHERE requester_id = ? AND leave_type = ? AND status = 'pending' AND id != ? AND date_from BETWEEN ? AND ?`)
+    .get(userId, leaveType, excludeRequestId || 0, t.start, t.end).d;
+  const remaining = (t.row[rule.total] || 0) - (t.row[rule.used] || 0) - reserved;
   if (days > remaining + 1e-9) {
-    return `สิทธิ์${leaveType}คงเหลือ ${fmtDays(Math.max(0, remaining))} วัน` +
+    return `สิทธิ์${leaveType}${t.label || ''}คงเหลือ ${fmtDays(Math.max(0, remaining))} วัน` +
       `${reserved > 0 ? ` (รวมที่รออนุมัติอยู่ ${fmtDays(reserved)} วันแล้ว)` : ''} ไม่พอสำหรับการลา ${fmtDays(days)} วัน กรุณาติดต่อผู้ดูแลระบบหากต้องการปรับสิทธิ์`;
   }
   return null;
@@ -235,6 +285,7 @@ router.post('/', requireAuth, (req, res) => {
   const { leave_type, leave_mode, date_from, reason, attachment, save_as } = req.body;
   const isDraft = save_as === 'draft';
   if (!isValidAttachment(attachment)) return res.status(400).json({ error: 'ไฟล์แนบไม่ถูกต้องหรือมีขนาดใหญ่เกินไป' });
+  { const bad = checks.leaveInputError(req.body); if (bad) return res.status(400).json({ error: bad }); }
 
   if (!isDraft) {
     if (!isValidLeaveType(leave_type)) return res.status(400).json({ error: 'กรุณาเลือกประเภทการลาให้ถูกต้อง' });
@@ -254,13 +305,12 @@ router.post('/', requireAuth, (req, res) => {
     }
   }
 
-  { const bad = checks.leaveInputError(req.body); if (bad) return res.status(400).json({ error: bad }); }
   const dur = (leave_mode && date_from) ? computeDuration(req.body) : { duration_days: 0, duration_hours: 0, date_to: date_from || '', time_from: req.body.time_from || '', time_to: req.body.time_to || '' };
   if (!isDraft && leave_mode === 'full_day' && dur.duration_days === 0) return res.status(400).json({ error: 'ช่วงวันที่เลือกเป็นวันหยุดทั้งหมด ไม่ต้องยื่นลา' });
   if (!isDraft) {
     const ovErr = checks.leaveOverlapError(db, req.session.userId, { leave_mode, date_from, date_to: dur.date_to, time_from: dur.time_from, time_to: dur.time_to });
     if (ovErr) return res.status(400).json({ error: ovErr });
-    const qErr = quotaError(req.session.userId, leave_type, dur.duration_days);
+    const qErr = quotaError(req.session.userId, leave_type, chargeDays(dur), 0, date_from);
     if (qErr) return res.status(400).json({ error: qErr });
   }
   const status = isDraft ? 'draft' : 'pending';
@@ -321,9 +371,7 @@ router.post('/:id/submit', requireAuth, (req, res) => {
   if (!lr) return res.status(404).json({ error: 'ไม่พบคำขอลา' });
   if (lr.requester_id !== req.session.userId) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ส่งคำขอนี้' });
   if (!['draft'].includes(lr.status)) return res.status(400).json({ error: 'คำขอนี้ถูกส่งไปแล้ว' });
-  if (!isValidLeaveType(lr.leave_type) || !lr.reason) {
-    return res.status(400).json({ error: 'กรุณากรอกข้อมูลให้ครบก่อนส่งคำขอ' });
-  }
+  { const incomplete = leaveCompleteError(lr); if (incomplete) return res.status(400).json({ error: incomplete }); }
   if (!isEligibleLeaveRequester(req.session.userId)) {
     return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
   }
@@ -337,7 +385,7 @@ router.post('/:id/submit', requireAuth, (req, res) => {
   }
   {
     if (lr.leave_mode === 'full_day' && lr.duration_days === 0) return res.status(400).json({ error: 'ช่วงวันที่เลือกเป็นวันหยุดทั้งหมด ไม่ต้องยื่นลา' });
-    const qErr = quotaError(lr.requester_id, lr.leave_type, lr.duration_days, lr.id);
+    const qErr = quotaError(lr.requester_id, lr.leave_type, chargeDays(lr), lr.id, lr.date_from);
     if (qErr) return res.status(400).json({ error: qErr });
   }
   db.prepare(`UPDATE leave_requests SET status = 'pending' WHERE id = ?`).run(req.params.id);
@@ -354,6 +402,7 @@ router.post('/:id/resubmit', requireAuth, (req, res) => {
   if (!lr) return res.status(404).json({ error: 'ไม่พบคำขอลา' });
   if (lr.requester_id !== req.session.userId) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ส่งคำขอนี้' });
   if (lr.status !== 'revision') return res.status(400).json({ error: 'คำขอนี้ไม่ได้อยู่ในสถานะรอแก้ไข' });
+  { const incomplete = leaveCompleteError(lr); if (incomplete) return res.status(400).json({ error: incomplete }); }
   if (!isEligibleLeaveRequester(req.session.userId)) {
     return res.status(403).json({ error: NOT_ELIGIBLE_MSG });
   }
@@ -367,7 +416,7 @@ router.post('/:id/resubmit', requireAuth, (req, res) => {
   }
   {
     if (lr.leave_mode === 'full_day' && lr.duration_days === 0) return res.status(400).json({ error: 'ช่วงวันที่เลือกเป็นวันหยุดทั้งหมด ไม่ต้องยื่นลา' });
-    const qErr = quotaError(lr.requester_id, lr.leave_type, lr.duration_days, lr.id);
+    const qErr = quotaError(lr.requester_id, lr.leave_type, chargeDays(lr), lr.id, lr.date_from);
     if (qErr) return res.status(400).json({ error: qErr });
   }
   db.prepare(`UPDATE leave_requests SET status = 'pending', approver_id = NULL, approved_at = NULL, approval_note = '' WHERE id = ?`).run(req.params.id);
@@ -394,15 +443,9 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
     db.prepare(`UPDATE leave_requests SET status = 'cancelled' WHERE id = ?`).run(lr.id);
     approvalEngine.closeWorkflow('leave', lr.id);
     if (wasApproved) {
-      // คืนวันลาเฉพาะกรณีที่ใบนี้ถูกหักไว้ในรอบสิทธิ์ปัจจุบัน (ถ้าอนุมัติไว้ในรอบก่อนหน้า ยอดใช้ไปถูกรีเซ็ตไปแล้ว ไม่คืนซ้ำ)
-      const col = lr.leave_type === 'ลาพักร้อน' ? 'vacation_used' : lr.leave_type === 'ลากิจ' ? 'personal_used' : lr.leave_type === 'ลาป่วย' ? 'sick_used' : null;
-      const u = db.prepare('SELECT start_date FROM users WHERE id = ?').get(lr.requester_id);
-      const cyc = entitlement.cycleFor(u && u.start_date, entitlement.getSettings());
-      const approvedDay = String(lr.approved_at || '').slice(0, 10);
-      if (col && lr.duration_days > 0 && approvedDay >= cyc.start) {
-        ensureBalance(lr.requester_id);
-        db.prepare(`UPDATE leave_balances SET ${col} = MAX(0, ${col} - ?), updated_at = datetime('now') WHERE user_id = ?`).run(lr.duration_days, lr.requester_id);
-      }
+      // คืนวันลาเข้ารอบของวันที่ลา (ที่เดียวกับที่หักไว้ตอนอนุมัติ) — ใบของรอบหน้ายังไม่ถูกหัก จึงไม่ต้องคืน
+      const col = USED_COL[lr.leave_type];
+      if (col && chargeDays(lr) > 0) balanceTarget(lr.requester_id, lr.date_from).apply(col, -chargeDays(lr));
       db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, 'leave_rejected', ?, ?)`)
         .run(lr.requester_id, `คำขอลา #${lr.code} (${lr.leave_type}) ถูกยกเลิกโดยผู้ดูแลระบบ${note ? ' · ' + note : ''}`, lr.id);
     }
@@ -474,13 +517,10 @@ function decide(req, res, action, actionLabel) {
         db.prepare(`UPDATE leave_requests SET status = ?, approver_id = ?, approved_at = datetime('now'), approval_note = ? WHERE id = ?`)
           .run(r.finalStatus, req.session.userId, note || '', req.params.id);
 
-        if (r.finalStatus === 'approved' && lr.duration_days > 0) {
-          ensureBalance(lr.requester_id);
-          const col = lr.leave_type === 'ลาพักร้อน' ? 'vacation_used' : lr.leave_type === 'ลากิจ' ? 'personal_used' : lr.leave_type === 'ลาป่วย' ? 'sick_used' : null;
-          if (col) {
-            db.prepare(`UPDATE leave_balances SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE user_id = ?`)
-              .run(lr.duration_days, lr.requester_id);
-          }
+        if (r.finalStatus === 'approved' && chargeDays(lr) > 0) {
+          // หักเข้ารอบของวันที่ลา (ใบของรอบหน้าจะถูกหักตอนขึ้นรอบใหม่)
+          const col = USED_COL[lr.leave_type];
+          if (col) balanceTarget(lr.requester_id, lr.date_from).apply(col, chargeDays(lr));
         }
       }
       return r;

@@ -90,7 +90,9 @@ export default function ApproveLeave() {
 
   const decide = async (id, action) => {
     const promptText = action === 'approve' ? 'ความคิดเห็น (ถ้ามี) ก่อนอนุมัติ:' : action === 'revision' ? 'ระบุสิ่งที่ต้องแก้ไข:' : 'เหตุผลที่ไม่อนุมัติ:';
-    const note = prompt(promptText, '') || '';
+    const input = prompt(promptText, '');
+    if (input === null) return false; // กด Cancel = ยกเลิกการตัดสินใจ ไม่ส่งอะไรไป
+    const note = input;
     if (action === 'revision' && !note.trim()) { toast('กรุณาระบุสิ่งที่ต้องแก้ไข', 'error'); return; }
     try {
       await api.post(`/api/leave-requests/${id}/${action}`, { note });

@@ -24,8 +24,21 @@ function tooLong(v, max, label) {
   return v !== undefined && v !== null && String(v).length > max ? `${label}ยาวเกินไป (ไม่เกิน ${max} ตัวอักษร)` : null;
 }
 
+// ช่องที่ต้องเป็นข้อความ/ตัวเลข/ว่างเท่านั้น — ถ้าส่ง object/array/boolean มา คืนชื่อช่องแรกที่ผิด (กัน error 500 จาก .trim() / SQLite bind)
+function nonScalarField(b, keys) {
+  for (const k of keys) {
+    const v = b[k];
+    if (v === undefined || v === null || typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v))) continue;
+    return k;
+  }
+  return null;
+}
+
+const LEAVE_TEXT_FIELDS = ['leave_type', 'leave_mode', 'date_from', 'date_to', 'time_from', 'time_to', 'reason'];
+
 // ตรวจค่าที่ "กรอกมา" ของใบลา (ใช้ได้ทั้งฉบับร่างและตอนส่ง) — คืนข้อความ error หรือ null
 function leaveInputError(b) {
+  { const k = nonScalarField(b, LEAVE_TEXT_FIELDS); if (k) return `ข้อมูลในช่อง ${k} ไม่ถูกต้อง`; }
   if (b.date_from) { const e = dateError(b.date_from, 'วันที่เริ่มลา'); if (e) return e; }
   const multi = b.leave_mode === 'full_day' && b.date_to && b.date_to !== b.date_from;
   if (b.date_to && multi) {
@@ -77,4 +90,14 @@ function otOverlapError(db, userId, row, excludeId) {
   return null;
 }
 
-module.exports = { dateNum, dateError, tooLong, leaveInputError, leaveOverlapError, otOverlapError };
+// ตรวจวันที่/เวลาของคำขอ Visit (ตรวจเฉพาะช่องที่มีค่า) — คืนข้อความ error หรือ null
+// ไม่จำกัดช่วงปีเหมือนใบลา เพราะแก้ข้อมูลหลังปฏิบัติงานของ Visit เก่าได้
+function visitInputError(b) {
+  if (b.visit_date && dateNum(b.visit_date) === null) return 'วันที่ Visit ไม่ถูกต้อง (ต้องเป็นวันที่ที่มีจริง รูปแบบ ปปปป-ดด-วว)';
+  const f = b.time_from ? toMin(b.time_from) : null, t = b.time_to ? toMin(b.time_to) : null;
+  if ((b.time_from && f === null) || (b.time_to && t === null)) return 'รูปแบบเวลาไม่ถูกต้อง';
+  if (f !== null && t !== null && t <= f) return 'เวลาสิ้นสุดต้องมากกว่าเวลาเริ่มต้น';
+  return null;
+}
+
+module.exports = { dateNum, dateError, tooLong, nonScalarField, leaveInputError, leaveOverlapError, otOverlapError, visitInputError };

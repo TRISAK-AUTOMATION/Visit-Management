@@ -90,18 +90,34 @@ function computeTotals(months, rules = getRules(), factor = 1) {
   return out;
 }
 
-// ขึ้นรอบใหม่ -> เก็บยอดรอบก่อนลงประวัติ แล้วรีเซ็ต "ใช้ไป" เป็น 0 ; ครั้งแรกที่ยังไม่มี cycle_key แค่บันทึกรอบ (ไม่รีเซ็ตของเดิม)
+// ยอดวันลาที่ "อนุมัติแล้ว" ซึ่งวันที่ลาอยู่ในช่วง start..end แยกตามประเภท (ลารายชั่วโมง 8 ชม. = 1 วัน)
+const HOURS_PER_DAY = 8;
+const USED_COL = { 'ลาพักร้อน': 'vacation_used', 'ลากิจ': 'personal_used', 'ลาป่วย': 'sick_used' };
+function approvedUsedInRange(userId, start, end) {
+  const out = { vacation_used: 0, personal_used: 0, sick_used: 0 };
+  db.prepare(`SELECT leave_type, COALESCE(SUM(duration_days + duration_hours / ${HOURS_PER_DAY}.0), 0) AS d FROM leave_requests
+              WHERE requester_id = ? AND status = 'approved' AND date_from BETWEEN ? AND ? GROUP BY leave_type`)
+    .all(userId, start, end)
+    .forEach((r) => { if (USED_COL[r.leave_type]) out[USED_COL[r.leave_type]] = r.d; });
+  return out;
+}
+
+// ขึ้นรอบใหม่ -> เก็บยอดรอบก่อนลงประวัติ แล้วตั้ง "ใช้ไป" ใหม่ = ใบลาที่อนุมัติไว้ล่วงหน้าของรอบใหม่ (ใบลาของรอบหน้าไม่ถูกหักตอนอนุมัติ ดู balanceTarget ใน routes/leave.js)
+// ครั้งแรกที่ยังไม่มี cycle_key แค่บันทึกรอบ (ไม่รีเซ็ตของเดิม)
 function rollCycle(userId, settings = getSettings()) {
   const row = db.prepare(`SELECT b.*, u.start_date FROM leave_balances b JOIN users u ON u.id = b.user_id WHERE b.user_id = ?`).get(userId);
   if (!row) return false;
-  const cur = cycleFor(row.start_date, settings).key;
+  const cyc = cycleFor(row.start_date, settings);
+  const cur = cyc.key;
   if (row.cycle_key === cur) return false;
   const tx = db.transaction(() => {
     if (row.cycle_key) {
       db.prepare(`INSERT INTO leave_balance_history (user_id, cycle_key, vacation_total, vacation_used, personal_total, personal_used, sick_total, sick_used)
                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(userId, row.cycle_key, row.vacation_total, row.vacation_used, row.personal_total, row.personal_used, row.sick_total, row.sick_used);
-      db.prepare(`UPDATE leave_balances SET vacation_used = 0, personal_used = 0, sick_used = 0, cycle_key = ?, updated_at = datetime('now') WHERE user_id = ?`).run(cur, userId);
+      const pre = approvedUsedInRange(userId, cyc.start, cyc.end);
+      db.prepare(`UPDATE leave_balances SET vacation_used = ?, personal_used = ?, sick_used = ?, cycle_key = ?, updated_at = datetime('now') WHERE user_id = ?`)
+        .run(pre.vacation_used, pre.personal_used, pre.sick_used, cur, userId);
     } else {
       db.prepare('UPDATE leave_balances SET cycle_key = ? WHERE user_id = ?').run(cur, userId);
     }
@@ -141,5 +157,6 @@ function syncAll() {
 
 module.exports = {
   LEAVE_TYPES, TYPE_COL, CYCLES, tenureMonths, getRules, getSettings, saveSettings, cycleFor, prorateFactor,
-  entitlementFor, computeTotals, rollCycle, rekeyUser, rekeyAll, syncUser, syncAll, todayBangkok
+  entitlementFor, computeTotals, rollCycle, rekeyUser, rekeyAll, syncUser, syncAll, todayBangkok,
+  HOURS_PER_DAY, USED_COL, approvedUsedInRange
 };

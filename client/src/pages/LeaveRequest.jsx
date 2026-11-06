@@ -82,9 +82,9 @@ export default function LeaveRequest() {
         const r = await api.post('/api/leave-requests', payload);
         toast(isDraft ? `บันทึกฉบับร่างสำเร็จ (${r.code})` : `ส่งคำขอลาสำเร็จ (${r.code})`, 'success');
       }
+      // สำเร็จแล้วคงปุ่มไว้ในสถานะ saving จนเปลี่ยนหน้า (กันกดซ้ำแล้วได้คำขอซ้ำ)
       setTimeout(() => navigate('/my-leave'), 600);
-    } catch (err) { toast(err.message, 'error'); }
-    finally { setSaving(false); }
+    } catch (err) { toast(err.message, 'error'); setSaving(false); }
   };
 
   return (

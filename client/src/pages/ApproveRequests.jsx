@@ -40,7 +40,9 @@ export default function ApproveRequests() {
   }, [searchParams]);
 
   const decide = async (id, action) => {
-    const note = prompt(action === 'approve' ? 'ความคิดเห็น (ถ้ามี) ก่อนอนุมัติ:' : 'เหตุผลที่ไม่อนุมัติ:', '') || '';
+    const input = prompt(action === 'approve' ? 'ความคิดเห็น (ถ้ามี) ก่อนอนุมัติ:' : 'เหตุผลที่ไม่อนุมัติ:', '');
+    if (input === null) return false; // กด Cancel = ยกเลิกการตัดสินใจ ไม่ส่งอะไรไป
+    const note = input;
     try {
       await api.post(`/api/visit-requests/${id}/${action}`, { note });
       toast(action === 'approve' ? 'อนุมัติคำขอสำเร็จ' : 'บันทึกการไม่อนุมัติแล้ว', 'success');
@@ -169,8 +171,8 @@ export default function ApproveRequests() {
         ) : null;
         const footer = (request.status === 'pending' && modalData.can_act) ? (
           <div className="form-actions" style={{ justifyContent: 'flex-start', margin: 0, padding: '12px 20px', borderTop: '1px solid #e2e7f3', background: '#fff' }}>
-            <button type="button" className="btn btn-success" onClick={() => { decide(request.id, 'approve'); closeModal(); }}>อนุมัติ</button>
-            <button type="button" className="btn btn-danger" onClick={() => { decide(request.id, 'reject'); closeModal(); }}>ไม่อนุมัติ</button>
+            <button type="button" className="btn btn-success" onClick={async () => { if (await decide(request.id, 'approve') !== false) closeModal(); }}>อนุมัติ</button>
+            <button type="button" className="btn btn-danger" onClick={async () => { if (await decide(request.id, 'reject') !== false) closeModal(); }}>ไม่อนุมัติ</button>
             <button type="button" className="btn btn-outline" onClick={() => { requestRevision(request.id); closeModal(); }}>ส่งกลับแก้ไข</button>
           </div>
         ) : null;

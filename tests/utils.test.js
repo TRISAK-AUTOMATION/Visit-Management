@@ -35,3 +35,22 @@ test('pickToDelete: เก็บชุดล่าสุด ลบชุดเ�
   assert.deepEqual(pickToDelete(names, 5), []);
   assert.match(stamp(new Date(2026, 10, 3, 9, 5)), /^20261103-0905$/);
 });
+
+const { visitInputError, leaveInputError, nonScalarField } = require('../utils/inputChecks');
+
+test('visitInputError: วันที่ต้องมีจริง เวลาสิ้นสุดต้องหลังเวลาเริ่ม', () => {
+  assert.equal(visitInputError({ visit_date: '2026-12-10', time_from: '09:00', time_to: '11:00' }), null);
+  assert.match(visitInputError({ visit_date: '2026-13-45' }), /วันที่ Visit ไม่ถูกต้อง/);
+  assert.match(visitInputError({ visit_date: '2026-02-30' }), /วันที่ Visit ไม่ถูกต้อง/);
+  assert.match(visitInputError({ time_from: '15:00', time_to: '09:00' }), /เวลาสิ้นสุด/);
+  assert.match(visitInputError({ time_from: '10:00', time_to: '10:00' }), /เวลาสิ้นสุด/);
+  assert.match(visitInputError({ time_from: '25:00' }), /รูปแบบเวลา/);
+  assert.equal(visitInputError({}), null); // ฉบับร่างที่ยังไม่กรอกวัน/เวลา
+});
+
+test('nonScalarField / leaveInputError: ไม่รับ object/array ในช่องข้อความ', () => {
+  assert.equal(nonScalarField({ a: 'x', b: 1, c: null }, ['a', 'b', 'c', 'd']), null);
+  assert.equal(nonScalarField({ a: { x: 1 } }, ['a']), 'a');
+  assert.equal(nonScalarField({ a: [1] }, ['a']), 'a');
+  assert.match(leaveInputError({ reason: { a: 1 } }), /reason/);
+});

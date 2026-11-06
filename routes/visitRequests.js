@@ -10,6 +10,7 @@ const { canViewAll } = require('../utils/viewScope');
 const { applyVisitLevelToCustomer } = require('../utils/customerLevels');
 const signatureUtil = require('../utils/signature');
 const { timesOverlap, leaveWindow } = require('../utils/overlap');
+const { visitInputError } = require('../utils/inputChecks');
 
 const router = express.Router();
 
@@ -101,6 +102,16 @@ function findInvalidScalarField(body) {
     if (typeof v === 'string') { if (v.length > MAX_SCALAR_TEXT_LEN) return f; continue; }
     return f;
   }
+  return null;
+}
+
+// ตรวจลูกค้าที่เลือก: customer_id เป็น NOT NULL + FK ในฐานข้อมูล (ถ้าไม่ตรวจก่อน จะได้ error 500 แทนข้อความเตือน)
+// ตรวจเฉพาะเมื่อมีการส่ง customer_id มา (undefined = ไม่ได้แก้ช่องนี้)
+function customerError(customerId) {
+  if (customerId === undefined) return null;
+  if (customerId === null || customerId === '') return 'กรุณาเลือกลูกค้า';
+  const cid = Number(customerId);
+  if (!Number.isInteger(cid) || !db.prepare('SELECT 1 FROM customers WHERE id = ?').get(cid)) return 'ไม่พบข้อมูลลูกค้าที่เลือก กรุณาเลือกลูกค้าใหม่จากรายการ';
   return null;
 }
 
@@ -371,6 +382,11 @@ router.post('/', requireAuth, (req, res) => {
 
   const badField = findInvalidScalarField(req.body);
   if (badField) return res.status(400).json({ error: `ข้อมูลในช่อง ${badField} ไม่ถูกต้องหรือยาวเกินไป` });
+  {
+    // ฉบับร่างก็ต้องมีลูกค้า เพราะคอลัมน์ customer_id ในฐานข้อมูลเป็น NOT NULL
+    const bad = visitInputError(req.body) || customerError(customer_id === undefined ? null : customer_id);
+    if (bad) return res.status(400).json({ error: bad });
+  }
 
   if (!isDraft && (!customer_id || !visit_date || !time_from || !time_to)) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน' });
@@ -490,6 +506,7 @@ router.post('/:id/submit', requireAuth, (req, res) => {
   if (!vr.customer_id || !vr.visit_date || !vr.time_from || !vr.time_to) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วนก่อนส่งคำขอ' });
   }
+  { const bad = visitInputError(vr); if (bad) return res.status(400).json({ error: bad }); }
   const contactErr = validateContactsJson(vr.contacts_json);
   if (contactErr) return res.status(400).json({ error: contactErr });
   const existingCustomValues = {};
@@ -580,6 +597,13 @@ router.put('/:id', requireAuth, (req, res) => {
 
   const badField = findInvalidScalarField(req.body);
   if (badField) return res.status(400).json({ error: `ข้อมูลในช่อง ${badField} ไม่ถูกต้องหรือยาวเกินไป` });
+  {
+    // ตรวจวัน/เวลาจากค่าหลังรวมกับของเดิม (กันแก้แค่เวลาเริ่มจนเลยเวลาสิ้นสุด)
+    const merged = { visit_date: vr.visit_date, time_from: vr.time_from, time_to: vr.time_to };
+    ['visit_date', 'time_from', 'time_to'].forEach((k) => { if (req.body[k] !== undefined) merged[k] = req.body[k]; });
+    const bad = visitInputError(merged) || customerError(req.body.customer_id);
+    if (bad) return res.status(400).json({ error: bad });
+  }
 
   // แก้ไขหลังอนุมัติ: ถ้ามีการเปลี่ยนแปลงจริง จะส่งกลับไปให้ผู้อนุมัติอนุมัติอีกครั้ง -> ต้องมีสายอนุมัติที่ใช้งานได้ก่อน ไม่งั้นไม่บันทึก
   if (isPostVisitUpdate) {

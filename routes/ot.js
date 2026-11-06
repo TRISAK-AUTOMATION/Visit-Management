@@ -55,6 +55,7 @@ function hoursBetween(timeFrom, timeTo) {
 // ตรวจข้อมูลคำขอ OT — คืนข้อความ error ภาษาไทย หรือ null ถ้าผ่าน (ใช้ร่วมกันทั้งสร้าง/แก้ไข/ส่ง/ส่งใหม่)
 // isDraft = true: ฉบับร่างไม่บังคับกรอกครบ แต่ค่าที่กรอกมาแล้วต้องถูกต้อง
 function validateOT(f, isDraft) {
+  { const k = checks.nonScalarField(f, ['ot_date', 'time_from', 'time_to', 'location', 'work_detail', 'reason', 'notes', 'ot_type', 'day_type', 'customer_id', 'project_no', 'job_no']); if (k) return `ข้อมูลในช่อง ${k} ไม่ถูกต้อง`; }
   const otType = String(f.ot_type || '').trim();
   if (otType && !OT_TYPES.includes(otType)) return 'OT Type ไม่ถูกต้อง';
   if (f.day_type && !['workday', 'holiday'].includes(f.day_type)) return 'ประเภทวัน (วันทำงาน/วันหยุด) ไม่ถูกต้อง';
