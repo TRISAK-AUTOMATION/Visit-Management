@@ -2,6 +2,7 @@
 // ใช้ชุดตัวกรองเดียวกับตาราง (query) แล้วให้ Backend กรอง+ตรวจสิทธิ์+สร้างไฟล์เอง (ไม่กรองใน Browser)
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import RIcon from './ReportIcons';
+import ExportPreview from './ExportPreview';
 import useReportOptions from './useReportOptions';
 import { useToast } from '../../lib/ToastContext';
 
@@ -28,10 +29,12 @@ export default function ExportPanel({ type, query, sort, appliedUserId, align = 
   const [format, setFormat] = useState(pref.format || 'xlsx');
   const [cols, setCols] = useState(null); // null = ยังไม่โหลดตัวเลือก
   const [userId, setUserId] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(false); // false | 'download' | 'preview'
   const [done, setDone] = useState(false);
   const [err, setErr] = useState('');
+  const [preview, setPreview] = useState(null); // { blob, name, format } ไฟล์ที่กำลังดูตัวอย่าง
   const wrapRef = useRef(null);
+  const previewRef = useRef(null);
 
   const def = opts && opts.columns ? opts.columns[type] : null;
   const canAll = !!(opts && opts.can_view_all);
@@ -49,8 +52,10 @@ export default function ExportPanel({ type, query, sort, appliedUserId, align = 
 
   useEffect(() => {
     if (!open) return undefined;
-    const onDoc = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    // หน้าต่างตัวอย่างอยู่นอกแผง (portal ไปที่ body) — คลิกในนั้นไม่ปิดแผง, Esc ปิดตัวอย่างก่อน
+    const inPreview = (t) => !!(previewRef.current && previewRef.current.parentNode && previewRef.current.parentNode.contains(t));
+    const onDoc = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target) && !inPreview(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key !== 'Escape') return; if (previewRef.current) setPreview(null); else setOpen(false); };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
@@ -60,18 +65,35 @@ export default function ExportPanel({ type, query, sort, appliedUserId, align = 
   useEffect(() => { if (opts && !opts.can_view_all && scope === 'individual') setScope('filtered'); }, [opts, scope]);
 
   const allKeys = def ? def.list.map(c => c.key) : [];
-  const toggle = (k) => setCols(c => allKeys.filter(x => (x === k ? !c.includes(k) : c.includes(x)))); // คงลำดับคอลัมน์ตามที่ระบบกำหนด
+  const labelOf = (k) => { const c = def && def.list.find(x => x.key === k); return c ? c.label : k; };
+  // cols = คอลัมน์ที่เลือก "ตามลำดับที่จะออกในไฟล์" (Backend เรียงคอลัมน์ตามลำดับที่ส่งไป)
+  // ติ๊กเพิ่ม = ต่อท้าย, เอาออก = ลบออกจากลำดับ
+  const toggle = (k) => setCols(c => (c.includes(k) ? c.filter(x => x !== k) : [...c, k]));
+  const selectAll = () => setCols(c => [...(c || []), ...allKeys.filter(k => !(c || []).includes(k))]); // คงลำดับที่จัดไว้ แล้วต่อท้ายที่ยังไม่ได้เลือก
+  const resetOrder = () => setCols(c => allKeys.filter(k => c.includes(k)));
+  const moveCol = (from, to) => setCols(c => {
+    if (to < 0 || to >= c.length || from === to) return c;
+    const next = [...c];
+    const [k] = next.splice(from, 1);
+    next.splice(to, 0, k);
+    return next;
+  });
+  const [dragFrom, setDragFrom] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
+  const isDefaultOrder = !!cols && cols.join(',') === allKeys.filter(k => cols.includes(k)).join(',');
 
-  const doExport = async () => {
+  // สร้างไฟล์จาก Backend ตามเงื่อนไขที่เลือก -> { blob, name, format } หรือ null (แสดง error แล้ว)
+  // ใช้ร่วมกันทั้ง "ดูตัวอย่าง" และ "ดาวน์โหลด" — ตัวอย่างจึงเป็นไฟล์เดียวกับที่ได้จริง
+  const buildFile = async (mode) => {
     setErr('');
-    if (!cols || !cols.length) { setErr('No columns selected. กรุณาเลือกคอลัมน์อย่างน้อย 1 รายการ'); return; }
-    if (scope === 'individual' && !userId) { setErr('Please select an employee. กรุณาเลือกพนักงาน'); return; }
+    if (!cols || !cols.length) { setErr('No columns selected. กรุณาเลือกคอลัมน์อย่างน้อย 1 รายการ'); return null; }
+    if (scope === 'individual' && !userId) { setErr('Please select an employee. กรุณาเลือกพนักงาน'); return null; }
     const qs = new URLSearchParams(scope === 'full' ? '' : query);
     qs.set('format', format); qs.set('scope', scope); qs.set('columns', cols.join(','));
     if (scope === 'individual') qs.set('user_id', userId);
     if (sort && sort.key && scope === 'filtered') { qs.set('sort', sort.key); qs.set('dir', sort.dir); }
     savePref(type, { scope, format, cols });
-    setBusy(true); setDone(false);
+    setBusy(mode); setDone(false);
     try {
       const res = await fetch(`/api/report/export/${type}?${qs.toString()}`, { credentials: 'same-origin' });
       if (!res.ok) {
@@ -79,21 +101,28 @@ export default function ExportPanel({ type, query, sort, appliedUserId, align = 
         try { const j = await res.json(); if (j && j.error) msg = j.error; } catch (e) { /* ไม่มี body */ }
         if (res.status === 403) msg = 'You do not have permission to access this report. ' + msg;
         setErr(msg); toast(msg, 'error');
-        return;
+        return null;
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = fileNameFrom(res, `report.${format}`);
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-      setDone(true);
-      toast('Export completed successfully · ส่งออกรายงานสำเร็จ', 'success');
-      setTimeout(() => setDone(false), 2200);
+      return { blob: await res.blob(), name: fileNameFrom(res, `report.${format}`), format };
     } catch (e) {
       setErr('Export failed. เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาลองใหม่'); toast('Export failed', 'error');
+      return null;
     } finally { setBusy(false); }
   };
+
+  const saveFile = (file) => {
+    const url = URL.createObjectURL(file.blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = file.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    setDone(true);
+    toast('Export completed successfully · ส่งออกรายงานสำเร็จ', 'success');
+    setTimeout(() => setDone(false), 2200);
+  };
+
+  const doExport = async () => { const f = await buildFile('download'); if (f) saveFile(f); };
+  const doPreview = async () => { const f = await buildFile('preview'); if (f) setPreview(f); };
 
   const individualAllowed = canAll && !isSummary;
 
@@ -141,7 +170,7 @@ export default function ExportPanel({ type, query, sort, appliedUserId, align = 
             <div className="rx-export-lab rx-lab-row">
               <span>เลือกคอลัมน์ <em>({cols ? cols.length : 0}/{allKeys.length})</em></span>
               <span className="rx-mini-links">
-                <button type="button" onClick={() => setCols(allKeys)}>Select All</button>
+                <button type="button" onClick={selectAll}>Select All</button>
                 <button type="button" onClick={() => setCols([])}>Clear</button>
               </span>
             </div>
@@ -152,14 +181,51 @@ export default function ExportPanel({ type, query, sort, appliedUserId, align = 
             </div>
           </div>
 
+          {cols && cols.length > 1 && (
+            <div className="rx-export-sec">
+              <div className="rx-export-lab rx-lab-row">
+                <span>ลำดับคอลัมน์ในไฟล์</span>
+                {!isDefaultOrder && <span className="rx-mini-links"><button type="button" onClick={resetOrder}>คืนค่าเริ่มต้น</button></span>}
+              </div>
+              <p className="rx-hint" style={{ margin: '0 0 8px' }}>ลาก หรือกดลูกศรเพื่อย้าย — ลำดับ 1 อยู่ซ้ายสุดในไฟล์</p>
+              <ol className="rx-order" aria-label="ลำดับคอลัมน์ในไฟล์">
+                {cols.map((k, i) => (
+                  <li key={k}
+                    className={`${dragFrom === i ? 'dragging' : ''} ${dragOver === i && dragFrom !== null && dragFrom !== i ? (dragFrom < i ? 'over-below' : 'over-above') : ''}`}
+                    draggable
+                    onDragStart={(e) => { setDragFrom(i); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', k); } catch (err) { /* IE */ } }}
+                    onDragOver={(e) => { e.preventDefault(); if (dragOver !== i) setDragOver(i); }}
+                    onDrop={(e) => { e.preventDefault(); if (dragFrom !== null) moveCol(dragFrom, i); setDragFrom(null); setDragOver(null); }}
+                    onDragEnd={() => { setDragFrom(null); setDragOver(null); }}>
+                    <span className="rx-grip" aria-hidden="true">⋮⋮</span>
+                    <span className="rx-ord-n">{i + 1}</span>
+                    <span className="rx-ord-label">{labelOf(k)}</span>
+                    <button type="button" className="rx-ord-btn" onClick={() => moveCol(i, i - 1)} disabled={i === 0} aria-label={`ย้าย ${labelOf(k)} ขึ้น`} title="ย้ายขึ้น (ไปทางซ้ายในไฟล์)"><RIcon name="arrowUp" size={14} /></button>
+                    <button type="button" className="rx-ord-btn" onClick={() => moveCol(i, i + 1)} disabled={i === cols.length - 1} aria-label={`ย้าย ${labelOf(k)} ลง`} title="ย้ายลง (ไปทางขวาในไฟล์)"><RIcon name="arrowDown" size={14} /></button>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
           {err && <div className="rx-err" role="alert">{err}</div>}
 
-          <button type="button" className={`rx-go ${busy ? 'busy' : ''} ${done ? 'done' : ''}`} onClick={doExport} disabled={busy || !def}>
-            {busy ? <><span className="rx-spin" /> กำลังสร้างไฟล์...</> : done
-              ? <><RIcon name="check" size={18} className="rx-check-anim" /> ดาวน์โหลดแล้ว</>
-              : <><RIcon name="download" size={18} /> ดาวน์โหลดรายงาน</>}
-          </button>
+          <div className="rx-go-row">
+            <button type="button" className="rx-preview-btn" onClick={doPreview} disabled={!!busy || !def}>
+              {busy === 'preview' ? <><span className="rx-spin dark" /> กำลังเตรียม...</> : <><RIcon name="eye" size={18} /> ดูตัวอย่าง</>}
+            </button>
+            <button type="button" className={`rx-go ${busy === 'download' ? 'busy' : ''} ${done ? 'done' : ''}`} onClick={doExport} disabled={!!busy || !def}>
+              {busy === 'download' ? <><span className="rx-spin" /> กำลังสร้างไฟล์...</> : done
+                ? <><RIcon name="check" size={18} className="rx-check-anim" /> ดาวน์โหลดแล้ว</>
+                : <><RIcon name="download" size={18} /> ดาวน์โหลดรายงาน</>}
+            </button>
+          </div>
         </div>
+      )}
+
+      {preview && (
+        <ExportPreview file={preview} boxRef={previewRef} onClose={() => setPreview(null)}
+          onDownload={() => { saveFile(preview); setPreview(null); }} />
       )}
     </div>
   );

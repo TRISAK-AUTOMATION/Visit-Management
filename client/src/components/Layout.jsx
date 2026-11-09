@@ -251,7 +251,7 @@ export default function Layout({ title, children }) {
                     {groupBadge > 0 && <span className="badge" style={{ background: 'var(--red-600)', color: '#fff' }}>{groupBadge}</span>}
                     <span className={`chev ${isOpen ? 'open' : ''}`}>{'\u203A'}</span>
                   </a>
-                  <ul className={`nav-subitems ${isOpen ? 'open' : ''}`} style={isOpen ? { maxHeight: it.items.length * 42 + 8 } : undefined}>
+                  <ul className={`nav-subitems ${isOpen ? 'open' : ''}`} style={isOpen ? { maxHeight: it.items.length * 46 + 8 } : undefined}>
                     {it.items.map(sub => {
                       const subActive = isNavActive(sub.href, location) ? 'active' : '';
                       const subBadge = sub.badgeKey && badgeCounts[sub.badgeKey] > 0;
@@ -283,7 +283,7 @@ export default function Layout({ title, children }) {
             );
           })}
         </ul>
-        <button type="button" className="side-logout" onClick={handleLogout}>{'\u23FB'} ออกจากระบบ</button>
+        <button type="button" className="side-logout" onClick={handleLogout}>🚪 ออกจากระบบ</button>{/* เดิมใช้ U+23FB (ปุ่มเปิดปิด) ซึ่งหลายเครื่องไม่มีในฟอนต์ ขึ้นเป็นกล่อง */}
       </aside>
       <div className="main">
         <div className="topbar">

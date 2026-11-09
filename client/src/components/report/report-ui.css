@@ -7,7 +7,9 @@
 
 /* ---------- เปิดหน้าแบบไล่ลำดับ ---------- */
 @keyframes rx-rise{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:none;}}
-.rx-rise{animation:rx-rise .55s cubic-bezier(.2,.7,.2,1) both;animation-delay:calc(var(--i,0) * 70ms);}
+/* backwards (ไม่ใช่ both): จบแล้วไม่ทิ้ง transform ค้างไว้ — ถ้าค้าง องค์ประกอบ position:fixed ข้างใน (แผง Export บนมือถือ)
+   จะยึดกับกล่องนี้แทนหน้าจอ ทำให้แผงหลุดออกนอกจอด้านบน */
+.rx-rise{animation:rx-rise .55s cubic-bezier(.2,.7,.2,1) backwards;animation-delay:calc(var(--i,0) * 70ms);}
 
 /* ---------- ส่วนหัว (Hero) ---------- */
 .rx-hero,.rx-pagehead{position:relative;overflow:hidden;color:#fff;border-radius:18px;background:linear-gradient(120deg,#0f1c3f 0%,#1c3a8c 55%,#2f5bff 100%);box-shadow:0 10px 28px rgba(27,42,100,.22);}
@@ -131,6 +133,54 @@
 .rx-go.done{background:linear-gradient(135deg,#17a35c,#0f7a48);box-shadow:0 8px 18px rgba(23,163,92,.32);}
 @keyframes rx-spin{to{transform:rotate(360deg);}}
 .rx-spin{width:16px;height:16px;border-radius:50%;border:2.5px solid rgba(255,255,255,.4);border-top-color:#fff;animation:rx-spin .7s linear infinite;}
+.rx-spin.dark{border-color:rgba(28,58,140,.2);border-top-color:#1c3a8c;}
+
+/* ---------- ลำดับคอลัมน์ในไฟล์ส่งออก (ลาก/กดลูกศร) ---------- */
+.rx-order{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto;}
+.rx-order li{display:flex;align-items:center;gap:8px;padding:5px 6px 5px 8px;background:#f6f8fd;border:1px solid #e1e7f5;border-radius:9px;font-size:13px;cursor:grab;user-select:none;transition:background .12s,box-shadow .12s,opacity .12s;}
+.rx-order li:hover{background:#eef3ff;}
+.rx-order li.dragging{opacity:.45;}
+.rx-order li.over-above{box-shadow:inset 0 3px 0 #2f5bff;}
+.rx-order li.over-below{box-shadow:inset 0 -3px 0 #2f5bff;}
+.rx-grip{color:#9aa6c4;font-size:12px;letter-spacing:-2px;line-height:1;}
+.rx-ord-n{flex:none;width:20px;height:20px;border-radius:50%;background:#1c3a8c;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;}
+.rx-ord-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rx-ord-btn{flex:none;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:1px solid #d5ddf2;background:#fff;color:#1c3a8c;border-radius:7px;cursor:pointer;padding:0;}
+.rx-ord-btn:hover:not(:disabled){background:#e9efff;}
+.rx-ord-btn:disabled{opacity:.3;cursor:default;}
+
+/* ---------- ปุ่มดูตัวอย่าง + ดาวน์โหลด (แถวเดียวกัน) ---------- */
+.rx-go-row{display:flex;gap:8px;margin-top:4px;}
+.rx-go-row .rx-go{flex:1.4;margin-top:0;}
+.rx-preview-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;border:1.5px solid #c9d5f7;cursor:pointer;font:inherit;font-size:14px;font-weight:700;color:#1c3a8c;background:#f4f7ff;padding:11px 10px;border-radius:12px;transition:background .15s,border-color .15s,transform .15s;}
+.rx-preview-btn:hover:not(:disabled){background:#e9efff;border-color:#9fb5f2;transform:translateY(-1px);}
+.rx-preview-btn:disabled{cursor:progress;opacity:.7;}
+
+/* ---------- หน้าต่างดูตัวอย่างไฟล์ส่งออก ---------- */
+.rx-modal.rx-preview{width:min(1100px,100%);height:90vh;max-height:90vh;}
+.rx-preview .rx-modal-head h3{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rx-preview-body{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;padding:12px 16px;background:#eef1f8;}
+.rx-preview-pdf{flex:1;width:100%;min-height:0;border:1px solid var(--border);border-radius:10px;background:#fff;}
+.rx-preview-note{margin:0;font-size:12.5px;color:var(--text-600);}
+.rx-preview-loading{flex:1;display:flex;align-items:center;justify-content:center;gap:10px;color:var(--text-600);}
+.rx-preview-tabs{display:flex;gap:4px;flex-wrap:wrap;}
+.rx-preview-tabs button{border:1px solid var(--border);background:#fff;color:var(--text-600);font:inherit;font-size:13px;font-weight:600;padding:6px 14px;border-radius:8px 8px 0 0;cursor:pointer;}
+.rx-preview-tabs button.on{background:#1f7a46;border-color:#1f7a46;color:#fff;}
+.rx-preview-sheet{flex:1;min-height:0;overflow:auto;background:#fff;border:1px solid #cfd6e4;border-radius:0 8px 8px 8px;}
+.rx-preview-sheet table{border-collapse:collapse;font-size:12.5px;min-width:100%;}
+.rx-preview-sheet th,.rx-preview-sheet td{border:1px solid #e1e5ee;padding:5px 9px;white-space:nowrap;text-align:left;max-width:320px;overflow:hidden;text-overflow:ellipsis;}
+.rx-preview-sheet thead th{position:sticky;top:0;z-index:1;background:#f3f5f9;color:#6b7590;font-weight:600;text-align:center;}
+.rx-preview-sheet .rx-rn{position:sticky;left:0;background:#f3f5f9;color:#6b7590;text-align:center;min-width:34px;}
+.rx-preview-sheet thead .rx-rn{z-index:2;}
+.rx-preview-sheet tr.rx-first td:not(.rx-rn){font-weight:700;background:#f7f9fd;}
+.rx-preview-foot{display:flex;justify-content:flex-end;align-items:center;gap:10px;padding:12px 16px;border-top:1px solid var(--border);background:#fff;}
+.rx-go.rx-go-inline{width:auto;margin-top:0;padding:10px 20px;}
+@media (max-width:640px){
+  .rx-modal.rx-preview{height:94vh;max-height:94vh;}
+  .rx-preview-body{padding:8px;}
+  .rx-preview-foot .btn{flex:1;}
+  .rx-preview-foot .rx-go-inline{flex:2;justify-content:center;}
+}
 @keyframes rx-check{from{stroke-dashoffset:26;}to{stroke-dashoffset:0;}}
 .rx-check-anim path{stroke-dasharray:26;animation:rx-check .45s ease-out both;}
 
@@ -291,7 +341,8 @@
   .rx-pagehead{padding:16px;}
   .rx-export{width:100%;}
   .rx-export-btn{width:100%;justify-content:center;}
-  .rx-export-panel{position:fixed;left:8px;right:8px;top:auto;bottom:8px;width:auto;max-width:none;max-height:86vh;transform-origin:bottom center;}
+  /* แผ่นเลื่อนจากด้านล่าง — ยกพ้นแถบเมนูล่าง (.bottom-nav สูง ~62px) ไม่ให้บังปุ่มดูตัวอย่าง/ดาวน์โหลด */
+  .rx-export-panel{position:fixed;left:8px;right:8px;top:auto;bottom:calc(70px + env(safe-area-inset-bottom));width:auto;max-width:none;max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px);transform-origin:bottom center;}
   .rx-filter-toggle{display:flex;width:100%;align-items:center;justify-content:space-between;border:0;background:transparent;font:inherit;font-weight:700;font-size:13px;color:var(--text-900);padding:14px 16px;cursor:pointer;}
   .rx-filter-toggle span{display:inline-flex;align-items:center;gap:8px;}
   .rx-filters{display:none;grid-template-columns:1fr;padding:4px 16px 16px;}

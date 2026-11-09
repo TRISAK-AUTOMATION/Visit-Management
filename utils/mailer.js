@@ -27,9 +27,45 @@ function getTransporter() {
   return transporter;
 }
 
+// แยก "ชื่อ <อีเมล>" ออกเป็น { name, email } (รูปแบบที่ Brevo API ต้องการ)
+function parseAddress(s) {
+  const m = String(s).match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
+  return m ? { name: m[1].trim() || undefined, email: m[2].trim() } : { email: String(s).trim() };
+}
+
+// ส่งผ่าน Brevo Transactional Email API (HTTPS) - ใช้เมื่อตั้งค่า BREVO_API_KEY
+async function sendViaBrevoApi({ to, subject, html }) {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': process.env.BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({
+      sender: parseAddress(MAIL_FROM),
+      to: String(to).split(',').map((s) => s.trim()).filter(Boolean).map((email) => ({ email })),
+      subject,
+      htmlContent: html,
+    }),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) {
+    let detail = '';
+    try { const j = await res.json(); detail = j.message || j.code || ''; } catch { /* ไม่ใช่ JSON */ }
+    throw new Error(`Brevo API ${res.status}${detail ? ': ' + detail : ''}`);
+  }
+}
+
 // ส่งอีเมล 1 ฉบับ ไม่โยน error ออกไปนอกฟังก์ชัน (กันไม่ให้ล้มทั้ง request เพราะอีเมลส่งไม่สำเร็จ)
+// ลำดับช่องทาง: BREVO_API_KEY (API) -> SMTP_HOST (SMTP) -> โหมดจำลอง (log ออก console)
 async function sendMail({ to, subject, html }) {
   if (!to) return { skipped: true, reason: 'no-recipient' };
+  if (process.env.BREVO_API_KEY) {
+    try {
+      await sendViaBrevoApi({ to, subject, html });
+      return { ok: true };
+    } catch (err) {
+      console.error('[MAIL:ERROR] ส่งอีเมลผ่าน Brevo API ไม่สำเร็จ:', err.message);
+      return { ok: false, error: err.message };
+    }
+  }
   const t = getTransporter();
   if (!t) {
     console.log(`\n[MAIL:DEV] (ยังไม่ตั้งค่า SMTP - แสดงตัวอย่างอีเมลแทน)\nถึง: ${to}\nเรื่อง: ${subject}\n${html}\n`);

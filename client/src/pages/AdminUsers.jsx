@@ -1,5 +1,5 @@
 // client/src/pages/AdminUsers.jsx - เทียบเท่า public/admin-users.html
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Layout from '../components/Layout';
 import PageHero from '../components/PageHero';
 import { api, ROLE_TH } from '../lib/api';
@@ -105,6 +105,25 @@ export default function AdminUsers() {
   const deptCounts = departments.map((d, i) => ({ name: d, count: users.filter(u => deptOf(u).includes(d)).length, color: CARD_COLORS[i % CARD_COLORS.length] }));
   const unassignedCount = users.filter(u => deptOf(u).length === 0).length;
 
+  // คลิกการ์ดแผนก -> เลื่อนลงไปที่ตารางของแผนกนั้น แล้วไฮไลต์ให้เห็นชัดสักครู่
+  const zoneRefs = useRef({});
+  const [flash, setFlash] = useState('');
+  const flashTimer = useRef(null);
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
+  const jumpTo = (name) => {
+    const el = zoneRefs.current[name];
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setFlash(name);
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(''), 1800);
+  };
+  const jumpProps = (name) => ({
+    role: 'button', tabIndex: 0, title: `ดูรายชื่อแผนก ${name}`,
+    onClick: () => jumpTo(name),
+    onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jumpTo(name); } },
+  });
+
   return (
     <Layout title="จัดการผู้ใช้งาน (User Management)">
       <PageHero icon="users" tone="blue" title="จัดการผู้ใช้งาน" desc="เพิ่ม แก้ไข ลบผู้ใช้ และกำหนดบทบาท/สิทธิ์การใช้งานของแต่ละคน" />
@@ -120,13 +139,13 @@ export default function AdminUsers() {
       </div>
       <div className="dept-grid">
         {deptCounts.map(d => (
-          <div className={`stat-card sm ${d.color}`} key={d.name}>
+          <div className={`stat-card sm dept-jump ${d.color}`} key={d.name} {...jumpProps(d.name)}>
             <div className="label">{d.name}</div>
             <div className="value">{d.count}<span className="unit">คน</span></div>
           </div>
         ))}
         {unassignedCount > 0 && (
-          <div className="stat-card sm slate">
+          <div className="stat-card sm dept-jump slate" {...jumpProps('ไม่ระบุแผนก')}>
             <div className="label">ไม่ระบุแผนก</div>
             <div className="value">{unassignedCount}<span className="unit">คน</span></div>
           </div>
@@ -165,7 +184,7 @@ export default function AdminUsers() {
         );
 
         return zones.map(z => (
-          <div className="card mb-16" key={z.name}>
+          <div className={`card mb-16 dept-zone${flash === z.name ? ' flash' : ''}`} key={z.name} ref={(el) => { zoneRefs.current[z.name] = el; }}>
             <div className="card-body" style={{ padding: 0 }}>
               <div style={{ padding: '12px 16px', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>
                 รายชื่อแผนก {z.name} <span className="muted" style={{ fontWeight: 400 }}>({z.users.length} คน)</span>
