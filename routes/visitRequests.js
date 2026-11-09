@@ -245,7 +245,8 @@ router.get('/', requireAuth, (req, res) => {
   }
 
   const sql = `
-    SELECT vr.*, c.name AS customer_name, u.full_name AS requester_name, u.department AS requester_department
+    SELECT vr.*, c.name AS customer_name, u.full_name AS requester_name, u.department AS requester_department,
+           EXISTS (SELECT 1 FROM visit_customer_signatures s WHERE s.visit_request_id = vr.id) AS has_customer_signature
     FROM visit_requests vr
     JOIN customers c ON c.id = vr.customer_id
     JOIN users u ON u.id = vr.requester_id
@@ -641,7 +642,14 @@ router.put('/:id', requireAuth, (req, res) => {
           // มีการเปลี่ยนแปลงจริง -> กลับไปรออนุมัติใหม่ตั้งแต่ State แรก (ใช้ Template ล่าสุด) และจดสิ่งที่เปลี่ยนไว้ให้ผู้อนุมัติเห็น
           db.prepare(`UPDATE visit_requests SET status = 'pending', approver_id = NULL, approved_at = NULL, approval_note = '' WHERE id = ?`).run(req.params.id);
           approvalEngine.createWorkflow('visit', vr.id, req.session.userId);
-          db.prepare('DELETE FROM visit_customer_signatures WHERE visit_request_id = ?').run(req.params.id); // ข้อมูลเปลี่ยนหลังลูกค้าเซ็น -> ลายเซ็นเดิมใช้ไม่ได้ ต้องเซ็นใหม่
+          // ลูกค้าเซ็นรับรองแค่ "พนักงานเข้าพบลูกค้ารายนี้ ในวันนี้" (ข้อความในหน้าเซ็น) — ล้างลายเซ็นเฉพาะเมื่อเปลี่ยนลูกค้าหรือวันที่เข้าพบ
+          // แก้ข้อมูลอื่นหลังปฏิบัติงาน (ไมล์, ผลการเข้าพบ ฯลฯ) ลายเซ็นยังอยู่ ให้ผู้อนุมัติเห็นตอนอนุมัติรอบใหม่
+          const after = snapshotForDiff(req.params.id);
+          const identityChanged = ['customer_id', 'visit_date'].some((f) => beforeSnap.scalars[f] !== after.scalars[f]);
+          if (identityChanged) {
+            const removed = db.prepare('DELETE FROM visit_customer_signatures WHERE visit_request_id = ?').run(req.params.id).changes;
+            if (removed) changes.push('ลายเซ็นลูกค้าถูกล้าง (เปลี่ยนลูกค้า/วันที่เข้าพบ ต้องให้ลูกค้าเซ็นใหม่)');
+          }
         }
       }
     })();

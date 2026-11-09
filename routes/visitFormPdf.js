@@ -307,7 +307,7 @@ function wordBreak(t, limit) {
   const colW = 160;
   const slotW = W / sigCols.length;
   const sigLineY = y + 24;
-  const custNote = hasCust ? (custRow.signer_title || '') : '';   // ตำแหน่งผู้เซ็น (ไม่แสดงวันเวลาที่เซ็น)
+  // ไม่แสดงตำแหน่งของลูกค้าใต้ชื่อ (แสดงแค่ชื่อผู้เซ็นเหมือนช่องอื่น)
   if (DOC.show_signature) sigCols.forEach(([role, name, sig], i) => {
     const x = L + i * slotW + (slotW - colW) / 2;
     signature.draw(doc, sig, x, colW, sigLineY, 24);
@@ -317,11 +317,8 @@ function wordBreak(t, limit) {
     dots(x + 12, x + colW - 12, sigLineY + 15 + DOT);
     fit(name, x + 14, sigLineY + 15, colW - 30, 'center');
     label(')', x + colW - 8, sigLineY + 15);
-    if (hasCust && i === 2 && custNote) {
-      doc.font('regular').fontSize(7).fillColor('#444444').text(custNote, x - 10, sigLineY + 15 + DOT + 3, { width: colW + 20, align: 'center', lineBreak: false, ellipsis: true });
-    }
   });
-  let bottom = DOC.show_signature ? sigLineY + 15 + DOT + 2 + (hasCust ? 8 : 0) : y + 2;
+  let bottom = DOC.show_signature ? sigLineY + 15 + DOT + 2 : y + 2;
   if (DOC.footer) { doc.font('regular').fontSize(7.5).fillColor('#666666').text(DOC.footer, L, bottom + 3, { width: W, align: 'center', lineBreak: false, ellipsis: true }); bottom += 11; }
   if (bottom > HALF - 8) console.warn(`[visit-form-pdf] เนื้อหาล้นครึ่ง A4 (${Math.round(bottom)} > ${Math.round(HALF - 8)}) ใบ ${r.code}`);
 

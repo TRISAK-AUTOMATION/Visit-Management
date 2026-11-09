@@ -103,6 +103,13 @@ export default function CustomerSignModal({ request, onClose, onChanged }) {
   };
 
   const canSave = hasInk && name.trim() && agree && !saving;
+  // บอกให้ชัดว่ายังขาดอะไร (เดิมปุ่มแค่จางลง ผู้ใช้ไม่รู้ว่าทำไมกดไม่ได้ แล้วปิดหน้าต่างไปโดยลายเซ็นยังไม่ถูกบันทึก)
+  const missing = [!hasInk && 'เซ็นชื่อในกรอบ', !name.trim() && 'กรอกชื่อ-นามสกุลผู้เซ็น', !agree && 'ติ๊กยืนยันข้อมูล'].filter(Boolean);
+  const unsaved = editing && !locked && (hasInk || name.trim());
+  const requestClose = () => {
+    if (unsaved && !saving && !window.confirm('ลายเซ็นยังไม่ได้บันทึก (ต้องกด "ยืนยันลายเซ็น" ก่อน)\nต้องการปิดและทิ้งลายเซ็นนี้หรือไม่?')) return;
+    onClose();
+  };
 
   const save = async () => {
     if (!canSave) return;
@@ -132,11 +139,11 @@ export default function CustomerSignModal({ request, onClose, onChanged }) {
   const fieldStyle = { width: '100%', boxSizing: 'border-box', minHeight: 44, fontSize: 16 };
 
   return (
-    <div className="modal-bg" style={{ zIndex: 400 }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-bg" style={{ zIndex: 400 }} onClick={(e) => { if (e.target === e.currentTarget) requestClose(); }}>
       <div className="modal" style={{ width: 520 }}>
         <div className="modal-head">
           <h3>ลายเซ็นลูกค้า · {request.code}</h3>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="ปิด">&times;</button>
+          <button type="button" className="modal-close" onClick={requestClose} aria-label="ปิด">&times;</button>
         </div>
         <div className="modal-body">
           {existing === undefined && <div className="muted">กำลังโหลด...</div>}
@@ -201,6 +208,11 @@ export default function CustomerSignModal({ request, onClose, onChanged }) {
                 <span>ข้าพเจ้ายืนยันว่าข้อมูลการเข้าพบข้างต้นถูกต้อง</span>
               </label>
 
+              {missing.length > 0 && !saving && (
+                <p style={{ margin: '12px 0 0', fontSize: 13, color: '#8a5a00', background: '#fff7e6', border: '1px solid #f5d9a0', borderRadius: 9, padding: '8px 12px' }}>
+                  ยังบันทึกไม่ได้ กรุณา{missing.join(' / ')} แล้วกด "ยืนยันลายเซ็น"
+                </p>
+              )}
               <div className="form-actions" style={{ marginTop: 14 }}>
                 {existing && <button type="button" className="btn btn-outline" onClick={() => setEditing(false)}>ยกเลิก</button>}
                 <button type="button" className="btn btn-primary" disabled={!canSave} onClick={save} style={{ minHeight: 44 }}>

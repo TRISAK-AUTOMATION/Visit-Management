@@ -170,7 +170,10 @@ export default function MyRequests() {
                       </button>
                     )}{' '}
                     {v.status === 'approved' && (
-                      <button className="btn btn-outline btn-sm" onClick={() => setSigning(v)}>✍ ลายเซ็นลูกค้า</button>
+                      <button className={`btn btn-sm ${v.has_customer_signature ? 'btn-success' : 'btn-outline'}`} onClick={() => setSigning(v)}
+                        title={v.has_customer_signature ? 'ลูกค้าเซ็นแล้ว — กดเพื่อดู' : 'ยังไม่มีลายเซ็นลูกค้า'}>
+                        ✍ ลายเซ็นลูกค้า{v.has_customer_signature ? ' ✓' : ''}
+                      </button>
                     )}{' '}
                     {v.status === 'approved' && !v.completed_at && (
                       <button className="btn btn-success btn-sm" onClick={() => setCompleting({ id: v.id, code: v.code, note: '' })}>
@@ -223,7 +226,7 @@ export default function MyRequests() {
           onClose={() => setModalData(null)}
         />
       )}
-      {signing && <CustomerSignModal request={signing} onClose={() => setSigning(null)} onChanged={() => setDetailKey(k => k + 1)} />}
+      {signing && <CustomerSignModal request={signing} onClose={() => setSigning(null)} onChanged={() => { setDetailKey(k => k + 1); load(); }} />}
     {completing && (
         <div className="modal-bg" onClick={(e) => { if (e.target === e.currentTarget) setCompleting(null); }}>
           <div className="modal">
