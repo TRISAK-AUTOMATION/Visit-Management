@@ -6,6 +6,10 @@ import PageHero from '../components/PageHero';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
+import { companyLabel } from '../lib/companies';
+import OtPaperForm from '../components/OtPaperForm';
+import { useSignatureGate } from '../components/SignatureGate';
+import { WaitBanner, WaitChip } from '../components/WaitTurn';
 
 const TABS = [{ f: 'pending', label: 'รออนุมัติ' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }, { f: 'revision', label: 'ส่งกลับแก้ไข' }];
 
@@ -42,6 +46,7 @@ function WorkflowTimeline({ workflow }) {
 
 export default function ApproveOT() {
   const toast = useToast();
+  const { ensureSignature, gate } = useSignatureGate(); // ยังไม่มีลายเซ็น -> ถามให้ตั้งก่อน (ข้ามได้)
   const { refreshBadges } = useAuth();
   const [rows, setRows] = useState([]);
   const [tab, setTab] = useState(() => { const s = new URLSearchParams(window.location.search).get('status'); return ['pending','approved','rejected','revision'].includes(s) ? s : 'pending'; });
@@ -91,6 +96,7 @@ export default function ApproveOT() {
   };
 
   const decide = async (id, action) => {
+    if (action === 'approve' && !(await ensureSignature('approve'))) return false;
     const promptText = action === 'approve' ? 'ความคิดเห็น (ถ้ามี) ก่อนอนุมัติ:' : action === 'revision' ? 'ระบุสิ่งที่ต้องแก้ไข:' : 'เหตุผลที่ไม่อนุมัติ:';
     const input = prompt(promptText, '');
     if (input === null) return false; // กด Cancel = ยกเลิกการตัดสินใจ ไม่ส่งอะไรไป
@@ -106,6 +112,7 @@ export default function ApproveOT() {
 
   return (
     <Layout title="อนุมัติ OT (Approve Overtime)">
+      {gate}
       <PageHero icon="check" tone="orange" title="อนุมัติ OT" desc="ตรวจสอบและอนุมัติคำขอทำงานล่วงเวลาที่รอคุณพิจารณา" />
       <div className="tabs">
         {TABS.map(t => <div key={t.f} className={`tab ${tab === t.f ? 'active' : ''}`} onClick={() => setTab(t.f)}>{t.label}</div>)}
@@ -113,7 +120,7 @@ export default function ApproveOT() {
       <div className="card">
         <div className="card-body" style={{ padding: 0 }}>
           <table>
-            <thead><tr><th>เลขที่เอกสาร</th><th>วันที่ยื่น</th><th>ผู้ขอ</th><th>วันที่ทำ OT</th><th>เวลา</th><th>ชั่วโมง</th><th>จัดการ</th></tr></thead>
+            <thead><tr><th>เลขที่เอกสาร</th><th>วันที่ยื่น</th><th>ผู้ขอ</th><th>บริษัท</th><th>วันที่ทำ OT</th><th>เวลา</th><th>ชั่วโมง</th><th>จัดการ</th></tr></thead>
             <tbody>
               {rows.length ? rows.map(r => (
                 <tr key={r.id} style={r.status === 'pending' && r.is_update ? { background: '#fff8ea', boxShadow: 'inset 4px 0 0 #f5a524' } : undefined}>
@@ -125,6 +132,7 @@ export default function ApproveOT() {
                     <div>{fmtDateTime(r.created_at)}</div>
                   </td>
                   <td>{r.requester_name} {r.requester_department ? `· ${r.requester_department}` : ''}</td>
+                  <td>{r.company || '-'}</td>
                   <td>{fmtDate(r.ot_date)}</td>
                   <td>{r.time_from} - {r.time_to}</td>
                   <td>{r.hours} ชม.</td>
@@ -139,13 +147,13 @@ export default function ApproveOT() {
                     )}
                     {r.status === 'pending' && !r.can_act && (
                       <>
-                        <span className="muted" style={{ fontSize: 12.5 }}>รอ {r.waiting_for || 'ผู้อนุมัติ'} อนุมัติ</span>{' '}
+                        <WaitChip r={r} />{' '}
                         {r.can_resync && <button className="btn btn-outline btn-sm" onClick={() => resync(r.id)}>รีเซ็ตสายอนุมัติ</button>}
                       </>
                     )}
                   </td>
                 </tr>
-              )) : <tr><td colSpan={7} className="empty">ไม่มีรายการในหมวดนี้</td></tr>}
+              )) : <tr><td colSpan={8} className="empty">ไม่มีรายการในหมวดนี้</td></tr>}
             </tbody>
           </table>
         </div>
@@ -153,19 +161,21 @@ export default function ApproveOT() {
 
       {detail && (
         <div className="modal-bg" onClick={e => { if (e.target === e.currentTarget) setDetail(null); }}>
-          <div className="modal">
+          <div className="modal modal-paper">
             <div className="modal-head"><h3>คำขอ OT #{detail.request.code}</h3><button className="modal-close" onClick={() => setDetail(null)}>×</button></div>
             <div className="modal-body">
-              <p><b>ผู้ขอ:</b> {detail.request.requester_name} ({detail.request.requester_department || '-'})</p>
-              <p><b>วันที่:</b> {fmtDate(detail.request.ot_date)}{detail.request.day_type ? ` (${detail.request.day_type === 'holiday' ? 'วันหยุด' : 'วันทำงาน'})` : ''}</p>
-              <p><b>เวลา:</b> {detail.request.time_from} - {detail.request.time_to} ({detail.request.hours} ชม.)</p>
-              <p><b>สถานที่:</b> {detail.request.location || '-'}</p>
-              <p><b>OT Type:</b> {detail.request.ot_type || '-'}</p>
-              <p><b>ลูกค้า:</b> {detail.request.customer_name ? `${detail.request.customer_code || ''} - ${detail.request.customer_name}` : '-'}</p>
-              <p><b>Project No.:</b> {detail.request.project_no || '-'} &nbsp; <b>Job No.:</b> {detail.request.job_no || '-'}</p>
-              <p><b>รายละเอียดงาน:</b> {detail.request.work_detail || '-'}</p>
-              <p><b>เหตุผล:</b> {detail.request.reason || '-'}</p>
-              {detail.request.notes && <p><b>หมายเหตุ:</b> {detail.request.notes}</p>}
+              <p className="muted" style={{ margin: '0 0 10px' }}>ผู้ขอ: {detail.request.requester_name} ({detail.request.requester_department || '-'})</p>
+              <OtPaperForm r={detail.request} paper={detail.paper} />
+              <div className="otp-extra">
+                <div><b>บริษัท:</b> {detail.request.company ? companyLabel(detail.request.company) : '-'}</div>
+                <div><b>OT Type:</b> {detail.request.ot_type || '-'}</div>
+                <div><b>สถานที่:</b> {detail.request.location || '-'}</div>
+                <div><b>ลูกค้า:</b> {detail.request.customer_name ? `${detail.request.customer_code || ''} - ${detail.request.customer_name}` : '-'}</div>
+                <div><b>Project No.:</b> {detail.request.project_no || '-'}</div>
+                <div><b>Job No.:</b> {detail.request.job_no || '-'}</div>
+                <div className="full"><b>เหตุผล:</b> {detail.request.reason || '-'}</div>
+                {detail.request.notes && <div className="full"><b>หมายเหตุ:</b> {detail.request.notes}</div>}
+              </div>
               <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '14px 0' }} />
               <b>ขั้นตอนการอนุมัติ</b>
               <WorkflowTimeline workflow={detail.workflow} />
@@ -177,14 +187,13 @@ export default function ApproveOT() {
                 </div>
               )}
               {detail.request.status === 'pending' && !detail.can_act && (
-                <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff7e6', border: '1px solid #f5d9a0', borderRadius: 9, fontSize: 13, color: '#8a5a00' }}>
-                  คุณไม่ได้อยู่ในลำดับผู้อนุมัติของคำขอนี้ในขั้นตอนปัจจุบัน จึงอนุมัติ/ไม่อนุมัติไม่ได้
+                <WaitBanner r={detail}>
                   {detail.can_resync && (
                     <div style={{ marginTop: 8 }}>
                       <button className="btn btn-outline btn-sm" onClick={() => resync(detail.request.id)}>รีเซ็ตสายอนุมัติตามรายชื่อล่าสุด</button>
                     </div>
                   )}
-                </div>
+                </WaitBanner>
               )}
             </div>
           </div>

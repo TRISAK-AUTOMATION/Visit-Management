@@ -12,6 +12,7 @@ const { readSettings } = require('./pdfSettings');
 const { canViewRequest } = require('../utils/requestAccess');
 const approvalEngine = require('../utils/approvalEngine');
 const signature = require('../utils/signature');
+const { requesterStamp, approverStamp } = require('../utils/paperForms');
 
 const router = express.Router();
 
@@ -99,9 +100,10 @@ router.get('/:id/pdf-report', requireAuth, (req, res) => {
   }
   const approverName = nameOf(approvers) || (r.status === 'approved' ? r.approver_name || '' : '');
   const signers = [
-    { role: 'ผู้ขอปฏิบัติงาน', name: r.requester_name, sig: signature.getBuffer(r.requester_id), date: bkkDate(r.created_at) },
-    { role: 'ผู้ตรวจสอบ', name: nameOf(checkers), sig: sigOf(checkers), date: dateOf(checkers) },
-    { role: 'ผู้อนุมัติ', name: approverName, sig: sigOf(approvers), date: dateOf(approvers) || (r.status === 'approved' ? bkkDate(r.approved_at) : '') }
+    // stamp = ใช้เมื่อไม่มีภาพลายเซ็น (ชื่อลายมือ + วันเวลาที่ลงนามผ่านระบบ)
+    { role: 'ผู้ขอปฏิบัติงาน', name: r.requester_name, sig: signature.getBuffer(r.requester_id), stamp: requesterStamp('visit', r), date: bkkDate(r.created_at) },
+    { role: 'ผู้ตรวจสอบ', name: nameOf(checkers), sig: sigOf(checkers), stamp: approverStamp(checkers), date: dateOf(checkers) },
+    { role: 'ผู้อนุมัติ', name: approverName, sig: sigOf(approvers), stamp: approverStamp(approvers), date: dateOf(approvers) || (r.status === 'approved' ? bkkDate(r.approved_at) : '') }
   ];
 
   // ----- เอกสาร -----
@@ -384,7 +386,7 @@ router.get('/:id/pdf-report', requireAuth, (req, res) => {
       const x = MX + i * (colW + 12);
       doc.roundedRect(x, y, colW, BLOCK, 6).strokeColor(BORDER).lineWidth(0.8).stroke();
       const lineY = y + 54;
-      signature.draw(doc, s.sig, x, colW, lineY, 44);
+      signature.draw(doc, s.sig, x, colW, lineY, 44, s.stamp);
       doc.moveTo(x + 18, lineY).lineTo(x + colW - 18, lineY).strokeColor(MUTED).lineWidth(0.7).dash(2, { space: 2 }).stroke().undash();
       doc.font('bold').fontSize(9.5).fillColor(INK).text(s.role, x, lineY + 5, { width: colW, align: 'center', lineBreak: false });
       if (s.name) doc.font('regular').fontSize(9).fillColor(INK).text(`(${s.name})`, x + 6, lineY + 18, { width: colW - 12, align: 'center', lineBreak: false, ellipsis: true });

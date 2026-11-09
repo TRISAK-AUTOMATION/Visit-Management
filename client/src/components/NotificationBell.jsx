@@ -5,7 +5,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import './notification-bell.css';
 
-const ICONS = { new_request: '📝', approved: '✅', rejected: '❌', revision: '✏️', reminder: '🔔', leave_new_request: '🏖', leave_approved: '✅', leave_rejected: '❌', leave_revision: '✏️', ot_new_request: '⏰', ot_approved: '✅', ot_rejected: '❌', ot_revision: '✏️' };
+const ICONS = { new_request: '📝', approved: '✅', rejected: '❌', revision: '✏️', reminder: '🔔', leave_new_request: '🏖', leave_approved: '✅', leave_rejected: '❌', leave_revision: '✏️', ot_new_request: '⏰', ot_approved: '✅', ot_rejected: '❌', ot_revision: '✏️', upcoming_request: '⏳', leave_upcoming_request: '⏳', ot_upcoming_request: '⏳' };
 
 // แจ้งเตือนแต่ละประเภทพาไปหน้าที่เกี่ยวข้อง
 function targetOf(n) {
@@ -14,7 +14,7 @@ function targetOf(n) {
   const kind = t.replace(/^(leave_|ot_)/, '');
   const approve = { visit: '/approve-requests', leave: '/approve-leave', ot: '/approve-ot' }[mod];
   const mine = { visit: '/my-requests', leave: '/my-leave', ot: '/my-ot' }[mod];
-  if (kind === 'new_request' || kind === 'reminder') return `${approve}?status=pending`;
+  if (kind === 'new_request' || kind === 'reminder' || kind === 'upcoming_request') return `${approve}?status=pending`;
   if (['approved', 'rejected', 'revision'].includes(kind)) return `${mine}?status=${kind}`;
   return '/notifications';
 }

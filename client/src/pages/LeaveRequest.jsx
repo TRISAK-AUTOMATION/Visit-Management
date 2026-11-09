@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { api, todayLocal } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+import { useSignatureGate } from '../components/SignatureGate';
 
 const LEAVE_TYPES = ['ลากิจ', 'ลาป่วย', 'ลาพักร้อน'];
 const MODES = [
@@ -23,6 +24,7 @@ const initial = {
 export default function LeaveRequest() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { ensureSignature, gate } = useSignatureGate(); // ยังไม่มีลายเซ็น -> ถามให้ตั้งก่อน (ข้ามได้)
   const [params] = useSearchParams();
   const id = params.get('id');
   const [form, setForm] = useState(initial);
@@ -68,6 +70,7 @@ export default function LeaveRequest() {
       if (form.leave_mode === 'hours' && (!form.time_from || !form.time_to)) {
         toast('กรุณาระบุเวลาเริ่มต้น-สิ้นสุด', 'error'); return;
       }
+      if (!(await ensureSignature('submit'))) return;
     }
     setSaving(true);
     const payload = { ...form, date_to: form.leave_mode === 'full_day' ? (form.date_to || form.date_from) : form.date_from, save_as: isDraft ? 'draft' : undefined };
@@ -89,6 +92,7 @@ export default function LeaveRequest() {
 
   return (
     <Layout title={existing ? `แก้ไขคำขอลา #${existing.code}` : 'สร้างคำขอลา (Leave Request)'}>
+      {gate}
       <div className="card" style={{ maxWidth: 700 }}>
         <div className="card-head"><h3>ข้อมูลการลา</h3></div>
         <div className="card-body">

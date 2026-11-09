@@ -90,7 +90,7 @@ router.get('/stats', requireAuth, (req, res) => {
     FROM leave_requests t JOIN users u ON u.id = t.requester_id
     WHERE ${leaveScope.where} AND t.status != 'cancelled' ORDER BY t.created_at DESC, t.id DESC LIMIT 5`).all(...leaveScope.p);
   const otLatest = db.prepare(`
-    SELECT t.id, t.ot_date, t.time_from, t.time_to, t.hours, t.ot_type, t.status, t.created_at, u.full_name AS requester_name
+    SELECT t.id, t.ot_date, t.time_from, t.time_to, t.hours, t.ot_type, t.company, t.status, t.created_at, u.full_name AS requester_name
     FROM ot_requests t JOIN users u ON u.id = t.requester_id
     WHERE ${otScope.where} AND t.status != 'cancelled' ORDER BY t.created_at DESC, t.id DESC LIMIT 5`).all(...otScope.p);
   const leaveUpcoming = db.prepare(`
@@ -98,20 +98,20 @@ router.get('/stats', requireAuth, (req, res) => {
     FROM leave_requests t JOIN users u ON u.id = t.requester_id
     WHERE ${leaveScope.where} AND t.status = 'approved' AND t.date_to >= date('now','localtime') ORDER BY t.date_from ASC LIMIT 5`).all(...leaveScope.p);
   const otUpcoming = db.prepare(`
-    SELECT t.id, t.ot_date, t.time_from, t.time_to, t.hours, t.ot_type, u.full_name AS requester_name
+    SELECT t.id, t.ot_date, t.time_from, t.time_to, t.hours, t.ot_type, t.company, u.full_name AS requester_name
     FROM ot_requests t JOIN users u ON u.id = t.requester_id
     WHERE ${otScope.where} AND t.status = 'approved' AND t.ot_date >= date('now','localtime') ORDER BY t.ot_date ASC LIMIT 5`).all(...otScope.p);
 
   const latestAll = [
     ...latest.map(v => ({ kind: 'visit', id: v.id, date: v.visit_date, title: v.customer_name, time: `${v.time_from} - ${v.time_to}`, status: v.status, created_at: v.created_at })),
     ...leaveLatest.map(l => ({ kind: 'leave', id: l.id, date: l.date_from, title: `${l.leave_type} · ${l.requester_name}`, time: l.leave_mode === 'hours' ? `${l.time_from} - ${l.time_to}` : (l.date_to && l.date_to !== l.date_from ? `ถึง ${thDate(l.date_to)}` : 'เต็มวัน/ครึ่งวัน'), status: l.status, created_at: l.created_at })),
-    ...otLatest.map(o => ({ kind: 'ot', id: o.id, date: o.ot_date, title: `${o.ot_type || 'OT'} · ${o.requester_name}`, time: `${o.time_from} - ${o.time_to}`, status: o.status, created_at: o.created_at }))
+    ...otLatest.map(o => ({ kind: 'ot', id: o.id, date: o.ot_date, title: `${o.company ? o.company + ' · ' : ''}${o.ot_type || 'OT'} · ${o.requester_name}`, time: `${o.time_from} - ${o.time_to}`, status: o.status, created_at: o.created_at }))
   ].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
 
   const upcomingAll = [
     ...upcoming.map(v => ({ kind: 'visit', id: v.id, date: v.visit_date, title: v.customer_name, time: `${v.time_from} - ${v.time_to}` })),
     ...leaveUpcoming.map(l => ({ kind: 'leave', id: l.id, date: l.date_from < todayStr ? todayStr : l.date_from, title: `${l.leave_type} · ${l.requester_name}`, time: l.date_to && l.date_to !== l.date_from ? `ถึง ${thDate(l.date_to)}` : (l.leave_mode === 'hours' ? `${l.time_from} - ${l.time_to}` : 'เต็มวัน/ครึ่งวัน') })),
-    ...otUpcoming.map(o => ({ kind: 'ot', id: o.id, date: o.ot_date, title: `${o.ot_type || 'OT'} · ${o.requester_name}`, time: `${o.time_from} - ${o.time_to}` }))
+    ...otUpcoming.map(o => ({ kind: 'ot', id: o.id, date: o.ot_date, title: `${o.company ? o.company + ' · ' : ''}${o.ot_type || 'OT'} · ${o.requester_name}`, time: `${o.time_from} - ${o.time_to}` }))
   ].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
   res.json({

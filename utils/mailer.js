@@ -53,10 +53,20 @@ async function sendViaBrevoApi({ to, subject, html }) {
   }
 }
 
+// รูปแบบอีเมลพื้นฐาน (ชื่อ@โดเมน.นามสกุล) — กันที่อยู่ไม่ครบ เช่น "@trisak.co.th" ที่ทำให้ Brevo ตอบ 400 ทั้งฉบับ
+const EMAIL_RE = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[A-Za-z]{2,}$/;
+const isValidEmail = (s) => EMAIL_RE.test(String(s || '').trim());
+
 // ส่งอีเมล 1 ฉบับ ไม่โยน error ออกไปนอกฟังก์ชัน (กันไม่ให้ล้มทั้ง request เพราะอีเมลส่งไม่สำเร็จ)
 // ลำดับช่องทาง: BREVO_API_KEY (API) -> SMTP_HOST (SMTP) -> โหมดจำลอง (log ออก console)
 async function sendMail({ to, subject, html }) {
   if (!to) return { skipped: true, reason: 'no-recipient' };
+  // ตัดที่อยู่ที่ผิดรูปแบบออก (คนอื่นยังได้อีเมลตามปกติ) — แก้อีเมลของผู้ใช้ได้ที่หน้าจัดการผู้ใช้
+  const all = String(to).split(',').map((s) => s.trim()).filter(Boolean);
+  const bad = all.filter((s) => !isValidEmail(s));
+  if (bad.length) console.warn(`[MAIL:SKIP] ข้ามอีเมลที่รูปแบบไม่ถูกต้อง: ${bad.join(', ')} (เรื่อง: ${subject})`);
+  to = all.filter(isValidEmail).join(', ');
+  if (!to) return { skipped: true, reason: 'invalid-recipient' };
   if (process.env.BREVO_API_KEY) {
     try {
       await sendViaBrevoApi({ to, subject, html });
@@ -323,4 +333,4 @@ async function sendRevisionEmail({ to, requesterName, vr, approverName, note, sh
   return sendMail({ to, subject: `[ส่งกลับแก้ไข] คำขอออกนอกสถานที่${codeSuffix}`, html });
 }
 
-module.exports = { escapeHtml, sendMail, sendNewRequestEmail, sendDecisionEmail, sendRevisionEmail, APP_BASE_URL };
+module.exports = { escapeHtml, isValidEmail, sendMail, sendNewRequestEmail, sendDecisionEmail, sendRevisionEmail, APP_BASE_URL };

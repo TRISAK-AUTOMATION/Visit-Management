@@ -6,6 +6,9 @@ import PageHero from '../components/PageHero';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
+import LeavePaperForm from '../components/LeavePaperForm';
+import { useSignatureGate } from '../components/SignatureGate';
+import { WaitBanner, WaitChip } from '../components/WaitTurn';
 
 const TABS = [{ f: 'pending', label: 'รออนุมัติ' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }, { f: 'revision', label: 'ส่งกลับแก้ไข' }];
 
@@ -49,6 +52,7 @@ function durationLabel(r) {
 
 export default function ApproveLeave() {
   const toast = useToast();
+  const { ensureSignature, gate } = useSignatureGate(); // ยังไม่มีลายเซ็น -> ถามให้ตั้งก่อน (ข้ามได้)
   const { me, refreshBadges } = useAuth();
   const [rows, setRows] = useState([]);
   const [tab, setTab] = useState(() => { const s = new URLSearchParams(window.location.search).get('status'); return ['pending','approved','rejected','revision'].includes(s) ? s : 'pending'; });
@@ -110,6 +114,7 @@ export default function ApproveLeave() {
   };
 
   const decide = async (id, action) => {
+    if (action === 'approve' && !(await ensureSignature('approve'))) return false;
     const promptText = action === 'approve' ? 'ความคิดเห็น (ถ้ามี) ก่อนอนุมัติ:' : action === 'revision' ? 'ระบุสิ่งที่ต้องแก้ไข:' : 'เหตุผลที่ไม่อนุมัติ:';
     const input = prompt(promptText, '');
     if (input === null) return false; // กด Cancel = ยกเลิกการตัดสินใจ ไม่ส่งอะไรไป
@@ -125,6 +130,7 @@ export default function ApproveLeave() {
 
   return (
     <Layout title="อนุมัติการลา (Approve Leave)">
+      {gate}
       <PageHero icon="check" tone="green" title="อนุมัติการลา" desc="ตรวจสอบและอนุมัติคำขอลาที่รอคุณพิจารณา" />
       <div className="tabs">
         {TABS.map(t => <div key={t.f} className={`tab ${tab === t.f ? 'active' : ''}`} onClick={() => setTab(t.f)}>{t.label}</div>)}
@@ -161,7 +167,7 @@ export default function ApproveLeave() {
                     )}
                     {r.status === 'pending' && !r.can_act && (
                       <>
-                        <span className="muted" style={{ fontSize: 12.5 }}>รอ {r.waiting_for || 'ผู้อนุมัติ'} อนุมัติ</span>{' '}
+                        <WaitChip r={r} />{' '}
                         {r.can_resync && <button className="btn btn-outline btn-sm" onClick={() => resync(r.id)}>รีเซ็ตสายอนุมัติ</button>}
                       </>
                     )}
@@ -175,14 +181,11 @@ export default function ApproveLeave() {
 
       {detail && (
         <div className="modal-bg" onClick={e => { if (e.target === e.currentTarget) setDetail(null); }}>
-          <div className="modal">
+          <div className="modal modal-paper">
             <div className="modal-head"><h3>คำขอลา #{detail.request.code}</h3><button className="modal-close" onClick={() => setDetail(null)}>×</button></div>
             <div className="modal-body">
-              <p><b>ผู้ขอ:</b> {detail.request.requester_name} ({detail.request.requester_department || '-'})</p>
-              <p><b>ประเภท:</b> {detail.request.leave_type}</p>
-              <p><b>วันที่:</b> {fmtDate(detail.request.date_from)}{detail.request.date_to !== detail.request.date_from ? ` - ${fmtDate(detail.request.date_to)}` : ''}</p>
-              <p><b>จำนวน:</b> {durationLabel(detail.request)}</p>
-              <p><b>เหตุผล:</b> {detail.request.reason || '-'}</p>
+              <p className="muted" style={{ margin: '0 0 10px' }}>ผู้ขอ: {detail.request.requester_name} ({detail.request.requester_department || '-'})</p>
+              <LeavePaperForm r={detail.request} paper={detail.paper} />
               {detail.request.attachment && <p><a href={detail.request.attachment} download>ดาวน์โหลดเอกสารแนบ</a></p>}
               <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '14px 0' }} />
               <b>ขั้นตอนการอนุมัติ</b>
@@ -200,14 +203,13 @@ export default function ApproveLeave() {
                 </div>
               )}
               {detail.request.status === 'pending' && !detail.can_act && (
-                <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff7e6', border: '1px solid #f5d9a0', borderRadius: 9, fontSize: 13, color: '#8a5a00' }}>
-                  คุณไม่ได้อยู่ในลำดับผู้อนุมัติของคำขอนี้ในขั้นตอนปัจจุบัน จึงอนุมัติ/ไม่อนุมัติไม่ได้
+                <WaitBanner r={detail}>
                   {detail.can_resync && (
                     <div style={{ marginTop: 8 }}>
                       <button className="btn btn-outline btn-sm" onClick={() => resync(detail.request.id)}>รีเซ็ตสายอนุมัติตามรายชื่อล่าสุด</button>
                     </div>
                   )}
-                </div>
+                </WaitBanner>
               )}
             </div>
           </div>

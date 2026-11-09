@@ -6,7 +6,7 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [me, setMe] = useState(undefined); // undefined = กำลังโหลด, null = ไม่ได้ login, object = user
-  const [badgeCounts, setBadgeCounts] = useState({ pending: 0, unread: 0, pendingLeave: 0, pendingOT: 0 });
+  const [badgeCounts, setBadgeCounts] = useState({ pending: 0, unread: 0, pendingLeave: 0, pendingOT: 0, soon: 0, soonOT: 0, soonLeave: 0 });
 
   // จำนวนคำขอ Visit ของฉันแยกตามขั้นตอน (ฉบับร่าง/รออนุมัติ/รอแก้ไข/อนุมัติแล้ว/ไม่อนุมัติ) สำหรับเมนูข้างซ้าย
   const refreshMyVisit = useCallback(async (user) => {
@@ -35,18 +35,21 @@ export function AuthProvider({ children }) {
 
   const lastUnread = useRef(null);
   const refreshBadges = useCallback(async (user) => {
-    const counts = { pending: 0, unread: 0, pendingLeave: 0, pendingOT: 0 };
+    const counts = { pending: 0, unread: 0, pendingLeave: 0, pendingOT: 0, soon: 0, soonOT: 0, soonLeave: 0 }; // soon* = ยังไม่ถึงคิว (รอขั้นก่อนหน้า)
     try {
       if (user && (user.role !== 'Employee' || user.can_approve)) {
         const pend = await api.get('/api/visit-requests?scope=pending&status=pending');
         counts.pending = pend.requests.filter(r => r.can_act !== false).length; // นับเฉพาะใบที่ "รอคุณอนุมัติ" จริง
+        counts.soon = pend.requests.filter(r => r.upcoming).length;
         const pendOT = await api.get('/api/ot-requests?scope=pending&status=pending');
         counts.pendingOT = pendOT.requests.filter(r => r.can_act !== false).length;
+        counts.soonOT = pendOT.requests.filter(r => r.upcoming).length;
       }
       // แยกเงื่อนไขจาก visit/OT เพราะ leave ใช้ can_approve_leave (Admin อาจตั้งพนักงาน role Employee เป็นผู้อนุมัติผ่าน Template ได้)
       if (user && (user.role !== 'Employee' || user.can_approve_leave)) {
         const pendLeave = await api.get('/api/leave-requests?scope=pending&status=pending');
         counts.pendingLeave = pendLeave.requests.filter(r => r.can_act !== false).length;
+        counts.soonLeave = pendLeave.requests.filter(r => r.upcoming).length;
       }
       const notif = await api.get('/api/notifications');
       counts.unread = notif.unread;

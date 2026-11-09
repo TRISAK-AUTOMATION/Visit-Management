@@ -7,7 +7,7 @@ import { api, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
 
-const ICONS = { new_request: '\uD83D\uDCDD', approved: '\u2705', rejected: '\u274C', reminder: '\uD83D\uDD14', leave_new_request: '\uD83C\uDFD6', leave_approved: '\u2705', leave_rejected: '\u274C', ot_new_request: '\u23F0', ot_approved: '\u2705', ot_rejected: '\u274C' };
+const ICONS = { new_request: '\uD83D\uDCDD', approved: '\u2705', rejected: '\u274C', reminder: '\uD83D\uDD14', leave_new_request: '\uD83C\uDFD6', leave_approved: '\u2705', leave_rejected: '\u274C', ot_new_request: '\u23F0', ot_approved: '\u2705', ot_rejected: '\u274C', upcoming_request: '\u23F3', leave_upcoming_request: '\u23F3', ot_upcoming_request: '\u23F3' };
 
 export default function Notifications() {
   const { pc } = usePageContent();

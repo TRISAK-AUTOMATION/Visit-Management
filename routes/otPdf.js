@@ -10,6 +10,8 @@ const { canViewRequest } = require('../utils/requestAccess');
 const approvalEngine = require('../utils/approvalEngine');
 const signature = require('../utils/signature');
 const { readSettings } = require('./pdfSettings');
+const { companyName } = require('../utils/companies');
+const { bangkokDate, signerSlots, requesterStamp } = require('../utils/paperForms');
 
 const router = express.Router();
 
@@ -18,14 +20,6 @@ const FONT_BOLD = path.join(__dirname, '..', 'fonts', 'Sarabun-Bold.ttf');
 const INK = '#111111';
 const RED = '#d11a1a';
 
-function bangkokDate(utcStr) {
-  if (!utcStr) return '';
-  const d = new Date(String(utcStr).replace(' ', 'T') + 'Z');
-  if (isNaN(d)) return toThaiDate(utcStr);
-  const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Bangkok', day: '2-digit', month: '2-digit', year: 'numeric' }).formatToParts(d);
-  const g = (t) => p.find(x => x.type === t).value;
-  return `${g('day')}/${g('month')}/${g('year')}`;
-}
 // 08:30 -> "08.30 น."
 const clock = (t) => (t ? `${String(t).replace(':', '.')} น.` : '');
 const num = (n) => (Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100));
@@ -51,25 +45,13 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
   if (!canViewRequest(req.session, 'ot', ot)) return res.status(403).json({ error: 'คุณไม่มีสิทธิ์ดูคำขอนี้' });
   if (ot.status !== 'approved') return res.status(400).json({ error: 'พิมพ์ PDF ได้เฉพาะคำขอที่อนุมัติแล้วเท่านั้น' });
 
-  // ผู้ลงนาม: ขั้นสุดท้าย = ผู้อนุมัติ, ขั้นก่อนหน้า = ผู้ตรวจสอบ (ช่องที่ 1-2)
+  // ผู้ลงนาม: แบ่งขั้นตอนลงช่องผู้ตรวจสอบ/ผู้อนุมัติ (กติกาเดียวกับหน้าต่างรายละเอียดในเว็บ - utils/paperForms.js)
   const wf = approvalEngine.getWorkflow('ot', ot.id);
-  const namesOf = (st) => st ? st.approvers.filter(a => a.decision === 'approve').map(a => a.full_name).join(', ') : '';
-  const sigOf = (st) => { if (!st) return null; for (const a of st.approvers) { if (a.decision === 'approve') { const b = signature.getBuffer(a.user_id); if (b) return b; } } return null; };
-  let checker1 = '', checker2 = '', approverName = ot.approver_name || '', checkerSig = null, approverSig = null;
-  if (wf && wf.states.length) {
-    if (wf.states.some(s => s.slot)) {
-      // ตั้งช่องลงนามไว้ใน Template: ขั้นที่เป็น 'checker' ลงช่องผู้ตรวจสอบ ที่เหลือลงช่องผู้อนุมัติ
-      const cs = wf.states.filter(s => s.slot === 'checker'), as = wf.states.filter(s => s.slot !== 'checker');
-      checker1 = cs.map(namesOf).filter(Boolean).join(', '); checkerSig = cs.map(sigOf).find(Boolean) || null;
-      approverName = as.map(namesOf).filter(Boolean).join(', ') || approverName; approverSig = as.map(sigOf).find(Boolean) || null;
-    } else {
-      const n = wf.states.length;
-      approverName = namesOf(wf.states[n - 1]) || approverName;
-      approverSig = sigOf(wf.states[n - 1]);
-      if (n > 1) { checker1 = namesOf(wf.states[0]); checkerSig = sigOf(wf.states[0]); }
-      if (n > 2) checker2 = namesOf(wf.states[1]);
-    }
-  }
+  const slots = signerSlots(wf);
+  const checker1 = slots.checker.names, checker2 = '';
+  const approverName = slots.approver.names || ot.approver_name || '';
+  const checkerSig = slots.checker.signerId ? signature.getBuffer(slots.checker.signerId) : null;
+  const approverSig = slots.approver.signerId ? signature.getBuffer(slots.approver.signerId) : null;
   const requesterSig = signature.getBuffer(ot.requester_id);
 
   const doc = new PDFDocument({ size: 'A4', margin: 0 });
@@ -92,7 +74,7 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
   const onLine = (lineY, size) => lineY - 2.5 - asc(size);
   const inMid = (midY, size) => midY + 0.34 * size - asc(size);
 
-  doc.font('bold').fontSize(15).fillColor(INK).text(cfg.company, L, y, { width: W, align: 'center' });
+  doc.font('bold').fontSize(15).fillColor(INK).text(companyName(ot.company) || cfg.company, L, y, { width: W, align: 'center' }); // หัวเอกสาร = บริษัทที่ทำ OT ให้ (ใบเก่าที่ไม่ได้ระบุ ใช้ชื่อที่ตั้งใน Settings)
   y += 21;
   doc.font('bold').fontSize(12.5).text(cfg.title, L, y, { width: W, align: 'center' });
   y += 28;
@@ -159,9 +141,9 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
   // ลายเซ็น: เส้นประอยู่บน ชื่อตำแหน่งอยู่ใต้เส้นตรงกลางช่อง ชื่อในวงเล็บใต้ตำแหน่ง (โครงเดียวกับใบลา)
   y = tableTop + tableH + 40;
   const colW = (W - 20) / 3;
-  if (cfg.show_signature)   [['ผู้ยื่นคำร้อง', ot.requester_name, requesterSig], ['ผู้ตรวจสอบ', [checker1, checker2].filter(Boolean).join(', '), checkerSig], ['ผู้อนุมัติ', approverName, approverSig]].forEach(([role, name, sig], i) => {
+  if (cfg.show_signature)   [['ผู้ยื่นคำร้อง', ot.requester_name, requesterSig, requesterStamp('ot', ot)], ['ผู้ตรวจสอบ', [checker1, checker2].filter(Boolean).join(', '), checkerSig, slots.checker.stamp], ['ผู้อนุมัติ', approverName, approverSig, slots.approver.stamp]].forEach(([role, name, sig, stamp], i) => {
     const cx = L + i * (colW + 10);
-    signature.draw(doc, sig, cx, colW, y, 34);
+    signature.draw(doc, sig, cx, colW, y, 34, stamp); // ไม่มีลายเซ็น -> ชื่อลายมือ + วันเวลาที่ลงนามผ่านระบบ
     dots(cx + 12, cx + colW - 12, y);
     doc.font('regular').fontSize(12).fillColor(INK).text(role, cx, y + 6, { width: colW, align: 'center', lineBreak: false });
     if (name) doc.fontSize(10).text(`(${name})`, cx, y + 22, { width: colW, align: 'center', lineBreak: false, ellipsis: true });

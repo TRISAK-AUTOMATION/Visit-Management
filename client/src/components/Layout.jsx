@@ -90,10 +90,10 @@ function buildApprovalGroup(me) {
   const items = [];
   // ผู้อนุมัติ = role Approver/Admin หรือคนที่ Admin ตั้งเป็นผู้อนุมัติใน Template (me.can_approve) แม้ role จะเป็นพนักงาน
   if (me.role === 'Approver' || me.role === 'Admin' || me.can_approve) {
-    items.push({ href: '/approve-requests', icon: '\u2705', label: 'Approve Requests', badgeKey: 'pending' });
-    items.push({ href: '/approve-ot', icon: '\u2611', label: 'อนุมัติ OT', badgeKey: 'pendingOT' });
+    items.push({ href: '/approve-requests', icon: '\u2705', label: 'Approve Requests', badgeKey: 'pending', soonKey: 'soon' });
+    items.push({ href: '/approve-ot', icon: '\u2611', label: 'อนุมัติ OT', badgeKey: 'pendingOT', soonKey: 'soonOT' });
   }
-  if (me.can_approve_leave) items.push({ href: '/approve-leave', icon: '\uD83D\uDDD3', label: 'อนุมัติการลา', badgeKey: 'pendingLeave' });
+  if (me.can_approve_leave) items.push({ href: '/approve-leave', icon: '\uD83D\uDDD3', label: 'อนุมัติการลา', badgeKey: 'pendingLeave', soonKey: 'soonLeave' });
   return items;
 }
 
@@ -261,6 +261,8 @@ export default function Layout({ title, children }) {
                             <span className="icon" dangerouslySetInnerHTML={{ __html: sub.icon }} />
                             {menuLabel(sub)}
                             {subBadge && <span className="badge" style={BADGE_STYLE[sub.badgeTone] || { background: 'var(--red-600)', color: '#fff' }}>{badgeCounts[sub.badgeKey]}</span>}
+                            {/* ตัวเลขสีจาง = คำขอที่คุณอนุมัติในขั้นถัดไป แต่ยังรอหัวหน้า/ผู้ตรวจสอบอนุมัติก่อน (ไม่นับรวมในตัวเลขแดง) */}
+                            {sub.soonKey && badgeCounts[sub.soonKey] > 0 && <span className="badge badge-soon" style={BADGE_STYLE.soft} title={`อีก ${badgeCounts[sub.soonKey]} รายการรอหัวหน้า/ผู้ตรวจสอบอนุมัติก่อน แล้วจะถึงคิวคุณ`}>⏳{badgeCounts[sub.soonKey]}</span>}
                           </Link>
                         </li>
                       );

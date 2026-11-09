@@ -10,6 +10,7 @@ const { requireAuth } = require('./middleware');
 const { getDepartments } = require('../utils/departments');
 const { logAction } = require('../utils/systemLog');
 const Q = require('../utils/reportQueries');
+const { companyLabel } = require('../utils/companies');
 const approvalEngine = require('../utils/approvalEngine');
 const { canViewAll } = require('../utils/viewScope');
 const X = require('../utils/reportExport');
@@ -219,7 +220,7 @@ router.get('/detail/:type/:id', (req, res) => {
       ];
     } else if (type === 'ot') {
       fields = [
-        ['Employee', row.employee], ['Department', row.dept], ['OT Date', row.ot_date],
+        ['Employee', row.employee], ['Department', row.dept], ['Company', companyLabel(row.company)], ['OT Date', row.ot_date],
         ['Start Time', row.time_from], ['End Time', row.time_to], ['OT Hours', hoursFmt(row.hours)],
         ['Day Type', Q.DAY_TYPE_LABEL[row.day_type] || ''], ['OT Type', row.ot_type], ['Customer', row.customer_name],
         ['Job No.', row.job_no], ['Project No.', row.project_no], ['Location', row.location],

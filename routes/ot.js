@@ -6,9 +6,12 @@ const { sendMail, escapeHtml } = require('../utils/mailer');
 const { toThaiDate } = require('../utils/dateFormat');
 const { logAction } = require('../utils/systemLog');
 const approvalEngine = require('../utils/approvalEngine');
+const { notifyUpcomingApprovers } = require('../utils/upcomingNotify');
 const { canViewAll } = require('../utils/viewScope');
 
 const checks = require('../utils/inputChecks');
+const { COMPANY_CODES, companyLabel } = require('../utils/companies');
+const { otPaperData } = require('../utils/paperForms');
 const router = express.Router();
 
 // เช็คว่าผู้ใช้นี้มี Template อนุมัติของโมดูล "ot" ที่เปิดใช้งานอยู่ (is_active=1) และเลือกเขาไว้เป็น Requester จริงหรือไม่
@@ -55,9 +58,10 @@ function hoursBetween(timeFrom, timeTo) {
 // ตรวจข้อมูลคำขอ OT — คืนข้อความ error ภาษาไทย หรือ null ถ้าผ่าน (ใช้ร่วมกันทั้งสร้าง/แก้ไข/ส่ง/ส่งใหม่)
 // isDraft = true: ฉบับร่างไม่บังคับกรอกครบ แต่ค่าที่กรอกมาแล้วต้องถูกต้อง
 function validateOT(f, isDraft) {
-  { const k = checks.nonScalarField(f, ['ot_date', 'time_from', 'time_to', 'location', 'work_detail', 'reason', 'notes', 'ot_type', 'day_type', 'customer_id', 'project_no', 'job_no']); if (k) return `ข้อมูลในช่อง ${k} ไม่ถูกต้อง`; }
+  { const k = checks.nonScalarField(f, ['ot_date', 'time_from', 'time_to', 'location', 'work_detail', 'reason', 'notes', 'ot_type', 'day_type', 'customer_id', 'project_no', 'job_no', 'company']); if (k) return `ข้อมูลในช่อง ${k} ไม่ถูกต้อง`; }
   const otType = String(f.ot_type || '').trim();
   if (otType && !OT_TYPES.includes(otType)) return 'OT Type ไม่ถูกต้อง';
+  if (f.company && !COMPANY_CODES.includes(String(f.company).trim())) return 'บริษัทที่ทำ OT ให้ไม่ถูกต้อง';
   if (f.day_type && !['workday', 'holiday'].includes(f.day_type)) return 'ประเภทวัน (วันทำงาน/วันหยุด) ไม่ถูกต้อง';
   for (const [key, label] of [['project_no', 'Project No.'], ['job_no', 'Job No.']]) {
     if (String(f[key] || '').trim().length > MAX_REF_LEN) return `${label} ยาวเกินไป (ไม่เกิน ${MAX_REF_LEN} ตัวอักษร)`;
@@ -75,6 +79,7 @@ function validateOT(f, isDraft) {
 
   if (!isDraft) {
     if (!f.ot_date) return 'กรุณาระบุวันที่ทำ OT';
+    if (!f.company || !String(f.company).trim()) return 'กรุณาเลือกบริษัทที่ทำ OT ให้';
     if (!otType) return 'กรุณาเลือก OT Type';
     if (!f.location || !String(f.location).trim()) return 'กรุณาระบุสถานที่ปฏิบัติงาน';
     if (!f.time_from || !f.time_to) return 'กรุณาระบุเวลาเริ่มต้นและสิ้นสุด';
@@ -97,6 +102,7 @@ function otFields(b) {
   const blank = (v) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim());
   return {
     ot_type: blank(b.ot_type),
+    company: blank(b.company),
     day_type: blank(b.day_type) || defaultDayType(b.ot_date),
     customer_id: blank(b.customer_id) === null ? null : Number(b.customer_id),
     project_no: blank(b.project_no),
@@ -142,6 +148,7 @@ router.get('/', requireAuth, (req, res) => {
     for (const r of rows) {
       if (r.status !== 'pending') continue;
       r.can_act = approvalEngine.canActOn('ot', r.id, req.session.userId);
+      r.upcoming = !r.can_act && approvalEngine.isUpcomingFor('ot', r.id, req.session.userId); // อยู่ขั้นถัดไป ยังไม่ถึงคิว
       r.waiting_for = approvalEngine.currentApproverNames('ot', r.id).join(', ');
       r.can_resync = req.session.role === 'Admin' && approvalEngine.canResync('ot', r.id);
       // "ส่งใหม่หลังแก้ไข" (Updated) แยกจากคำขอใหม่ (New): ดูรายการล่าสุดในประวัติ
@@ -158,7 +165,7 @@ router.get('/', requireAuth, (req, res) => {
 router.get('/calendar/events', requireAuth, (req, res) => {
   const base = `
     SELECT o.id, o.code, o.requester_id, o.ot_date, o.time_from, o.time_to, o.hours, o.location, o.work_detail,
-           o.reason, o.notes, o.ot_type, o.day_type, o.status,
+           o.reason, o.notes, o.ot_type, o.day_type, o.company, o.status,
            u.full_name AS requester_name, u.department AS requester_department,
            a.full_name AS approver_name
     FROM ot_requests o JOIN users u ON u.id = o.requester_id
@@ -208,7 +215,10 @@ router.get('/:id', requireAuth, (req, res) => {
   const workflow = approvalEngine.getWorkflow('ot', ot.id);
   res.json({
     request: ot, history, workflow,
+    paper: otPaperData(ot, workflow, require('./pdfSettings').readSettings().docs.ot), // หน้าต่างรายละเอียดแสดงเป็นแบบฟอร์มเดียวกับ PDF
     can_act: ot.status === 'pending' && approvalEngine.canActOn('ot', ot.id, req.session.userId),
+    upcoming: ot.status === 'pending' && approvalEngine.isUpcomingFor('ot', ot.id, req.session.userId),
+    waiting_for: ot.status === 'pending' ? approvalEngine.currentApproverNames('ot', ot.id).join(', ') : '',
     can_resync: isAdmin && ot.status === 'pending' && approvalEngine.canResync('ot', ot.id)
   });
 });
@@ -240,15 +250,15 @@ router.post('/', requireAuth, (req, res) => {
   let code, info;
   const insertStmt = db.prepare(`
     INSERT INTO ot_requests (code, requester_id, ot_date, time_from, time_to, hours, location, work_detail, reason, notes, status,
-                             ot_type, customer_id, project_no, job_no, day_type)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             ot_type, customer_id, project_no, job_no, day_type, company)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (let attempt = 0; attempt < 5; attempt++) {
     code = generateCode();
     try {
       info = insertStmt.run(code, req.session.userId, ot_date || '', time_from || '', time_to || '', hours,
         location || '', work_detail || '', reason || '', notes || '', status,
-        x.ot_type, x.customer_id, x.project_no, x.job_no, x.day_type);
+        x.ot_type, x.customer_id, x.project_no, x.job_no, x.day_type, x.company);
       break;
     } catch (err) {
       const isDup = err.code === 'SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed: ot_requests\.code/.test(err.message);
@@ -286,10 +296,10 @@ router.put('/:id', requireAuth, (req, res) => {
   const hours = hoursBetween(time_from, time_to);
   db.prepare(`
     UPDATE ot_requests SET ot_date = ?, time_from = ?, time_to = ?, hours = ?, location = ?, work_detail = ?, reason = ?, notes = ?,
-                           ot_type = ?, customer_id = ?, project_no = ?, job_no = ?, day_type = ?
+                           ot_type = ?, customer_id = ?, project_no = ?, job_no = ?, day_type = ?, company = ?
     WHERE id = ?
   `).run(ot_date || '', time_from || '', time_to || '', hours, location || '', work_detail || '', reason || '', notes || '',
-    x.ot_type, x.customer_id, x.project_no, x.job_no, x.day_type, req.params.id);
+    x.ot_type, x.customer_id, x.project_no, x.job_no, x.day_type, x.company, req.params.id);
   res.json({ ok: true });
 });
 
@@ -442,8 +452,8 @@ function notifyOTSubmitted(otId, isAdvance = false) {
   if (!ids.length) return;
   const approvers = db.prepare(`SELECT id, full_name, email, email_notify FROM users WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
   const msg = isAdvance
-    ? `คำขอ OT ของ ${requester.full_name} วันที่ ${toThaiDate(ot.ot_date)} (${ot.hours} ชม.) ถึงคิวที่ต้องให้คุณอนุมัติแล้ว`
-    : `มีคำขอ OT ใหม่จาก ${requester.full_name} วันที่ ${toThaiDate(ot.ot_date)} (${ot.hours} ชม.)`;
+    ? `คำขอ OT${ot.company ? ` (${ot.company})` : ''} ของ ${requester.full_name} วันที่ ${toThaiDate(ot.ot_date)} (${ot.hours} ชม.) ถึงคิวที่ต้องให้คุณอนุมัติแล้ว`
+    : `มีคำขอ OT${ot.company ? ` (${ot.company})` : ''} ใหม่จาก ${requester.full_name} วันที่ ${toThaiDate(ot.ot_date)} (${ot.hours} ชม.)`;
   const notifStmt = db.prepare(`INSERT INTO notifications (user_id, type, message, related_id) VALUES (?, 'ot_new_request', ?, ?)`);
   for (const a of approvers) {
     notifStmt.run(a.id, msg, otId);
@@ -451,10 +461,12 @@ function notifyOTSubmitted(otId, isAdvance = false) {
       sendMail({
         to: a.email,
         subject: `[TRISAK] คำขอ OT ใหม่ #${ot.code}`,
-        html: `<p>${escapeHtml(msg)}</p><p>รายละเอียดงาน: ${escapeHtml(ot.work_detail || '-')}</p><p><a href="${process.env.APP_BASE_URL || 'http://localhost:3000'}/approve-ot?id=${otId}">เปิดดูคำขอ</a></p>`
+        html: `<p>${escapeHtml(msg)}</p>${ot.company ? `<p>บริษัท: ${escapeHtml(companyLabel(ot.company))}</p>` : ''}<p>รายละเอียดงาน: ${escapeHtml(ot.work_detail || '-')}</p><p><a href="${process.env.APP_BASE_URL || 'http://localhost:3000'}/approve-ot?id=${otId}">เปิดดูคำขอ</a></p>`
       }).catch(err => console.error('[ot] send mail error:', err.message));
     }
   }
+  // ส่งคำขอครั้งแรก/ส่งใหม่: แจ้งผู้อนุมัติขั้นถัดไปให้รู้ล่วงหน้าด้วย (ยังกดอนุมัติไม่ได้จนกว่าจะถึงคิว)
+  if (!isAdvance) notifyUpcomingApprovers('ot', otId, msg, { requesterId: ot.requester_id, skipIds: ids });
 }
 
 function notifyOTDecision(otId, status, approverId, note) {

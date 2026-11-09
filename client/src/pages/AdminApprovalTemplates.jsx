@@ -206,7 +206,10 @@ function DeptHeads({ users, rows, reload, toast }) {
   );
 }
 
-const toEditState = (s) => ({ name: s.name, mode: s.mode, slot: s.slot || '', approver_source: s.approver_source || 'manual', approver_ids: s.approvers.map(a => a.id) });
+// ขั้นตอนที่ยังไม่ได้ตั้งช่องลงนาม (slot ว่าง เช่น Template เก่า) -> แสดง/บันทึกเป็นช่องตามตำแหน่ง ให้ตรงกับที่ PDF ใช้จริง
+// (ขั้นสุดท้าย = ผู้อนุมัติ, ขั้นก่อนหน้า = ช่องแรก) ไม่งั้น <select> จะโชว์ตัวเลือกแรกทั้งที่ค่าจริงว่าง
+const defaultSlot = (module, i, n) => (SLOT_OPTIONS[module] ? (i === n - 1 ? 'approver' : SLOT_OPTIONS[module][0][0]) : '');
+const toEditState = (module) => (s, i, arr) => ({ name: s.name, mode: s.mode, slot: s.slot || defaultSlot(module, i, arr.length), approver_source: s.approver_source || 'manual', approver_ids: s.approvers.map(a => a.id) });
 
 export default function AdminApprovalTemplates() {
   const toast = useToast();
@@ -247,7 +250,7 @@ export default function AdminApprovalTemplates() {
       setSelectedId(id);
       setDetail(template);
       setRequesterIds(template.requesters.map(r => r.id));
-      setStates(template.states.map(toEditState));
+      setStates(template.states.map(toEditState(module)));
     } catch (err) { toast(err.message, 'error'); }
   };
   const closeTemplate = () => { setSelectedId(null); setDetail(null); };
@@ -309,7 +312,7 @@ export default function AdminApprovalTemplates() {
     [...requesterIds].sort().join(',') !== detail.requesters.map(r => r.id).sort().join(',')
   );
   // ขั้นตอนที่แก้ไขค้างอยู่ (เทียบกับที่บันทึกไว้ล่าสุด)
-  const statesDirty = !!detail && JSON.stringify(states) !== JSON.stringify(detail.states.map(toEditState));
+  const statesDirty = !!detail && JSON.stringify(states) !== JSON.stringify(detail.states.map(toEditState(module)));
   const listName = templates?.find(t => t.id === selectedId)?.name;
   const nameDirty = !!detail && listName !== undefined && detail.name !== listName;
   const anyDirty = requesterIdsDirty || statesDirty || nameDirty;
@@ -346,7 +349,7 @@ export default function AdminApprovalTemplates() {
       //  การ reload ตรงนี้จะไปทับค่าที่ยังไม่ได้บันทึกของ Requester ทิ้งโดยไม่ตั้งใจ)
       const { template } = await api.get(`/api/approval-templates/${selectedId}`);
       setDetail(d => ({ ...d, states: template.states }));
-      setStates(template.states.map(toEditState));
+      setStates(template.states.map(toEditState(module)));
     } catch (err) { toast(err.message, 'error'); }
   };
 

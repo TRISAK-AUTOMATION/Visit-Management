@@ -8,9 +8,11 @@ const { logAction } = require('../utils/systemLog');
 const { approverIdsForDepartments } = require('../utils/userDepartments');
 const { canEditProfile } = require('../utils/profilePermissions');
 const approvalEngine = require('../utils/approvalEngine');
+const { notifyUpcomingApprovers } = require('../utils/upcomingNotify');
 const { canViewAll } = require('../utils/viewScope');
 const entitlement = require('../utils/leaveEntitlement');
 const checks = require('../utils/inputChecks');
+const { leavePaperData } = require('../utils/paperForms');
 const { countDaysExcluding, holidaySetBetween } = require('../utils/holidays');
 
 const router = express.Router();
@@ -199,6 +201,7 @@ router.get('/', requireAuth, (req, res) => {
     for (const r of rows) {
       if (r.status !== 'pending') continue;
       r.can_act = approvalEngine.canActOn('leave', r.id, req.session.userId);
+      r.upcoming = !r.can_act && approvalEngine.isUpcomingFor('leave', r.id, req.session.userId); // อยู่ขั้นถัดไป ยังไม่ถึงคิว
       r.waiting_for = approvalEngine.currentApproverNames('leave', r.id).join(', ');
       r.can_resync = req.session.role === 'Admin' && approvalEngine.canResync('leave', r.id);
       // "ส่งใหม่หลังแก้ไข" (Updated) แยกจากคำขอใหม่ (New): ดูรายการล่าสุดในประวัติ
@@ -268,7 +271,10 @@ router.get('/:id', requireAuth, (req, res) => {
   const workflow = approvalEngine.getWorkflow('leave', lr.id);
   res.json({
     request: lr, history, workflow,
+    paper: leavePaperData(lr, workflow, require('./pdfSettings').readSettings().docs.leave), // หน้าต่างรายละเอียดแสดงเป็นใบลาแบบเดียวกับ PDF
     can_act: lr.status === 'pending' && approvalEngine.canActOn('leave', lr.id, req.session.userId),
+    upcoming: lr.status === 'pending' && approvalEngine.isUpcomingFor('leave', lr.id, req.session.userId),
+    waiting_for: lr.status === 'pending' ? approvalEngine.currentApproverNames('leave', lr.id).join(', ') : '',
     can_resync: isAdmin && lr.status === 'pending' && approvalEngine.canResync('leave', lr.id)
   });
 });
@@ -565,6 +571,8 @@ function notifyLeaveSubmitted(lrId, isAdvance = false) {
       }).catch(err => console.error('[leave] send mail error:', err.message));
     }
   }
+  // ส่งคำขอครั้งแรก/ส่งใหม่: แจ้งผู้อนุมัติขั้นถัดไปให้รู้ล่วงหน้าด้วย (ยังกดอนุมัติไม่ได้จนกว่าจะถึงคิว)
+  if (!isAdvance) notifyUpcomingApprovers('leave', lrId, msg, { requesterId: lr.requester_id, skipIds: ids });
 }
 
 function notifyLeaveDecision(lrId, status, approverId, note) {

@@ -6,6 +6,7 @@ import PageHero from '../components/PageHero';
 import { usePageContent } from '../lib/PageContentContext';
 import { api, fmtDate, statusLabel, todayLocal } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+import { companyLabel } from '../lib/companies';
 
 const THAI_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 const DOW = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
@@ -236,6 +237,7 @@ function DetailCard({ e, onClose, onBack }) {
               <Row label="วันที่">{fmtDate(r.ot_date)}</Row>
               <Row label="เวลา">{r.time_from}{r.time_to ? ` - ${r.time_to}` : ''}</Row>
               <Row label="จำนวนชั่วโมง">{r.hours ? `${r.hours} ชม.` : ''}</Row>
+              <Row label="บริษัท">{companyLabel(r.company)}</Row>
               <Row label="ประเภท OT">{r.ot_type}</Row>
               <Row label="สถานที่">{r.location}</Row>
             </>)}

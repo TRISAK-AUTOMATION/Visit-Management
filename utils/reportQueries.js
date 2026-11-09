@@ -47,6 +47,7 @@ const COLUMNS = {
     { key: 'ot_date', label: 'OT Date', w: 8, type: 'date' },
     { key: 'employee', label: 'Employee', w: 12, type: 'text' },
     { key: 'department', label: 'Department', w: 8, type: 'text' },
+    { key: 'company', label: 'Company', w: 6, type: 'text' },
     { key: 'time_from', label: 'Start Time', w: 6, type: 'time' },
     { key: 'time_to', label: 'End Time', w: 6, type: 'time' },
     { key: 'hours', label: 'OT Hours', w: 6, type: 'number' },
@@ -87,7 +88,7 @@ const COLUMNS = {
 
 const DEFAULT_COLUMNS = {
   visit: ['visit_date', 'employee', 'department', 'customer', 'participants', 'purpose', 'time_from', 'time_to', 'status_label'],
-  ot: ['ot_date', 'employee', 'department', 'time_from', 'time_to', 'hours', 'reason', 'status_label'],
+  ot: ['ot_date', 'employee', 'department', 'company', 'time_from', 'time_to', 'hours', 'reason', 'status_label'],
   leave: ['request_date', 'employee', 'department', 'leave_type', 'date_from', 'date_to', 'days', 'status_label'],
   summary: ['username', 'full_name', 'department', 'position', 'visits', 'ot_hours', 'leave_days', 'late', 'absent']
 };
@@ -122,14 +123,14 @@ const DEFS = {
            LEFT JOIN users a ON a.id = o.approver_id`,
     a: 'o',
     select: `o.id, o.code, date(o.created_at, '+7 hours') AS request_date, o.ot_date, u.full_name AS employee, u.department AS department,
-             o.requester_id, o.time_from, o.time_to, o.hours, o.day_type, o.ot_type, c.name AS customer, o.job_no, o.reason,
+             o.requester_id, o.time_from, o.time_to, o.hours, o.day_type, o.ot_type, o.company, c.name AS customer, o.job_no, o.reason,
              a.full_name AS approver, o.status`,
     sorts: {
       ot_date: 'o.ot_date', request_date: 'o.created_at', code: 'o.code', employee: 'u.full_name', department: 'u.department',
-      hours: 'o.hours', status: 'o.status', time_from: 'o.time_from'
+      hours: 'o.hours', status: 'o.status', time_from: 'o.time_from', company: 'o.company'
     },
     defaultOrder: 'o.ot_date DESC, o.time_from DESC',
-    search: ['u.full_name', 'o.code', 'o.reason', 'o.job_no', 'c.name']
+    search: ['u.full_name', 'o.code', 'o.reason', 'o.job_no', 'c.name', 'o.company']
   },
   leave: {
     from: `FROM leave_requests lr

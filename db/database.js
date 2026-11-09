@@ -712,6 +712,8 @@ if (db.prepare('SELECT COUNT(*) AS c FROM brands').get().c === 0) {
   if (!otCols.includes('job_no')) db.exec(`ALTER TABLE ot_requests ADD COLUMN job_no TEXT`);
   // ประเภทวันของ OT: workday (วันทำงาน) | holiday (วันหยุด) — ฟอร์มเลือกให้อัตโนมัติตามปฏิทิน แต่ผู้ขอแก้เองได้ (เช่น เสาร์ที่เป็นเวร)
   if (!otCols.includes('day_type')) db.exec(`ALTER TABLE ot_requests ADD COLUMN day_type TEXT`);
+  // บริษัทในเครือที่ทำ OT ให้: TAC | FAC | HTC (ดู utils/companies.js) — ใบเก่าก่อนมีช่องนี้เป็น NULL
+  if (!otCols.includes('company')) db.exec(`ALTER TABLE ot_requests ADD COLUMN company TEXT`);
 }
 
 // ---------- Index เพิ่มความเร็วให้คอลัมน์ที่ค้นหา/join บ่อย ----------

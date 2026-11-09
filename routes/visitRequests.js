@@ -6,6 +6,7 @@ const { requireAuth, requireRole } = require('./middleware');
 const { sendNewRequestEmail, sendDecisionEmail, sendRevisionEmail } = require('../utils/mailer');
 const { logAction } = require('../utils/systemLog');
 const approvalEngine = require('../utils/approvalEngine');
+const { notifyUpcomingApprovers } = require('../utils/upcomingNotify');
 const { canViewAll } = require('../utils/viewScope');
 const { applyVisitLevelToCustomer } = require('../utils/customerLevels');
 const signatureUtil = require('../utils/signature');
@@ -276,6 +277,7 @@ router.get('/', requireAuth, (req, res) => {
     for (const r of rows) {
       if (r.status !== 'pending') continue;
       r.can_act = approvalEngine.canActOn('visit', r.id, userId);
+      r.upcoming = !r.can_act && approvalEngine.isUpcomingFor('visit', r.id, userId); // อยู่ขั้นถัดไป ยังไม่ถึงคิว
       r.waiting_for = approvalEngine.currentApproverNames('visit', r.id).join(', ');
       r.can_resync = isAdminUser && approvalEngine.canResync('visit', r.id);
       // แยก "คำขอใหม่" กับ "คำขอที่ถูกแก้ไขหลังอนุมัติแล้วส่งกลับมา": ดูรายการล่าสุดที่ทำให้ใบนี้กลับมารออนุมัติ
@@ -364,6 +366,8 @@ router.get('/:id', requireAuth, (req, res) => {
     request: vr, history, customFields, workflow,
     customer_signature: db.prepare('SELECT data_url, signer_name, signer_title, signed_at FROM visit_customer_signatures WHERE visit_request_id = ?').get(vr.id) || null,
     can_act: vr.status === 'pending' && approvalEngine.canActOn('visit', vr.id, req.session.userId),
+    upcoming: vr.status === 'pending' && approvalEngine.isUpcomingFor('visit', vr.id, req.session.userId),
+    waiting_for: vr.status === 'pending' ? approvalEngine.currentApproverNames('visit', vr.id).join(', ') : '',
     can_resync: isAdmin && vr.status === 'pending' && approvalEngine.canResync('visit', vr.id)
   });
 });
@@ -493,6 +497,13 @@ function notifyRequestSubmitted(vrId, requester, isAdvance = false, changes = nu
         emailRows: getEmailRows(vrWithCustomer), showDocCode: getShowDocCode()
       }).catch(err => console.error('sendNewRequestEmail error:', err.message));
     }
+  }
+  // ส่งคำขอครั้งแรก/ส่งใหม่: แจ้งผู้อนุมัติขั้นถัดไปให้รู้ล่วงหน้าด้วย (ยังกดอนุมัติไม่ได้จนกว่าจะถึงคิว)
+  if (!isAdvance) {
+    const fyi = (changes && changes.length)
+      ? `${requester.full_name} แก้ไขคำขอออกนอกสถานที่ที่อนุมัติแล้ว (วันที่ ${formatDateThai(vr.visit_date)})`
+      : msg;
+    notifyUpcomingApprovers('visit', vrId, fyi, { requesterId: vr.requester_id, skipIds: ids });
   }
 }
 

@@ -6,6 +6,7 @@ import PageHero from '../components/PageHero';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
+import LeavePaperForm from '../components/LeavePaperForm';
 
 const STATUS_TH = { draft: 'ฉบับร่าง', pending: 'รออนุมัติ', revision: 'รอแก้ไข', approved: 'อนุมัติแล้ว', rejected: 'ไม่อนุมัติ', cancelled: 'ยกเลิกแล้ว' };
 const TABS = [{ f: 'all', label: 'ทั้งหมด' }, { f: 'draft', label: 'ฉบับร่าง' }, { f: 'pending', label: 'รออนุมัติ' }, { f: 'revision', label: 'รอแก้ไข' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }];
@@ -153,13 +154,10 @@ export default function MyLeave() {
 
       {detail && (
         <div className="modal-bg" onClick={e => { if (e.target === e.currentTarget) setDetail(null); }}>
-          <div className="modal">
+          <div className="modal modal-paper">
             <div className="modal-head"><h3>รายละเอียดคำขอลา #{detail.request.code}</h3><button className="modal-close" onClick={() => setDetail(null)}>×</button></div>
             <div className="modal-body">
-              <p><b>ประเภท:</b> {detail.request.leave_type}</p>
-              <p><b>วันที่:</b> {fmtDate(detail.request.date_from)}{detail.request.date_to !== detail.request.date_from ? ` - ${fmtDate(detail.request.date_to)}` : ''}</p>
-              <p><b>จำนวน:</b> {durationLabel(detail.request)}</p>
-              <p><b>เหตุผล:</b> {detail.request.reason || '-'}</p>
+              <LeavePaperForm r={detail.request} paper={detail.paper} />
               {detail.request.attachment && <p><a href={detail.request.attachment} download>ดาวน์โหลดเอกสารแนบ</a></p>}
               <p><b>สถานะ:</b> <span className={`badge ${detail.request.status}`}>{STATUS_TH[detail.request.status]}</span></p>
               {detail.request.status === 'approved' && <p><a className="btn btn-outline btn-sm" href={`/api/leave-requests/${detail.request.id}/pdf`} target="_blank" rel="noreferrer">เปิด/พิมพ์ใบลา PDF</a></p>}

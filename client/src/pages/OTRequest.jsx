@@ -4,6 +4,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { api } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
+import { COMPANIES } from '../lib/companies';
+import { useSignatureGate } from '../components/SignatureGate';
 
 const OT_TYPES = ['Project', 'Service', 'Visit', 'Site Survey', 'Internal'];
 
@@ -20,7 +22,15 @@ const calendarDayType = (iso) => {
   return d.getDay() === 0 || d.getDay() === 6 ? 'holiday' : 'workday';
 };
 
+// จำบริษัทที่เลือกล่าสุดไว้ในเครื่อง (ส่วนใหญ่ทำ OT ให้บริษัทเดิม) — อ่าน/เขียนไม่ได้ก็แค่ไม่มีค่าเริ่มต้น
+const LAST_COMPANY_KEY = 'ot_last_company';
+const lastCompany = () => {
+  try { const v = localStorage.getItem(LAST_COMPANY_KEY); return COMPANIES.some(c => c.code === v) ? v : ''; } catch { return ''; }
+};
+const rememberCompany = (v) => { try { localStorage.setItem(LAST_COMPANY_KEY, v); } catch { /* ไม่เป็นไร */ } };
+
 const makeInitial = () => ({
+  company: lastCompany(),
   ot_date: todayLocal(),
   day_type: calendarDayType(todayLocal()),
   ot_type: '', customer_id: '', project_no: '', job_no: '',
@@ -36,6 +46,7 @@ const toMinutes = (t) => {
 export default function OTRequest() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { ensureSignature, gate } = useSignatureGate(); // ยังไม่มีลายเซ็น -> ถามให้ตั้งก่อน (ข้ามได้)
   const [params] = useSearchParams();
   const id = params.get('id');
   const [form, setForm] = useState(makeInitial);
@@ -70,6 +81,7 @@ export default function OTRequest() {
       setExisting(r);
       setDayTypeTouched(!!r.day_type); // ใบที่เคยบันทึกประเภทวันไว้แล้ว ไม่ให้เปลี่ยนวันที่แล้วทับค่าเดิม
       setForm({
+        company: r.company || '',
         ot_date: r.ot_date, time_from: r.time_from, time_to: r.time_to,
         day_type: r.day_type || calendarDayType(r.ot_date),
         ot_type: r.ot_type || '', customer_id: r.customer_id || '', project_no: r.project_no || '', job_no: r.job_no || '',
@@ -88,7 +100,8 @@ export default function OTRequest() {
   };
 
   const pickCustomer = (c) => {
-    setForm(f => ({ ...f, customer_id: c.id }));
+    // ยังไม่ได้เลือกบริษัท -> ใช้บริษัทเจ้าของข้อมูลลูกค้ารายนี้เป็นค่าเริ่มต้น
+    setForm(f => ({ ...f, customer_id: c.id, company: f.company || (COMPANIES.some(x => x.code === c.company) ? c.company : '') }));
     setCustomerQuery(`${c.code} - ${c.name}`);
     setCustomerOpen(false);
   };
@@ -107,6 +120,7 @@ export default function OTRequest() {
 
   const validate = (isDraft) => {
     if (!isDraft) {
+      if (!form.company) return fail('กรุณาเลือกบริษัทที่ทำ OT ให้', 'ot-company');
       if (!form.ot_date) return fail('กรุณาระบุวันที่ทำ OT', 'ot-date');
       if (!form.ot_type) return fail('กรุณาเลือก OT Type', 'ot-type');
       if (!form.location.trim()) return fail('กรุณาระบุสถานที่ปฏิบัติงาน', 'ot-location');
@@ -121,7 +135,9 @@ export default function OTRequest() {
 
   const save = async (isDraft) => {
     if (validate(isDraft) !== true) return;
+    if (!isDraft && !(await ensureSignature('submit'))) return;
     setSaving(true);
+    if (form.company) rememberCompany(form.company);
     const payload = { ...form, customer_id: form.customer_id || null, save_as: isDraft ? 'draft' : undefined };
     try {
       if (existing) {
@@ -141,11 +157,20 @@ export default function OTRequest() {
 
   return (
     <Layout title={existing ? `แก้ไขคำขอ OT #${existing.code}` : 'สร้างคำขอ OT (Overtime Request)'}>
+      {gate}
       <div className="card" style={{ maxWidth: 700 }}>
         <div className="card-head"><h3>ข้อมูลการขอทำงานล่วงเวลา</h3></div>
         <div className="card-body">
           <form noValidate onSubmit={e => { e.preventDefault(); save(false); }}>
             <div className="form-grid">
+              <div className="form-group full">
+                <label htmlFor="ot-company">บริษัทที่ทำ OT ให้ <span className="req">*</span></label>
+                <select id="ot-company" value={form.company} onChange={set('company')} required>
+                  <option value="">-- เลือกบริษัท --</option>
+                  {COMPANIES.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+                </select>
+                <div className="muted" style={{ fontSize: 11.5, marginTop: 3 }}>ชื่อบริษัทนี้จะเป็นหัวเอกสารใบ OT</div>
+              </div>
               <div className="form-group">
                 <label htmlFor="ot-date">วันที่ทำ OT <span className="req">*</span></label>
                 <input id="ot-date" type="date" value={form.ot_date} onChange={changeDate} required />

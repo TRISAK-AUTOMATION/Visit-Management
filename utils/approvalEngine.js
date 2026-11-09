@@ -216,6 +216,29 @@ function currentApproverNames(module, requestId) {
   `).all(module, requestId).map(r => r.full_name);
 }
 
+// ผู้อนุมัติ "ขั้นถัดไป" (State หลัง State ปัจจุบัน) ที่ยังไม่ถึงคิว — ใช้แจ้งให้รู้ล่วงหน้าตั้งแต่ผู้ขอกดส่ง
+// ไม่รวมคนที่อยู่ใน State ปัจจุบันด้วย (คนนั้นได้แจ้ง "คำขอใหม่" ตามปกติอยู่แล้ว)
+function getUpcomingApproverIds(module, requestId) {
+  const wf = getWorkflow(module, requestId);
+  if (!wf || wf.status !== 'pending') return [];
+  const cur = wf.states[wf.currentStateIndex];
+  const now = new Set(cur ? cur.approvers.map(a => a.user_id) : []);
+  const ids = wf.states.slice(wf.currentStateIndex + 1).flatMap(s => s.approvers.map(a => a.user_id));
+  return [...new Set(ids)].filter(id => !now.has(id));
+}
+
+// userId อยู่ในสายอนุมัติขั้นถัดไป (ยังไม่ถึงคิว) ของคำขอนี้ไหม -> หน้าอนุมัติแสดง "รอ ... อนุมัติก่อน" + นับเป็นตัวเลขสีเทา
+function isUpcomingFor(module, requestId, userId) {
+  const row = dbModule.prepare(`
+    SELECT 1 FROM request_workflows w
+    JOIN request_workflow_states s ON s.workflow_id = w.id AND s.state_index > w.current_state_index
+    JOIN request_workflow_approvers a ON a.workflow_state_id = s.id
+    WHERE w.module = ? AND w.request_id = ? AND w.status = 'pending' AND a.user_id = ? AND a.decision IS NULL
+    LIMIT 1
+  `).get(module, requestId, userId);
+  return !!row;
+}
+
 // รีเซ็ตสายอนุมัติได้ไหม: workflow ต้อง pending, อยู่ State แรก และยังไม่มีใครตัดสินใจเลย
 // (ถ้ามีคนอนุมัติไปแล้วบางส่วน การรีเซ็ตจะทำให้การตัดสินใจนั้นหาย - ให้ใช้ "ส่งกลับแก้ไข" แล้วส่งใหม่แทน)
 function canResync(module, requestId) {
@@ -269,7 +292,14 @@ function decide(module, requestId, userId, action, comment, requesterId) {
 
   const state = dbModule.prepare(`SELECT * FROM request_workflow_states WHERE workflow_id = ? AND state_index = ?`).get(wf.id, wf.current_state_index);
   const approverRow = dbModule.prepare(`SELECT * FROM request_workflow_approvers WHERE workflow_state_id = ? AND user_id = ?`).get(state.id, userId);
-  if (!approverRow) throw new ApprovalError('คุณไม่ได้อยู่ในลำดับผู้อนุมัติของคำขอนี้ในขั้นตอนปัจจุบัน');
+  if (!approverRow) {
+    // ผู้อนุมัติขั้นถัดไปกดก่อนถึงคิว (เช่นหน้าเว็บยังไม่รีเฟรช) -> บอกให้ชัดว่าต้องรอใคร
+    if (isUpcomingFor(module, requestId, userId)) {
+      const who = currentApproverNames(module, requestId).join(', ');
+      throw new ApprovalError(`ยังไม่ถึงคิวคุณ — ต้องรอ ${who || 'ขั้นก่อนหน้า'} อนุมัติก่อน`);
+    }
+    throw new ApprovalError('คุณไม่ได้อยู่ในลำดับผู้อนุมัติของคำขอนี้ในขั้นตอนปัจจุบัน');
+  }
   if (approverRow.decision) throw new ApprovalError('คุณตัดสินใจคำขอนี้ไปแล้ว');
 
   dbModule.prepare(`UPDATE request_workflow_approvers SET decision = ?, comment = ?, decided_at = datetime('now') WHERE id = ?`)
@@ -329,6 +359,8 @@ module.exports = {
   canActOn,
   autoResyncForTemplate,
   currentApproverNames,
+  getUpcomingApproverIds,
+  isUpcomingFor,
   canResync,
   resyncWorkflow,
   listRequestIdsForApprover,

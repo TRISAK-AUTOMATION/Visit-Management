@@ -7,11 +7,14 @@ const { logAction } = require('../utils/systemLog');
 const { isValidDepartment } = require('../utils/departments');
 const { getDepartmentsForUser, setDepartmentsForUser } = require('../utils/userDepartments');
 const signature = require('../utils/signature');
+const { isValidEmail } = require('../utils/mailer');
 
 const router = express.Router();
 
 const VALID_ROLES = ['Employee', 'Approver', 'Admin'];
 const MIN_PASSWORD_LENGTH = 6;
+// อีเมลว่างได้ (ไม่รับแจ้งเตือนทางอีเมล) แต่ถ้ากรอกต้องเป็นรูปแบบที่ส่งได้จริง (กันกรอกแค่ "@trisak.co.th")
+const emailError = (email) => (email && String(email).trim() && !isValidEmail(email) ? 'อีเมลไม่ถูกต้อง กรุณากรอกให้ครบ เช่น name@trisak.co.th' : null);
 
 function sanitize(u) {
   const { password_hash, ...rest } = u;
@@ -28,6 +31,7 @@ router.put('/me', requireAuth, (req, res) => {
   if (![email, phone, position].every(textOk)) {
     return res.status(400).json({ error: 'ข้อมูลโปรไฟล์ไม่ถูกต้องหรือยาวเกินไป' });
   }
+  if (emailError(email)) return res.status(400).json({ error: emailError(email) });
   if (avatar_url && (typeof avatar_url !== 'string' || avatar_url.length > 3_000_000 || !/^(data:image\/|\/|https?:\/\/)/.test(avatar_url))) {
     return res.status(400).json({ error: 'รูปโปรไฟล์ไม่ถูกต้องหรือมีขนาดใหญ่เกินไป' });
   }
@@ -41,7 +45,7 @@ router.put('/me', requireAuth, (req, res) => {
   db.prepare(`
     UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, department = ?, email_notify = ?, avatar_url = ?
     WHERE id = ?
-  `).run(full_name.trim(), email || '', phone || '', position || '', newDept, email_notify ? 1 : 0, avatar_url || null, req.session.userId);
+  `).run(full_name.trim(), String(email || '').trim(), phone || '', position || '', newDept, email_notify ? 1 : 0, avatar_url || null, req.session.userId);
   res.json({ ok: true });
 });
 
@@ -111,6 +115,7 @@ router.post('/', requireAuth, requireRole('Admin'), (req, res) => {
   if (!username || !password || !full_name) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
   }
+  if (emailError(email)) return res.status(400).json({ error: emailError(email) });
   if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
     return res.status(400).json({ error: `รหัสผ่านต้องมีอย่างน้อย ${MIN_PASSWORD_LENGTH} ตัวอักษร` });
   }
@@ -128,7 +133,7 @@ router.post('/', requireAuth, requireRole('Admin'), (req, res) => {
   const info = db.prepare(`
     INSERT INTO users (username, password_hash, full_name, email, phone, position, department, role)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(username, bcrypt.hashSync(password, 10), full_name, email || '', phone || '', position || '', deptList[0] || '', role || 'Employee');
+  `).run(username, bcrypt.hashSync(password, 10), full_name, String(email || '').trim(), phone || '', position || '', deptList[0] || '', role || 'Employee');
   setDepartmentsForUser(info.lastInsertRowid, deptList);
   logAction(req.session.userId, 'create_user', `สร้างผู้ใช้ใหม่ ${username} (${full_name})`);
   res.status(201).json({ id: info.lastInsertRowid });
@@ -147,6 +152,7 @@ router.put('/:id', requireAuth, requireRole('Admin'), (req, res) => {
   if (![email, phone, position].every((v) => v === undefined || v === null || (typeof v === 'string' && v.length <= 200))) {
     return res.status(400).json({ error: 'ข้อมูลผู้ใช้ไม่ถูกต้องหรือยาวเกินไป' });
   }
+  if (emailError(email)) return res.status(400).json({ error: emailError(email) });
   // กันระบบไม่มี Admin เหลือเลย: ห้ามลดสิทธิ์ Admin คนสุดท้ายที่ยังใช้งานอยู่
   if (exists.role === 'Admin' && role !== 'Admin' && exists.is_active) {
     const otherAdmins = db.prepare(`SELECT COUNT(*) AS c FROM users WHERE role = 'Admin' AND is_active = 1 AND id != ?`).get(req.params.id).c;
@@ -162,7 +168,7 @@ router.put('/:id', requireAuth, requireRole('Admin'), (req, res) => {
   db.prepare(`
     UPDATE users SET full_name = ?, email = ?, phone = ?, position = ?, role = ?
     WHERE id = ?
-  `).run(full_name, email || '', phone || '', position || '', role, req.params.id);
+  `).run(full_name, String(email || '').trim(), phone || '', position || '', role, req.params.id);
   setDepartmentsForUser(req.params.id, deptList);
   logAction(req.session.userId, 'update_user', `แก้ไขข้อมูลผู้ใช้ #${req.params.id} (${full_name})`);
   res.json({ ok: true });

@@ -16,6 +16,7 @@ import { useAuth } from '../lib/AuthContext';
 import { usePageContent } from '../lib/PageContentContext';
 import { useFormOptions } from '../lib/useFormOptions';
 import './visit-form.css';
+import { useSignatureGate } from '../components/SignatureGate';
 
 // ---------------------------------------------------------------- ค่าคงที่
 const JOB_TYPES = ['เข้าพบลูกค้า', 'ติดตั้ง/บริการ', 'นำเสนอสินค้า', 'ติดตามงาน', 'ประชุมงาน', 'อื่นๆ'];
@@ -157,6 +158,7 @@ const STATUS_EN = { draft: 'Draft', pending: 'Pending Approval', approved: 'Appr
 // ================================================================ หน้าหลัก
 export default function VisitRequest() {
   const toast = useToast();
+  const { ensureSignature, gate } = useSignatureGate(); // ยังไม่มีลายเซ็น -> ถามให้ตั้งก่อน (ข้ามได้)
   const navigate = useNavigate();
   const { me } = useAuth();
   const { pc } = usePageContent();
@@ -718,6 +720,7 @@ export default function VisitRequest() {
       toast(`กรุณากรอกข้อมูลที่จำเป็นให้ครบ (${bad.length} รายการ): ${bad.slice(0, 3).map(b => b.label).join(', ')}${bad.length > 3 ? '...' : ''}`, 'error');
       return;
     }
+    if (!(await ensureSignature('submit'))) return;
     setSaving(true);
     try {
       // เตือน (ไม่บล็อก) ถ้าเวลาทับกับ Visit/การลาอื่นของตัวเอง — ข้ามตอนแก้ข้อมูลหลังปฏิบัติงาน
@@ -849,6 +852,7 @@ export default function VisitRequest() {
 
   return (
     <Layout title={title}>
+      {gate}
       <form className="vf-page" onSubmit={handleSubmit} noValidate>
         {/* ---------------- Header ---------------- */}
         <div className="vf-head">

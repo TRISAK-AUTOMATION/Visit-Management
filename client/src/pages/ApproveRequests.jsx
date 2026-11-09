@@ -8,6 +8,8 @@ import '../components/report/report-ui.css';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
+import { useSignatureGate } from '../components/SignatureGate';
+import { WaitBanner, WaitChip } from '../components/WaitTurn';
 
 const TABS = [
   { f: 'pending', label: 'รออนุมัติ' },
@@ -18,6 +20,7 @@ const TABS = [
 export default function ApproveRequests() {
   const { pc } = usePageContent();
   const toast = useToast();
+  const { ensureSignature, gate } = useSignatureGate(); // ยังไม่มีลายเซ็น -> ถามให้ตั้งก่อน (ข้ามได้)
   const { refreshBadges } = useAuth();
   const location = useLocation();
   const firstNav = useRef(true);
@@ -50,6 +53,7 @@ export default function ApproveRequests() {
   }, [location.key]);
 
   const decide = async (id, action) => {
+    if (action === 'approve' && !(await ensureSignature('approve'))) return false;
     const input = prompt(action === 'approve' ? 'ความคิดเห็น (ถ้ามี) ก่อนอนุมัติ:' : 'เหตุผลที่ไม่อนุมัติ:', '');
     if (input === null) return false; // กด Cancel = ยกเลิกการตัดสินใจ ไม่ส่งอะไรไป
     const note = input;
@@ -90,6 +94,7 @@ export default function ApproveRequests() {
 
   return (
     <Layout title={pc('approve_requests.title', 'Approve Requests')}>
+      {gate}
       <div className="tabs">
         {TABS.map(t => (
           <div key={t.f} className={`tab ${filter === t.f ? 'active' : ''}`} onClick={() => setFilter(t.f)}>{t.label}</div>
@@ -134,7 +139,7 @@ export default function ApproveRequests() {
                     )}
                     {v.status === 'pending' && !v.can_act && (
                       <>
-                        <span className="muted" style={{ fontSize: 12.5 }}>รอ {v.waiting_for || 'ผู้อนุมัติ'} อนุมัติ</span>{' '}
+                        <WaitChip r={v} />{' '}
                         {v.can_resync && <button className="btn btn-outline btn-sm" onClick={() => resync(v.id)}>รีเซ็ตสายอนุมัติ</button>}
                       </>
                     )}
@@ -170,14 +175,13 @@ export default function ApproveRequests() {
           <>
             {editedNotice}
             {notInChain && (
-              <div style={{ padding: '10px 20px', background: '#fff7e6', borderBottom: '1px solid #f5d9a0', fontSize: 13, color: '#8a5a00' }}>
-                คุณไม่ได้อยู่ในลำดับผู้อนุมัติของคำขอนี้ในขั้นตอนปัจจุบัน จึงอนุมัติไม่ได้ (ดูรายละเอียดได้อย่างเดียว)
+              <WaitBanner r={modalData} flush>
                 {modalData.can_resync && (
                   <div style={{ marginTop: 6 }}>
                     <button type="button" className="btn btn-outline btn-sm" onClick={() => { resync(request.id); closeModal(); }}>รีเซ็ตสายอนุมัติตามรายชื่อล่าสุด</button>
                   </div>
                 )}
-              </div>
+              </WaitBanner>
             )}
           </>
         ) : null;

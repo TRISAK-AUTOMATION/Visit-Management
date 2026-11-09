@@ -12,6 +12,7 @@ const { canViewRequest } = require('../utils/requestAccess');
 const { readSettings } = require('./pdfSettings');
 const approvalEngine = require('../utils/approvalEngine');
 const signature = require('../utils/signature');
+const { requesterStamp, approverStamp } = require('../utils/paperForms');
 
 const FONT_REGULAR = path.join(__dirname, '..', 'fonts', 'Sarabun-Regular.ttf');
 const FONT_BOLD = path.join(__dirname, '..', 'fonts', 'Sarabun-Bold.ttf');
@@ -302,15 +303,16 @@ function wordBreak(t, limit) {
 
   // ---------- ลายเซ็น 2 ช่อง (ผู้ปฏิบัติงาน / ผู้อนุมัติ) + ช่อง 3 "ลูกค้ารับทราบ" เมื่อลูกค้าเซ็นแล้ว ----------
   const hasCust = !!(custRow && custSig);   // ลูกค้าเซ็นบนหน้าจอแล้วหรือยัง (ถ้ายัง ช่องนี้ว่างไว้ให้ลูกค้าเซ็นมือบนกระดาษได้)
-  const sigCols = [['ผู้ปฏิบัติงาน', r.requester_name, requesterSig], ['ผู้อนุมัติ', approverName, approverSig],
-                   ['ลูกค้ารับทราบ', hasCust ? custRow.signer_name : '', hasCust ? custSig : null]];
+  // ช่องที่ 4 = stamp ใช้เมื่อไม่มีภาพลายเซ็น (ชื่อลายมือ + วันเวลาที่ลงนามผ่านระบบ) — ช่องลูกค้าไม่มี (ลูกค้าต้องเซ็นจริง)
+  const sigCols = [['ผู้ปฏิบัติงาน', r.requester_name, requesterSig, requesterStamp('visit', r)], ['ผู้อนุมัติ', approverName, approverSig, approverStamp(approvers)],
+                   ['ลูกค้ารับทราบ', hasCust ? custRow.signer_name : '', hasCust ? custSig : null, null]];
   const colW = 160;
   const slotW = W / sigCols.length;
   const sigLineY = y + 24;
   // ไม่แสดงตำแหน่งของลูกค้าใต้ชื่อ (แสดงแค่ชื่อผู้เซ็นเหมือนช่องอื่น)
-  if (DOC.show_signature) sigCols.forEach(([role, name, sig], i) => {
+  if (DOC.show_signature) sigCols.forEach(([role, name, sig, stamp], i) => {
     const x = L + i * slotW + (slotW - colW) / 2;
-    signature.draw(doc, sig, x, colW, sigLineY, 24);
+    signature.draw(doc, sig, x, colW, sigLineY, 24, stamp);
     dots(x, x + colW, sigLineY);
     doc.font('regular').fontSize(FS).fillColor(INK).text(role, x, sigLineY + 2, { width: colW, align: 'center', lineBreak: false });
     label('(', x + 4, sigLineY + 15);

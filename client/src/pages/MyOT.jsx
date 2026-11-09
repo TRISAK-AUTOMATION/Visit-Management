@@ -6,6 +6,8 @@ import PageHero from '../components/PageHero';
 import { api, fmtDate, fmtDateTime } from '../lib/api';
 import { useToast } from '../lib/ToastContext';
 import { useAuth } from '../lib/AuthContext';
+import { companyLabel } from '../lib/companies';
+import OtPaperForm from '../components/OtPaperForm';
 
 const STATUS_TH = { draft: 'ฉบับร่าง', pending: 'รออนุมัติ', revision: 'รอแก้ไข', approved: 'อนุมัติแล้ว', rejected: 'ไม่อนุมัติ', cancelled: 'ยกเลิกแล้ว' };
 const TABS = [{ f: 'all', label: 'ทั้งหมด' }, { f: 'draft', label: 'ฉบับร่าง' }, { f: 'pending', label: 'รออนุมัติ' }, { f: 'revision', label: 'รอแก้ไข' }, { f: 'approved', label: 'อนุมัติแล้ว' }, { f: 'rejected', label: 'ไม่อนุมัติ' }];
@@ -105,11 +107,12 @@ export default function MyOT() {
       <div className="card">
         <div className="card-body" style={{ padding: 0 }}>
           <table>
-            <thead><tr><th>เลขที่</th><th>วันที่ทำ OT</th><th>เวลา</th><th>ชั่วโมง</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+            <thead><tr><th>เลขที่</th><th>บริษัท</th><th>วันที่ทำ OT</th><th>เวลา</th><th>ชั่วโมง</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
             <tbody>
               {filtered.length ? filtered.map(r => (
                 <tr key={r.id}>
                   <td>{r.code}</td>
+                  <td>{r.company || '-'}</td>
                   <td>{fmtDate(r.ot_date)}</td>
                   <td>{r.time_from} - {r.time_to}</td>
                   <td>{r.hours} ชม.</td>
@@ -132,7 +135,7 @@ export default function MyOT() {
                     )}
                   </td>
                 </tr>
-              )) : <tr><td colSpan={6} className="empty">ไม่มีคำขอ OT ในหมวดนี้</td></tr>}
+              )) : <tr><td colSpan={7} className="empty">ไม่มีคำขอ OT ในหมวดนี้</td></tr>}
             </tbody>
           </table>
         </div>
@@ -140,18 +143,20 @@ export default function MyOT() {
 
       {detail && (
         <div className="modal-bg" onClick={e => { if (e.target === e.currentTarget) setDetail(null); }}>
-          <div className="modal">
+          <div className="modal modal-paper">
             <div className="modal-head"><h3>รายละเอียดคำขอ OT #{detail.request.code}</h3><button className="modal-close" onClick={() => setDetail(null)}>×</button></div>
             <div className="modal-body">
-              <p><b>วันที่:</b> {fmtDate(detail.request.ot_date)}{detail.request.day_type ? ` (${detail.request.day_type === 'holiday' ? 'วันหยุด' : 'วันทำงาน'})` : ''}</p>
-              <p><b>เวลา:</b> {detail.request.time_from} - {detail.request.time_to} ({detail.request.hours} ชม.)</p>
-              <p><b>สถานที่:</b> {detail.request.location || '-'}</p>
-              <p><b>OT Type:</b> {detail.request.ot_type || '-'}</p>
-              <p><b>ลูกค้า:</b> {detail.request.customer_name ? `${detail.request.customer_code || ''} - ${detail.request.customer_name}` : '-'}</p>
-              <p><b>Project No.:</b> {detail.request.project_no || '-'} &nbsp; <b>Job No.:</b> {detail.request.job_no || '-'}</p>
-              <p><b>รายละเอียดงาน:</b> {detail.request.work_detail || '-'}</p>
-              <p><b>เหตุผล:</b> {detail.request.reason || '-'}</p>
-              {detail.request.notes && <p><b>หมายเหตุ:</b> {detail.request.notes}</p>}
+              <OtPaperForm r={detail.request} paper={detail.paper} />
+              <div className="otp-extra">
+                <div><b>บริษัท:</b> {detail.request.company ? companyLabel(detail.request.company) : '-'}</div>
+                <div><b>OT Type:</b> {detail.request.ot_type || '-'}</div>
+                <div><b>สถานที่:</b> {detail.request.location || '-'}</div>
+                <div><b>ลูกค้า:</b> {detail.request.customer_name ? `${detail.request.customer_code || ''} - ${detail.request.customer_name}` : '-'}</div>
+                <div><b>Project No.:</b> {detail.request.project_no || '-'}</div>
+                <div><b>Job No.:</b> {detail.request.job_no || '-'}</div>
+                <div className="full"><b>เหตุผล:</b> {detail.request.reason || '-'}</div>
+                {detail.request.notes && <div className="full"><b>หมายเหตุ:</b> {detail.request.notes}</div>}
+              </div>
               <p><b>สถานะ:</b> <span className={`badge ${detail.request.status}`}>{STATUS_TH[detail.request.status]}</span></p>
               {detail.request.approval_note && <p><b>ความเห็นผู้อนุมัติ:</b> {detail.request.approval_note}</p>}
               {detail.request.status === 'approved' && (
